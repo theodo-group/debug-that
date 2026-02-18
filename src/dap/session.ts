@@ -351,6 +351,7 @@ export class DapSession {
 	): Promise<{ ref: string; type: string; value: string; objectId?: string }> {
 		this.requireConnected();
 		this.requirePaused();
+		await this.ensureStack();
 
 		const frameId = this.resolveFrameId(options.frame);
 
@@ -383,6 +384,7 @@ export class DapSession {
 	): Promise<Array<{ ref: string; name: string; type: string; value: string }>> {
 		this.requireConnected();
 		this.requirePaused();
+		await this.ensureStack();
 
 		const frameId = this.resolveFrameId(options.frame);
 
@@ -557,6 +559,8 @@ export class DapSession {
 	}
 
 	async buildState(options: StateOptions = {}): Promise<StateSnapshot> {
+		if (this.isPaused()) await this.ensureStack();
+
 		const snapshot: StateSnapshot = {
 			status: this._state,
 		};
@@ -699,6 +703,7 @@ export class DapSession {
 	): Promise<{ name: string; newValue: string; type: string }> {
 		this.requireConnected();
 		this.requirePaused();
+		await this.ensureStack();
 
 		const frameId = this.resolveFrameId(options.frame);
 		// Get the scopes to find the variable
@@ -778,6 +783,13 @@ export class DapSession {
 
 	private isPaused(): boolean {
 		return this._state === "paused";
+	}
+
+	/** Ensure stack frames are loaded if we're paused. */
+	private async ensureStack(): Promise<void> {
+		if (this.isPaused() && this._stackFrames.length === 0) {
+			await this.fetchStackTrace();
+		}
 	}
 
 	/** Returns the DAP client, throwing if not connected. Call after requireConnected(). */
