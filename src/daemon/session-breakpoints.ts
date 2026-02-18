@@ -17,7 +17,8 @@ export async function setBreakpoint(
 	let originalFile: string | null = null;
 	let originalLine: number | null = null;
 	let actualLine = line;
-	let actualColumn: number | undefined = options?.column !== undefined ? options.column - 1 : undefined; // user column is 1-based
+	let actualColumn: number | undefined =
+		options?.column !== undefined ? options.column - 1 : undefined; // user column is 1-based
 	let actualFile = file;
 
 	if (!options?.urlRegex) {

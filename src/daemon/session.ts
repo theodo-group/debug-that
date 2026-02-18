@@ -164,8 +164,7 @@ export class DebugSession {
 		this.session = session;
 		ensureSocketDir();
 		this.cdpLogger = new CdpLogger(getLogPath(session));
-		this.daemonLogger =
-			options?.daemonLogger ?? new DaemonLogger(getDaemonLogPath(session));
+		this.daemonLogger = options?.daemonLogger ?? new DaemonLogger(getDaemonLogPath(session));
 	}
 
 	// ── Session lifecycle ─────────────────────────────────────────────
@@ -987,9 +986,12 @@ export class DebugSession {
 
 	private drainReader(reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> }): void {
 		const pump = (): void => {
-			reader.read().then(({ done }) => {
-				if (!done) pump();
-			}).catch(() => {});
+			reader
+				.read()
+				.then(({ done }) => {
+					if (!done) pump();
+				})
+				.catch(() => {});
 		};
 		pump();
 	}

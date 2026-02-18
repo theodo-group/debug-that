@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DaemonLogger } from "../../src/daemon/logger.ts";
+import { join } from "node:path";
 import type { DaemonLogEntry } from "../../src/daemon/logger.ts";
+import { DaemonLogger } from "../../src/daemon/logger.ts";
 import { getDaemonLogPath } from "../../src/daemon/paths.ts";
 import { DebugSession } from "../../src/daemon/session.ts";
 
@@ -104,9 +104,9 @@ describe("DaemonLogger integration", () => {
 		const logPath = getDaemonLogPath(sessionName);
 		try {
 			// Use echo (not node), which won't emit an inspector URL
-			await expect(
-				session.launch(["echo", "hello"], { brk: true }),
-			).rejects.toThrow("Failed to detect inspector URL");
+			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow(
+				"Failed to detect inspector URL",
+			);
 
 			const entries = readEntries(logPath);
 			expect(hasEvent(entries, "child.spawn")).toBe(true);
@@ -128,10 +128,9 @@ describe("DaemonLogger integration", () => {
 			// Use process.exit() to force the child to terminate.
 			// Node.js waits for the debugger to disconnect before exiting,
 			// so we disconnect CDP after a delay to allow the natural exit.
-			await session.launch(
-				["node", "-e", "setTimeout(() => process.exit(0), 200)"],
-				{ brk: false },
-			);
+			await session.launch(["node", "-e", "setTimeout(() => process.exit(0), 200)"], {
+				brk: false,
+			});
 
 			// Disconnect CDP so Node.js can actually exit
 			// (Node prints "Waiting for the debugger to disconnect..." otherwise)

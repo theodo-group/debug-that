@@ -10,6 +10,7 @@ const LaunchRequest = z.object({
 		command: z.array(z.string()),
 		brk: z.optional(z.boolean()),
 		port: z.optional(z.number()),
+		runtime: z.optional(z.string()),
 	}),
 });
 
@@ -17,6 +18,7 @@ const AttachRequest = z.object({
 	cmd: z.literal("attach"),
 	args: z.object({
 		target: z.string(),
+		runtime: z.optional(z.string()),
 	}),
 });
 
@@ -65,6 +67,7 @@ const BreakRequest = z.object({
 		condition: z.optional(z.string()),
 		hitCount: z.optional(z.number()),
 		urlRegex: z.optional(z.string()),
+		column: z.optional(z.number()),
 	}),
 });
 

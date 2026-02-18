@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { type DaemonResponse, DaemonResponseSchema } from "../protocol/messages.ts";
 import { getLockPath, getSocketDir, getSocketPath } from "./paths.ts";
 

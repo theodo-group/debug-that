@@ -5,6 +5,7 @@ import { ensureDaemon } from "../daemon/spawn.ts";
 registerCommand("attach", async (args) => {
 	const session = args.global.session;
 	const target = args.subcommand ?? args.positionals[0];
+	const runtime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
 
 	if (!target) {
 		console.error("No target specified");
@@ -26,7 +27,7 @@ registerCommand("attach", async (args) => {
 
 	// Send attach command
 	const client = new DaemonClient(session);
-	const response = await client.request("attach", { target });
+	const response = await client.request("attach", { target, runtime });
 
 	if (!response.ok) {
 		console.error(`${response.error}`);
