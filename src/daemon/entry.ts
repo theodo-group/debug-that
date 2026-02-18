@@ -118,6 +118,22 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			return { ok: true, data: bpResult };
 		}
 
+		case "break-fn": {
+			const session = activeSession();
+			if (!("setFunctionBreakpoint" in session)) {
+				return {
+					ok: false,
+					error: "Function breakpoints are only supported with DAP runtimes (e.g. --runtime lldb)",
+					suggestion: "Use 'break <file>:<line>' for CDP sessions",
+				};
+			}
+			const { name, condition } = req.args;
+			const bpResult = await (session as DapSession).setFunctionBreakpoint(name, {
+				condition,
+			});
+			return { ok: true, data: bpResult };
+		}
+
 		case "break-rm": {
 			const { ref } = req.args;
 			if (ref === "all") {

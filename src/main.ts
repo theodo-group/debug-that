@@ -15,6 +15,7 @@ if (process.argv.includes("--daemon")) {
 	await import("./commands/pause.ts");
 	await import("./commands/run-to.ts");
 	await import("./commands/break.ts");
+	await import("./commands/break-fn.ts");
 	await import("./commands/break-rm.ts");
 	await import("./commands/break-ls.ts");
 	await import("./commands/logpoint.ts");

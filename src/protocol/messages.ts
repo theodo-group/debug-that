@@ -71,6 +71,14 @@ const BreakRequest = z.object({
 	}),
 });
 
+const BreakFnRequest = z.object({
+	cmd: z.literal("break-fn"),
+	args: z.object({
+		name: z.string(),
+		condition: z.optional(z.string()),
+	}),
+});
+
 const BreakRmRequest = z.object({
 	cmd: z.literal("break-rm"),
 	args: z.object({
@@ -274,6 +282,7 @@ export const DaemonRequestSchema = z.union([
 	PauseRequest,
 	RunToRequest,
 	BreakRequest,
+	BreakFnRequest,
 	BreakRmRequest,
 	BreakLsRequest,
 	LogpointRequest,
