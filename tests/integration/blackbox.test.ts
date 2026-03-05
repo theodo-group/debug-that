@@ -1,29 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { DebugSession } from "../../src/daemon/session.ts";
-
-/**
- * Polls until the session reaches the expected state, or times out.
- */
-async function waitForState(
-	session: DebugSession,
-	state: "idle" | "running" | "paused",
-	timeoutMs = 5000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (session.sessionState !== state && Date.now() < deadline) {
-		await Bun.sleep(50);
-	}
-}
+import { launchPaused } from "../helpers.ts";
 
 describe("Blackbox patterns", () => {
 	test("add blackbox patterns", async () => {
-		const session = new DebugSession("test-blackbox-add");
+		const session = await launchPaused("test-blackbox-add", "tests/fixtures/step-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/step-app.js"], {
-				brk: true,
-			});
-			await waitForState(session, "paused");
-
 			const result = await session.addBlackbox(["node_modules", "internal"]);
 			expect(result).toEqual(["node_modules", "internal"]);
 			expect(session.listBlackbox()).toEqual(["node_modules", "internal"]);
@@ -33,20 +15,10 @@ describe("Blackbox patterns", () => {
 	});
 
 	test("list blackbox patterns", async () => {
-		const session = new DebugSession("test-blackbox-list");
+		const session = await launchPaused("test-blackbox-list", "tests/fixtures/step-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/step-app.js"], {
-				brk: true,
-			});
-			await waitForState(session, "paused");
-
-			// Initially empty
 			expect(session.listBlackbox()).toEqual([]);
-
-			// Add some patterns
 			await session.addBlackbox(["node_modules", "vendor"]);
-
-			// Verify they are listed
 			const patterns = session.listBlackbox();
 			expect(patterns).toEqual(["node_modules", "vendor"]);
 		} finally {
@@ -55,13 +27,8 @@ describe("Blackbox patterns", () => {
 	});
 
 	test("remove specific pattern", async () => {
-		const session = new DebugSession("test-blackbox-rm-specific");
+		const session = await launchPaused("test-blackbox-rm-specific", "tests/fixtures/step-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/step-app.js"], {
-				brk: true,
-			});
-			await waitForState(session, "paused");
-
 			await session.addBlackbox(["node_modules", "vendor"]);
 			expect(session.listBlackbox()).toEqual(["node_modules", "vendor"]);
 
@@ -74,13 +41,8 @@ describe("Blackbox patterns", () => {
 	});
 
 	test("remove all patterns", async () => {
-		const session = new DebugSession("test-blackbox-rm-all");
+		const session = await launchPaused("test-blackbox-rm-all", "tests/fixtures/step-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/step-app.js"], {
-				brk: true,
-			});
-			await waitForState(session, "paused");
-
 			await session.addBlackbox(["node_modules", "vendor", "internal"]);
 			expect(session.listBlackbox()).toHaveLength(3);
 
@@ -93,25 +55,16 @@ describe("Blackbox patterns", () => {
 	});
 
 	test("blackbox persists across continue", async () => {
-		const session = new DebugSession("test-blackbox-persist");
+		const session = await launchPaused("test-blackbox-persist", "tests/fixtures/step-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/step-app.js"], {
-				brk: true,
-			});
-			await waitForState(session, "paused");
-
-			// Set a breakpoint further in the file so we can continue to it
 			await session.setBreakpoint("step-app.js", 12);
 
-			// Add blackbox patterns
 			await session.addBlackbox(["node_modules"]);
 			expect(session.listBlackbox()).toEqual(["node_modules"]);
 
-			// Continue to the breakpoint
 			await session.continue();
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
-			// Patterns should still be present
 			expect(session.listBlackbox()).toEqual(["node_modules"]);
 		} finally {
 			await session.stop();

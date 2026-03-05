@@ -2,22 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { DebugSession } from "../../src/daemon/session.ts";
 
 /**
- * Polls until the session reaches the expected state, or times out.
- * This is needed because Debugger.paused events arrive asynchronously
- * over WebSocket and may not have been processed when launch() returns.
- */
-async function waitForState(
-	session: DebugSession,
-	state: "idle" | "running" | "paused",
-	timeoutMs = 2000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (session.sessionState !== state && Date.now() < deadline) {
-		await Bun.sleep(50);
-	}
-}
-
-/**
  * Reads stderr from a spawned process until it finds the inspector URL line.
  * Returns the accumulated stderr output.
  */
@@ -45,8 +29,7 @@ describe("DebugSession integration", () => {
 			const result = await session.launch(["node", "tests/fixtures/simple-app.js"], {
 				brk: true,
 			});
-			// Allow time for the Debugger.paused event to arrive via WebSocket
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
 			expect(result.pid).toBeGreaterThan(0);
 			expect(result.wsUrl).toMatch(/^ws:\/\//);
@@ -74,8 +57,7 @@ describe("DebugSession integration", () => {
 		const session = new DebugSession("test-status");
 		try {
 			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			// Allow time for the Debugger.paused event to arrive via WebSocket
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
 			const status = session.getStatus();
 			expect(status.session).toBe("test-status");
@@ -143,7 +125,6 @@ describe("DebugSession integration", () => {
 	});
 
 	test("attach by port discovers ws URL", async () => {
-		// Start node with --inspect=0 to get a random port
 		const proc = Bun.spawn(["node", "--inspect=0", "-e", "setTimeout(() => {}, 30000)"], {
 			stdin: "ignore",
 			stdout: "pipe",
@@ -187,15 +168,12 @@ describe("DebugSession integration", () => {
 			await session.launch(["node", "-e", "debugger; setTimeout(() => {}, 30000)"], {
 				brk: true,
 			});
-			// Allow time for the Debugger.paused event to arrive via WebSocket
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
-			// CDP should be connected
 			expect(session.cdp).not.toBeNull();
 			const cdp = session.cdp;
 			expect(cdp?.connected).toBe(true);
 
-			// Should be able to send CDP commands
 			const result = await cdp?.send("Runtime.evaluate", {
 				expression: "1 + 1",
 			});
@@ -210,11 +188,9 @@ describe("DebugSession integration", () => {
 		const session = new DebugSession("test-scripts");
 		try {
 			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			// Allow time for script parsed events to arrive
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
 			const status = session.getStatus();
-			// There should be several scripts loaded (at minimum the main script and node internals)
 			expect(status.scriptCount).toBeGreaterThan(0);
 		} finally {
 			await session.stop();

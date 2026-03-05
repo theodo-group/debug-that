@@ -159,6 +159,10 @@ export class DebugSession {
 	blackboxPatterns: string[] = [];
 	disabledBreakpoints: Map<string, { breakpointId: string; meta: Record<string, unknown> }> =
 		new Map();
+	private _stateWaiters: Array<{
+		target: "idle" | "running" | "paused";
+		resolve: () => void;
+	}> = [];
 	launchCommand: string[] | null = null;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
 	adapter: RuntimeAdapter;
@@ -355,6 +359,7 @@ export class DebugSession {
 		}
 
 		this.state = "idle";
+		this._notifyStateWaiters();
 		this.pauseInfo = null;
 		this.wsUrl = null;
 		this.scripts.clear();
@@ -377,6 +382,49 @@ export class DebugSession {
 
 	get sessionState(): "idle" | "running" | "paused" {
 		return this.state;
+	}
+
+	/**
+	 * Waits until the session reaches the target state (event-driven, no polling).
+	 * Resolves immediately if already in the target state.
+	 */
+	waitForState(
+		target: "idle" | "running" | "paused",
+		timeoutMs = 5000,
+	): Promise<void> {
+		if (this.state === target) return Promise.resolve();
+		return new Promise<void>((resolve, reject) => {
+			const waiter = { target, resolve };
+			this._stateWaiters.push(waiter);
+			const timer = setTimeout(() => {
+				const idx = this._stateWaiters.indexOf(waiter);
+				if (idx !== -1) this._stateWaiters.splice(idx, 1);
+				reject(
+					new Error(
+						`Timed out waiting for state=${target}, current=${this.state}`,
+					),
+				);
+			}, timeoutMs);
+			// Prevent timer from keeping the process alive
+			if (timer.unref) timer.unref();
+			const origResolve = waiter.resolve;
+			waiter.resolve = () => {
+				clearTimeout(timer);
+				origResolve();
+			};
+		});
+	}
+
+	private _notifyStateWaiters(): void {
+		const pending = this._stateWaiters;
+		this._stateWaiters = [];
+		for (const w of pending) {
+			if (w.target === this.state) {
+				w.resolve();
+			} else {
+				this._stateWaiters.push(w);
+			}
+		}
 	}
 
 	get targetPid(): number | null {
@@ -775,12 +823,14 @@ export class DebugSession {
 		// Update state to running if not already paused
 		if (this.state === "idle") {
 			this.state = "running";
+			this._notifyStateWaiters();
 		}
 	}
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
 		cdp.on("Debugger.paused", (p) => {
 			this.state = "paused";
+			this._notifyStateWaiters();
 			const callFrames = p.callFrames;
 			this.pausedCallFrames = callFrames ?? [];
 			const topFrame = callFrames?.[0];
@@ -800,6 +850,7 @@ export class DebugSession {
 
 		cdp.on("Debugger.resumed", () => {
 			this.state = "running";
+			this._notifyStateWaiters();
 			this.pauseInfo = null;
 			this.pausedCallFrames = [];
 			this.refs.clearVolatile();
@@ -829,6 +880,7 @@ export class DebugSession {
 			// is effectively over.
 			this.state = "idle";
 			this.pauseInfo = null;
+			this._notifyStateWaiters();
 		});
 
 		cdp.on("Runtime.consoleAPICalled", (p) => {
@@ -902,6 +954,7 @@ export class DebugSession {
 				}
 				this.state = "idle";
 				this.pauseInfo = null;
+				this._notifyStateWaiters();
 				this.onProcessExit?.();
 			})
 			.catch((err) => {
@@ -912,6 +965,7 @@ export class DebugSession {
 				this.childProcess = null;
 				this.state = "idle";
 				this.pauseInfo = null;
+				this._notifyStateWaiters();
 			});
 	}
 

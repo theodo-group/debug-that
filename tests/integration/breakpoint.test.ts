@@ -1,27 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DebugSession } from "../../src/daemon/session.ts";
-
-/**
- * Polls until the session reaches the expected state, or times out.
- */
-async function waitForState(
-	session: DebugSession,
-	state: "idle" | "running" | "paused",
-	timeoutMs = 2000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (session.sessionState !== state && Date.now() < deadline) {
-		await Bun.sleep(50);
-	}
-}
+import { launchPaused } from "../helpers.ts";
 
 describe("Breakpoint integration", () => {
 	test("set breakpoint by file:line", async () => {
-		const session = new DebugSession("test-bp-set");
+		const session = await launchPaused("test-bp-set", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			const result = await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
 			expect(result.ref).toBe("BP#1");
 			expect(result.location.line).toBeGreaterThan(0);
@@ -32,11 +16,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("list breakpoints returns set breakpoints", async () => {
-		const session = new DebugSession("test-bp-list");
+		const session = await launchPaused("test-bp-list", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 11);
 
@@ -52,11 +33,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("remove breakpoint", async () => {
-		const session = new DebugSession("test-bp-rm");
+		const session = await launchPaused("test-bp-rm", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			const result = await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
 
 			let list = session.listBreakpoints();
@@ -72,11 +50,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("remove all breakpoints", async () => {
-		const session = new DebugSession("test-bp-rm-all");
+		const session = await launchPaused("test-bp-rm-all", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 11);
 
@@ -93,11 +68,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("set conditional breakpoint", async () => {
-		const session = new DebugSession("test-bp-cond");
+		const session = await launchPaused("test-bp-cond", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			const result = await session.setBreakpoint("tests/fixtures/simple-app.js", 5, {
 				condition: "name === 'World'",
 			});
@@ -113,11 +85,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("set breakpoint with hit count", async () => {
-		const session = new DebugSession("test-bp-hit");
+		const session = await launchPaused("test-bp-hit", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			const result = await session.setBreakpoint("tests/fixtures/simple-app.js", 5, {
 				hitCount: 3,
 			});
@@ -133,12 +102,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("set exception pause mode", async () => {
-		const session = new DebugSession("test-bp-catch");
+		const session = await launchPaused("test-bp-catch", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
-			// Should not throw for any valid mode
 			await session.setExceptionPause("all");
 			await session.setExceptionPause("uncaught");
 			await session.setExceptionPause("caught");
@@ -149,11 +114,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("set logpoint", async () => {
-		const session = new DebugSession("test-lp-set");
+		const session = await launchPaused("test-lp-set", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			const result = await session.setLogpoint(
 				"tests/fixtures/simple-app.js",
 				5,
@@ -173,11 +135,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("mixed breakpoints and logpoints in list", async () => {
-		const session = new DebugSession("test-bp-lp-mix");
+		const session = await launchPaused("test-bp-lp-mix", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 5);
 			await session.setLogpoint("tests/fixtures/simple-app.js", 11, '"add called"');
 			await session.setBreakpoint("tests/fixtures/simple-app.js", 38);
@@ -194,11 +153,8 @@ describe("Breakpoint integration", () => {
 	});
 
 	test("remove unknown ref throws error", async () => {
-		const session = new DebugSession("test-bp-rm-unknown");
+		const session = await launchPaused("test-bp-rm-unknown", "tests/fixtures/simple-app.js");
 		try {
-			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
-			await waitForState(session, "paused");
-
 			await expect(session.removeBreakpoint("BP#99")).rejects.toThrow("Unknown ref");
 		} finally {
 			await session.stop();

@@ -20,17 +20,6 @@ function hasEvent(entries: DaemonLogEntry[], event: string): boolean {
 	return entries.some((e) => e.event === event);
 }
 
-async function waitForState(
-	session: DebugSession,
-	state: "idle" | "running" | "paused",
-	timeoutMs = 2000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (session.sessionState !== state && Date.now() < deadline) {
-		await Bun.sleep(50);
-	}
-}
-
 describe("DaemonLogger integration", () => {
 	test("DaemonLogger writes to daemon.log file", () => {
 		const logPath = join(tmpdir(), `test-daemon-write-${Date.now()}.daemon.log`);
@@ -62,7 +51,7 @@ describe("DaemonLogger integration", () => {
 			await session.launch(["node", "tests/fixtures/simple-app.js"], {
 				brk: true,
 			});
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
 			const entries = readEntries(logPath);
 			expect(hasEvent(entries, "child.spawn")).toBe(true);
@@ -82,10 +71,9 @@ describe("DaemonLogger integration", () => {
 			await session.launch(["node", "tests/fixtures/simple-app.js"], {
 				brk: true,
 			});
-			await waitForState(session, "paused");
+			await session.waitForState("paused");
 
 			const entries = readEntries(logPath);
-			// The "Debugger listening on..." line comes from child stderr
 			const stderrEntries = entries.filter((e) => e.event === "child.stderr");
 			expect(stderrEntries.length).toBeGreaterThan(0);
 			const hasDebuggerLine = stderrEntries.some((e) =>
@@ -103,7 +91,6 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			// Use echo (not node), which won't emit an inspector URL
 			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow(
 				"Failed to detect inspector URL",
 			);
@@ -111,7 +98,6 @@ describe("DaemonLogger integration", () => {
 			const entries = readEntries(logPath);
 			expect(hasEvent(entries, "child.spawn")).toBe(true);
 			expect(hasEvent(entries, "inspector.failed")).toBe(true);
-			// Should capture the accumulated stderr in the failure entry
 			const failEntry = entries.find((e) => e.event === "inspector.failed");
 			expect(failEntry?.data?.stderr).toBeDefined();
 		} finally {
@@ -125,15 +111,11 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			// Use process.exit() to force the child to terminate.
-			// Node.js waits for the debugger to disconnect before exiting,
-			// so we disconnect CDP after a delay to allow the natural exit.
 			await session.launch(["node", "-e", "setTimeout(() => process.exit(0), 200)"], {
 				brk: false,
 			});
 
 			// Disconnect CDP so Node.js can actually exit
-			// (Node prints "Waiting for the debugger to disconnect..." otherwise)
 			await Bun.sleep(300);
 			session.cdp?.disconnect();
 
