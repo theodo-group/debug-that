@@ -42,9 +42,29 @@ export class SourceMapResolver {
 	// Reverse lookup: resolved source path → { scriptId, sourceIndex }
 	private sourceIndex: Map<string, { scriptId: string; sourceIndex: number }> = new Map();
 	private disabled = false;
+	private pendingLoads: Set<Promise<boolean>> = new Set();
+
+	/**
+	 * Wait until all in-flight source map loads have completed.
+	 */
+	async waitForPendingLoads(): Promise<void> {
+		while (this.pendingLoads.size > 0) {
+			await Promise.all([...this.pendingLoads]);
+		}
+	}
 
 	async loadSourceMap(scriptId: string, scriptUrl: string, sourceMapURL: string): Promise<boolean> {
 		if (this.disabled) return false;
+		const promise = this._doLoadSourceMap(scriptId, scriptUrl, sourceMapURL);
+		this.pendingLoads.add(promise);
+		try {
+			return await promise;
+		} finally {
+			this.pendingLoads.delete(promise);
+		}
+	}
+
+	private async _doLoadSourceMap(scriptId: string, scriptUrl: string, sourceMapURL: string): Promise<boolean> {
 
 		try {
 			let rawMap: string;

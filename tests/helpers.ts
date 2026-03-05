@@ -2,6 +2,7 @@ import { DebugSession } from "../src/daemon/session.ts";
 
 /**
  * Launch a session with --inspect-brk and wait for the initial pause.
+ * Also waits for any pending source maps to finish loading.
  */
 export async function launchPaused(
 	name: string,
@@ -11,6 +12,7 @@ export async function launchPaused(
 	const session = new DebugSession(name);
 	await session.launch([runtime, fixture], { brk: true });
 	await session.waitForState("paused");
+	await session.sourceMapResolver.waitForPendingLoads();
 	return session;
 }
 
@@ -26,4 +28,52 @@ export async function launchAndContinueToDebugger(
 	await session.continue();
 	await session.waitForState("paused");
 	return session;
+}
+
+/**
+ * Run a test body with an auto-cleaned-up paused session.
+ * Eliminates try/finally boilerplate.
+ */
+export async function withPausedSession(
+	name: string,
+	fixture: string,
+	fn: (session: DebugSession) => Promise<void>,
+): Promise<void> {
+	const session = await launchPaused(name, fixture);
+	try {
+		await fn(session);
+	} finally {
+		await session.stop();
+	}
+}
+
+/**
+ * Run a test body with a session paused at the `debugger;` statement.
+ */
+export async function withDebuggerSession(
+	name: string,
+	fixture: string,
+	fn: (session: DebugSession) => Promise<void>,
+): Promise<void> {
+	const session = await launchAndContinueToDebugger(name, fixture);
+	try {
+		await fn(session);
+	} finally {
+		await session.stop();
+	}
+}
+
+/**
+ * Run a test body with a fresh DebugSession (no launch). Auto-stops.
+ */
+export async function withSession(
+	name: string,
+	fn: (session: DebugSession) => Promise<void>,
+): Promise<void> {
+	const session = new DebugSession(name);
+	try {
+		await fn(session);
+	} finally {
+		await session.stop();
+	}
 }
