@@ -166,8 +166,7 @@ describe("DaemonClient", () => {
 describe("idle timeout", () => {
 	test("auto-terminates after idle timeout", async () => {
 		const session = testSession("idle");
-		// Use a very short timeout (0.5 seconds)
-		const server = new DaemonServer(session, { idleTimeout: 0.5 });
+		const server = new DaemonServer(session, { idleTimeout: 0.05 });
 
 		server.onRequest(async () => ({ ok: true, data: "pong" }));
 		await server.start();
@@ -176,14 +175,14 @@ describe("idle timeout", () => {
 		expect(existsSync(socketPath)).toBe(true);
 
 		// Wait for idle timeout to kick in
-		await Bun.sleep(1000);
+		await Bun.sleep(100);
 
 		expect(existsSync(socketPath)).toBe(false);
 	});
 
 	test("resets idle timer on request", async () => {
 		const session = testSession("irst");
-		const server = new DaemonServer(session, { idleTimeout: 1 });
+		const server = new DaemonServer(session, { idleTimeout: 0.1 });
 
 		server.onRequest(async () => ({ ok: true, data: "pong" }));
 		await server.start();
@@ -192,12 +191,12 @@ describe("idle timeout", () => {
 
 		try {
 			// Send a request before timeout
-			await Bun.sleep(500);
+			await Bun.sleep(50);
 			const client = new DaemonClient(session);
 			await client.request("ping");
 
 			// Socket should still exist after original timeout would have fired
-			await Bun.sleep(600);
+			await Bun.sleep(60);
 			expect(existsSync(socketPath)).toBe(true);
 		} finally {
 			await server.stop();
