@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../src/daemon/session.ts";
-import { withPausedSession } from "../helpers.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
+import { withPausedSession } from "../../helpers.ts";
 
 describe("Breakpoint integration", () => {
 	test("set breakpoint by file:line", () =>

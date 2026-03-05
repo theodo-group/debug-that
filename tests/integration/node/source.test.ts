@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withPausedSession } from "../helpers.ts";
+import { withPausedSession } from "../../helpers.ts";
 
 describe("Inspection commands", () => {
 	test("getSource returns lines around pause location with current marker", () =>

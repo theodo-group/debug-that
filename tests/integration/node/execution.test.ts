@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../src/daemon/session.ts";
-import { withPausedSession, withSession } from "../helpers.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
+import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("Execution control", () => {
 	test("continue resumes and process finishes", () =>

@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DaemonLogEntry } from "../../src/daemon/logger.ts";
-import { DaemonLogger } from "../../src/daemon/logger.ts";
-import { getDaemonLogPath } from "../../src/daemon/paths.ts";
-import { DebugSession } from "../../src/daemon/session.ts";
+import type { DaemonLogEntry } from "../../../src/daemon/logger.ts";
+import { DaemonLogger } from "../../../src/daemon/logger.ts";
+import { getDaemonLogPath } from "../../../src/daemon/paths.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
 
 function readEntries(logPath: string): DaemonLogEntry[] {
 	if (!existsSync(logPath)) return [];

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withPausedSession } from "../helpers.ts";
+import { withPausedSession } from "../../helpers.ts";
 
 describe("Source map integration", () => {
 	test("stack trace shows .ts paths after source map resolution", () =>

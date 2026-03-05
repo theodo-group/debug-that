@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../src/daemon/session.ts";
-import { withSession } from "../helpers.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
+import { withSession } from "../../helpers.ts";
 
 async function readStderrUntilInspector(stderr: ReadableStream<Uint8Array>): Promise<string> {
 	const reader = stderr.getReader();

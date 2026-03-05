@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../src/daemon/session.ts";
-import { withDebuggerSession, withSession } from "../helpers.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
+import { withDebuggerSession, withSession } from "../../helpers.ts";
 
 describe("Inspection: eval", () => {
 	test("eval evaluates a simple expression", () =>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../src/daemon/session.ts";
-import { launchPaused, withSession } from "../helpers.ts";
+import { DebugSession } from "../../../src/daemon/session.ts";
+import { launchPaused, withSession } from "../../helpers.ts";
 
 /**
  * Launch console-app.js, continue to debugger, and wait for console events.
