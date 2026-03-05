@@ -388,10 +388,7 @@ export class DebugSession {
 	 * Waits until the session reaches the target state (event-driven, no polling).
 	 * Resolves immediately if already in the target state.
 	 */
-	waitForState(
-		target: "idle" | "running" | "paused",
-		timeoutMs = 5000,
-	): Promise<void> {
+	waitForState(target: "idle" | "running" | "paused", timeoutMs = 5000): Promise<void> {
 		if (this.state === target) return Promise.resolve();
 		return new Promise<void>((resolve, reject) => {
 			const waiter = { target, resolve };
@@ -399,11 +396,7 @@ export class DebugSession {
 			const timer = setTimeout(() => {
 				const idx = this._stateWaiters.indexOf(waiter);
 				if (idx !== -1) this._stateWaiters.splice(idx, 1);
-				reject(
-					new Error(
-						`Timed out waiting for state=${target}, current=${this.state}`,
-					),
-				);
+				reject(new Error(`Timed out waiting for state=${target}, current=${this.state}`));
 			}, timeoutMs);
 			// Prevent timer from keeping the process alive
 			if (timer.unref) timer.unref();
@@ -689,7 +682,7 @@ export class DebugSession {
 	findScriptUrl(file: string): string | null {
 		// Try exact suffix match first
 		for (const script of this.scripts.values()) {
-			if (script.url && script.url.endsWith(file)) {
+			if (script.url?.endsWith(file)) {
 				return script.url;
 			}
 		}

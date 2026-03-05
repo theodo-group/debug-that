@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
 import { withDebuggerSession, withSession } from "../../helpers.ts";
 
 describe("Inspection: eval", () => {
@@ -45,9 +44,13 @@ describe("Inspection: eval", () => {
 		}));
 
 	test("eval syntax error throws", () =>
-		withDebuggerSession("test-eval-syntax-err", "tests/fixtures/inspect-app.js", async (session) => {
-			await expect(session.eval("if (")).rejects.toThrow();
-		}));
+		withDebuggerSession(
+			"test-eval-syntax-err",
+			"tests/fixtures/inspect-app.js",
+			async (session) => {
+				await expect(session.eval("if (")).rejects.toThrow();
+			},
+		));
 
 	test("eval throws when not paused", () =>
 		withSession("test-eval-not-paused", async (session) => {
@@ -57,16 +60,20 @@ describe("Inspection: eval", () => {
 		}));
 
 	test("eval with @ref interpolation", () =>
-		withDebuggerSession("test-eval-ref-interp", "tests/fixtures/inspect-app.js", async (session) => {
-			const vars = await session.getVars();
-			const objVar = vars.find((v) => v.name === "obj");
-			expect(objVar).toBeDefined();
-			if (objVar) {
-				const result = await session.eval(`${objVar.ref}.count`);
-				expect(result.type).toBe("number");
-				expect(result.value).toBe("42");
-			}
-		}));
+		withDebuggerSession(
+			"test-eval-ref-interp",
+			"tests/fixtures/inspect-app.js",
+			async (session) => {
+				const vars = await session.getVars();
+				const objVar = vars.find((v) => v.name === "obj");
+				expect(objVar).toBeDefined();
+				if (objVar) {
+					const result = await session.eval(`${objVar.ref}.count`);
+					expect(result.type).toBe("number");
+					expect(result.value).toBe("42");
+				}
+			},
+		));
 });
 
 describe("Inspection: vars", () => {
@@ -169,12 +176,16 @@ describe("Inspection: props", () => {
 		}));
 
 	test("getProps on primitive ref throws gracefully", () =>
-		withDebuggerSession("test-props-primitive", "tests/fixtures/inspect-app.js", async (session) => {
-			const vars = await session.getVars();
-			const numVar = vars.find((v) => v.name === "num");
-			expect(numVar).toBeDefined();
-			if (numVar) {
-				await expect(session.getProps(numVar.ref)).rejects.toThrow("primitive");
-			}
-		}));
+		withDebuggerSession(
+			"test-props-primitive",
+			"tests/fixtures/inspect-app.js",
+			async (session) => {
+				const vars = await session.getVars();
+				const numVar = vars.find((v) => v.name === "num");
+				expect(numVar).toBeDefined();
+				if (numVar) {
+					await expect(session.getProps(numVar.ref)).rejects.toThrow("primitive");
+				}
+			},
+		));
 });

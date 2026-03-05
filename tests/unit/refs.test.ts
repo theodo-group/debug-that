@@ -16,10 +16,10 @@ describe("RefTable", () => {
 			table.addVar("rid-1", "count", { scope: "local" });
 			const entry = table.resolve("@v1");
 			expect(entry).toBeDefined();
-			expect(entry!.name).toBe("count");
-			expect(entry!.meta).toEqual({ scope: "local" });
-			expect(entry!.remoteId).toBe("rid-1");
-			expect(entry!.type).toBe("v");
+			expect(entry?.name).toBe("count");
+			expect(entry?.meta).toEqual({ scope: "local" });
+			expect(entry?.remoteId).toBe("rid-1");
+			expect(entry?.type).toBe("v");
 		});
 	});
 
@@ -224,8 +224,8 @@ describe("RefTable", () => {
 
 			const vars = table.list("v");
 			expect(vars).toHaveLength(2);
-			expect(vars[0]!.ref).toBe("@v1");
-			expect(vars[1]!.ref).toBe("@v2");
+			expect(vars[0]?.ref).toBe("@v1");
+			expect(vars[1]?.ref).toBe("@v2");
 		});
 
 		test("returns empty array when no entries of type exist", () => {
@@ -261,8 +261,8 @@ describe("RefTable", () => {
 			table.addVar("rid-1");
 			const entry = table.resolve("@v1");
 			expect(entry).toBeDefined();
-			expect(entry!.name).toBeUndefined();
-			expect(entry!.meta).toBeUndefined();
+			expect(entry?.name).toBeUndefined();
+			expect(entry?.meta).toBeUndefined();
 		});
 	});
 });

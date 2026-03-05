@@ -66,7 +66,11 @@ describe("Breakpoint integration", () => {
 
 	test("set logpoint", () =>
 		withPausedSession("test-lp-set", "tests/fixtures/simple-app.js", async (session) => {
-			const result = await session.setLogpoint("tests/fixtures/simple-app.js", 5, '"greet called with:", name');
+			const result = await session.setLogpoint(
+				"tests/fixtures/simple-app.js",
+				5,
+				'"greet called with:", name',
+			);
 			expect(result.ref).toBe("LP#1");
 			expect(result.location.url).toContain("simple-app.js");
 			const list = session.listBreakpoints();

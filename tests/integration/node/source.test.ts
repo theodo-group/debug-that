@@ -33,7 +33,7 @@ describe("Inspection commands", () => {
 			expect(scripts.length).toBeGreaterThan(0);
 			const stepApp = scripts.find((s) => s.url.includes("step-app.js"));
 			expect(stepApp).toBeDefined();
-			expect(stepApp!.scriptId).toBeDefined();
+			expect(stepApp?.scriptId).toBeDefined();
 		}));
 
 	test("getScripts with filter narrows results", () =>
@@ -73,7 +73,7 @@ describe("Inspection commands", () => {
 			expect(session.sessionState).toBe("paused");
 			const stack = session.getStack();
 			expect(stack.length).toBeGreaterThanOrEqual(2);
-			expect(stack[0]!.functionName).toBe("helper");
+			expect(stack[0]?.functionName).toBe("helper");
 		}));
 
 	test("searchInScripts finds a string in step-app.js", () =>
@@ -82,8 +82,8 @@ describe("Inspection commands", () => {
 			expect(results.length).toBeGreaterThan(0);
 			const match = results.find((r) => r.url.includes("step-app.js"));
 			expect(match).toBeDefined();
-			expect(match!.line).toBeGreaterThan(0);
-			expect(match!.content).toContain("helper");
+			expect(match?.line).toBeGreaterThan(0);
+			expect(match?.content).toContain("helper");
 		}));
 
 	test("searchInScripts with no matches returns empty array", () =>

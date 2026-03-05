@@ -30,9 +30,13 @@ describe("break-toggle", () => {
 		}));
 
 	test("toggle unknown ref throws error", () =>
-		withPausedSession("test-break-toggle-unknown", "tests/fixtures/simple-app.js", async (session) => {
-			await expect(session.toggleBreakpoint("BP#99")).rejects.toThrow("Unknown breakpoint ref");
-		}));
+		withPausedSession(
+			"test-break-toggle-unknown",
+			"tests/fixtures/simple-app.js",
+			async (session) => {
+				await expect(session.toggleBreakpoint("BP#99")).rejects.toThrow("Unknown breakpoint ref");
+			},
+		));
 });
 
 describe("breakable", () => {
@@ -49,12 +53,16 @@ describe("breakable", () => {
 
 	test("throws for unknown file", () =>
 		withPausedSession("test-breakable-unknown", "tests/fixtures/simple-app.js", async (session) => {
-			await expect(session.getBreakableLocations("nonexistent.js", 1, 5)).rejects.toThrow("No loaded script matches");
+			await expect(session.getBreakableLocations("nonexistent.js", 1, 5)).rejects.toThrow(
+				"No loaded script matches",
+			);
 		}));
 
 	test("throws without CDP connection", async () => {
 		const session = new DebugSession("test-breakable-no-cdp");
-		await expect(session.getBreakableLocations("file.js", 1, 5)).rejects.toThrow("No active debug session");
+		await expect(session.getBreakableLocations("file.js", 1, 5)).rejects.toThrow(
+			"No active debug session",
+		);
 	});
 });
 
@@ -67,7 +75,7 @@ describe("restart-frame", () => {
 				currentLine = session.getStatus().pauseInfo?.line ?? currentLine;
 			}
 			await session.step("into");
-			let line = session.getStatus().pauseInfo?.line;
+			const line = session.getStatus().pauseInfo?.line;
 			if (line !== undefined && line >= 10) {
 				await session.step("into");
 			}

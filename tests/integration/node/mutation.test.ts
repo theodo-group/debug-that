@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
 import { withDebuggerSession, withPausedSession, withSession } from "../../helpers.ts";
 
 describe("Mutation: setVariable", () => {
@@ -47,7 +46,10 @@ describe("Mutation: hotpatch", () => {
 	test("hotpatch replaces script source", () =>
 		withDebuggerSession("test-hotpatch", "tests/fixtures/mutation-app.js", async (session) => {
 			const source = await session.getSource({ file: "mutation-app.js", all: true });
-			const modified = source.lines.map((l) => l.text).join("\n").replace("counter++", "counter += 10");
+			const modified = source.lines
+				.map((l) => l.text)
+				.join("\n")
+				.replace("counter++", "counter += 10");
 			const result = await session.hotpatch("mutation-app.js", modified);
 			expect(result.status).toBeDefined();
 			const newSource = await session.getSource({ file: "mutation-app.js", all: true });
@@ -65,20 +67,33 @@ describe("Mutation: hotpatch", () => {
 		}));
 
 	test("hotpatch works when edited function is on the call stack", () =>
-		withPausedSession("test-hotpatch-active-fn", "tests/fixtures/hotpatch-active-fn.js", async (session) => {
-			await session.continue();
-			await session.waitForState("paused");
-			expect(session.isPaused()).toBe(true);
-			const source = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
-			const modified = source.lines.map((l) => l.text).join("\n").replace("x * 2", "x * 3");
-			const result = await session.hotpatch("hotpatch-active-fn.js", modified);
-			expect(result.status).toBe("Ok");
-			const newSource = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
-			expect(newSource.lines.map((l) => l.text).join("\n")).toContain("x * 3");
-		}));
+		withPausedSession(
+			"test-hotpatch-active-fn",
+			"tests/fixtures/hotpatch-active-fn.js",
+			async (session) => {
+				await session.continue();
+				await session.waitForState("paused");
+				expect(session.isPaused()).toBe(true);
+				const source = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
+				const modified = source.lines
+					.map((l) => l.text)
+					.join("\n")
+					.replace("x * 2", "x * 3");
+				const result = await session.hotpatch("hotpatch-active-fn.js", modified);
+				expect(result.status).toBe("Ok");
+				const newSource = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
+				expect(newSource.lines.map((l) => l.text).join("\n")).toContain("x * 3");
+			},
+		));
 
 	test("hotpatch throws for unknown file", () =>
-		withDebuggerSession("test-hotpatch-unknown", "tests/fixtures/mutation-app.js", async (session) => {
-			await expect(session.hotpatch("nonexistent-file.js", "// new source")).rejects.toThrow("No loaded script");
-		}));
+		withDebuggerSession(
+			"test-hotpatch-unknown",
+			"tests/fixtures/mutation-app.js",
+			async (session) => {
+				await expect(session.hotpatch("nonexistent-file.js", "// new source")).rejects.toThrow(
+					"No loaded script",
+				);
+			},
+		));
 });

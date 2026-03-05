@@ -31,6 +31,19 @@
 	"files": {
 		"includes": ["src/**", "tests/**"]
 	},
+	"overrides": [
+		{
+			"includes": ["src/cdp/jsc-protocol.d.ts"],
+			"linter": { "enabled": false },
+			"formatter": { "enabled": false }
+		},
+		{
+			"includes": ["tests/fixtures/**"],
+			"linter": { "enabled": false },
+			"formatter": { "enabled": false },
+			"assist": { "enabled": false }
+		}
+	],
 	"assist": {
 		"actions": {
 			"source": {

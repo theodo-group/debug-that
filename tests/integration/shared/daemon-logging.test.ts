@@ -27,7 +27,7 @@ describe("DaemonLogger integration", () => {
 			logger.info("test.event", "hello world", { key: "value" });
 			const entries = readEntries(logPath);
 			expect(entries).toHaveLength(1);
-			expect(entries[0]!.event).toBe("test.event");
+			expect(entries[0]?.event).toBe("test.event");
 		} finally {
 			if (existsSync(logPath)) unlinkSync(logPath);
 		}
@@ -62,9 +62,11 @@ describe("DaemonLogger integration", () => {
 			await session.launch(["node", "tests/fixtures/simple-app.js"], { brk: true });
 			await session.waitForState("paused");
 			const entries = readEntries(logPath);
-			expect(entries.filter((e) => e.event === "child.stderr").some((e) =>
-				e.message.includes("Debugger listening on"),
-			)).toBe(true);
+			expect(
+				entries
+					.filter((e) => e.event === "child.stderr")
+					.some((e) => e.message.includes("Debugger listening on")),
+			).toBe(true);
 		} finally {
 			await session.stop();
 			if (existsSync(logPath)) unlinkSync(logPath);
@@ -76,7 +78,9 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow("Failed to detect inspector URL");
+			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow(
+				"Failed to detect inspector URL",
+			);
 			const entries = readEntries(logPath);
 			expect(hasEvent(entries, "child.spawn")).toBe(true);
 			expect(hasEvent(entries, "inspector.failed")).toBe(true);
@@ -91,7 +95,9 @@ describe("DaemonLogger integration", () => {
 		const session = new DebugSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
-			await session.launch(["node", "-e", "setTimeout(() => process.exit(0), 200)"], { brk: false });
+			await session.launch(["node", "-e", "setTimeout(() => process.exit(0), 200)"], {
+				brk: false,
+			});
 			await Bun.sleep(300);
 			session.cdp?.disconnect();
 			const deadline = Date.now() + 5000;

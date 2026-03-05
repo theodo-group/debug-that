@@ -64,8 +64,11 @@ export class SourceMapResolver {
 		}
 	}
 
-	private async _doLoadSourceMap(scriptId: string, scriptUrl: string, sourceMapURL: string): Promise<boolean> {
-
+	private async _doLoadSourceMap(
+		scriptId: string,
+		scriptUrl: string,
+		sourceMapURL: string,
+	): Promise<boolean> {
 		try {
 			let rawMap: string;
 

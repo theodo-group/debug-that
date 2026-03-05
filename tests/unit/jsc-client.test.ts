@@ -48,8 +48,8 @@ describe("JscClient", () => {
 		const c = cdp!;
 
 		const sentMethods: string[] = [];
-		const originalSend = c["ws"].send.bind(c["ws"]);
-		c["ws"].send = (data: unknown) => {
+		const originalSend = c.ws.send.bind(c.ws);
+		c.ws.send = (data: unknown) => {
 			if (typeof data === "string") {
 				const parsed = JSON.parse(data);
 				sentMethods.push(parsed.method);
@@ -69,8 +69,8 @@ describe("JscClient", () => {
 		const c = cdp!;
 
 		const sentParams: unknown[] = [];
-		const originalSend = c["ws"].send.bind(c["ws"]);
-		c["ws"].send = (data: unknown) => {
+		const originalSend = c.ws.send.bind(c.ws);
+		c.ws.send = (data: unknown) => {
 			if (typeof data === "string") {
 				const parsed = JSON.parse(data);
 				sentParams.push(parsed.params);

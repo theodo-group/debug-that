@@ -81,8 +81,8 @@ describe("SourceMapResolver", () => {
 			// which maps to line 7 of app.ts "function greet(person: Person): string {"
 			const original = resolver.toOriginal("1", 2, 0);
 			expect(original).not.toBeNull();
-			expect(original!.source).toContain("app.ts");
-			expect(original!.line).toBe(7);
+			expect(original?.source).toContain("app.ts");
+			expect(original?.line).toBe(7);
 		});
 
 		test("returns null for script without source map", () => {
@@ -105,8 +105,8 @@ describe("SourceMapResolver", () => {
 			// Line 7 col 0 of app.ts (greet function) should map to line 2 of app.js
 			const generated = resolver.toGenerated("../src/app.ts", 7, 0);
 			expect(generated).not.toBeNull();
-			expect(generated!.scriptId).toBe("1");
-			expect(generated!.line).toBe(2);
+			expect(generated?.scriptId).toBe("1");
+			expect(generated?.line).toBe(2);
 		});
 
 		test("works with suffix matching", async () => {
@@ -115,7 +115,7 @@ describe("SourceMapResolver", () => {
 			// Should find via suffix matching
 			const generated = resolver.toGenerated("src/app.ts", 7, 0);
 			expect(generated).not.toBeNull();
-			expect(generated!.scriptId).toBe("1");
+			expect(generated?.scriptId).toBe("1");
 		});
 
 		test("returns null for unknown source", async () => {
@@ -135,10 +135,9 @@ describe("SourceMapResolver", () => {
 	describe("getOriginalSource", () => {
 		test("returns original TS source from sourcesContent", async () => {
 			await resolver.loadSourceMap("1", APP_JS, "app.js.map");
-			const source = resolver.getOriginalSource("1", "app.ts");
-			expect(source).not.toBeNull();
-			expect(source!).toContain("interface Person");
-			expect(source!).toContain("person: Person");
+			const source = resolver.getOriginalSource("1", "app.ts") ?? "";
+			expect(source).toContain("interface Person");
+			expect(source).toContain("person: Person");
 		});
 
 		test("returns null for unknown script", () => {
@@ -160,8 +159,8 @@ describe("SourceMapResolver", () => {
 
 			const result = resolver.findScriptForSource("app.ts");
 			expect(result).not.toBeNull();
-			expect(result!.scriptId).toBe("1");
-			expect(result!.url).toBe(APP_JS);
+			expect(result?.scriptId).toBe("1");
+			expect(result?.url).toBe(APP_JS);
 		});
 
 		test("finds script by path suffix", async () => {
@@ -169,7 +168,7 @@ describe("SourceMapResolver", () => {
 
 			const result = resolver.findScriptForSource("src/app.ts");
 			expect(result).not.toBeNull();
-			expect(result!.scriptId).toBe("1");
+			expect(result?.scriptId).toBe("1");
 		});
 
 		test("returns null for unknown path", async () => {
@@ -192,11 +191,11 @@ describe("SourceMapResolver", () => {
 
 			const info = resolver.getInfo("1");
 			expect(info).not.toBeNull();
-			expect(info!.scriptId).toBe("1");
-			expect(info!.generatedUrl).toBe(APP_JS);
-			expect(info!.mapUrl).toBe("app.js.map");
-			expect(info!.sources.length).toBeGreaterThan(0);
-			expect(info!.hasSourcesContent).toBe(true);
+			expect(info?.scriptId).toBe("1");
+			expect(info?.generatedUrl).toBe(APP_JS);
+			expect(info?.mapUrl).toBe("app.js.map");
+			expect(info?.sources.length).toBeGreaterThan(0);
+			expect(info?.hasSourcesContent).toBe(true);
 		});
 
 		test("getInfo returns null for unknown script", () => {
@@ -209,7 +208,7 @@ describe("SourceMapResolver", () => {
 
 			const infos = resolver.getAllInfos();
 			expect(infos.length).toBe(1);
-			expect(infos[0]!.scriptId).toBe("1");
+			expect(infos[0]?.scriptId).toBe("1");
 		});
 	});
 

@@ -50,8 +50,8 @@ describe("CdpClient", () => {
 		test("first request has id=1, second has id=2", async () => {
 			const c = client!;
 			const sentMessages: string[] = [];
-			const originalSend = c["ws"].send.bind(c["ws"]);
-			c["ws"].send = (data: unknown) => {
+			const originalSend = c.ws.send.bind(c.ws);
+			c.ws.send = (data: unknown) => {
 				sentMessages.push(typeof data === "string" ? data : "");
 				return originalSend(data as string);
 			};
@@ -94,7 +94,7 @@ describe("CdpClient", () => {
 			c.handleMessage(JSON.stringify({ id: 4, result: {} }));
 			await p4;
 
-			expect(c["nextId"]).toBe(5);
+			expect(c.nextId).toBe(5);
 		});
 	});
 
@@ -224,8 +224,8 @@ describe("CdpClient", () => {
 		test("send() includes params when provided", async () => {
 			const c = client!;
 			const sentMessages: string[] = [];
-			const originalSend = c["ws"].send.bind(c["ws"]);
-			c["ws"].send = (data: unknown) => {
+			const originalSend = c.ws.send.bind(c.ws);
+			c.ws.send = (data: unknown) => {
 				sentMessages.push(typeof data === "string" ? data : "");
 				return originalSend(data as string);
 			};
@@ -252,12 +252,12 @@ describe("CdpClient", () => {
 			const promise = c.send("Debugger.enable");
 
 			// Verify request is pending
-			expect(c["pending"].size).toBe(1);
+			expect(c.pending.size).toBe(1);
 
 			// Simulate what the timeout does: reject and remove from pending
-			const pending = c["pending"].get(1)!;
+			const pending = c.pending.get(1)!;
 			clearTimeout(pending.timer);
-			c["pending"].delete(1);
+			c.pending.delete(1);
 			pending.reject(new Error("CDP request timed out: Debugger.enable (id=1)"));
 
 			await expect(promise).rejects.toThrow("CDP request timed out: Debugger.enable (id=1)");
@@ -270,10 +270,10 @@ describe("CdpClient", () => {
 			c.send("Debugger.enable").catch(() => {});
 			c.send("Runtime.enable").catch(() => {});
 
-			expect(c["pending"].size).toBe(2);
+			expect(c.pending.size).toBe(2);
 
-			const pending1 = c["pending"].get(1)!;
-			const pending2 = c["pending"].get(2)!;
+			const pending1 = c.pending.get(1)!;
+			const pending2 = c.pending.get(2)!;
 
 			// Timers should be set (non-null/undefined)
 			expect(pending1.timer).toBeDefined();
@@ -319,10 +319,10 @@ describe("CdpClient", () => {
 
 			c.on("Debugger.paused", () => {});
 			c.on("Runtime.consoleAPICalled", () => {});
-			expect(c["listeners"].size).toBe(2);
+			expect(c.listeners.size).toBe(2);
 
 			c.disconnect();
-			expect(c["listeners"].size).toBe(0);
+			expect(c.listeners.size).toBe(0);
 		});
 
 		test("disconnect() is idempotent", () => {
@@ -338,16 +338,16 @@ describe("CdpClient", () => {
 
 			c.send("Debugger.enable").catch(() => {});
 			c.send("Runtime.enable").catch(() => {});
-			expect(c["pending"].size).toBe(2);
+			expect(c.pending.size).toBe(2);
 
 			c.disconnect();
-			expect(c["pending"].size).toBe(0);
+			expect(c.pending.size).toBe(0);
 		});
 	});
 
 	describe("connect", () => {
 		test("connected is true after successful connect", () => {
-			expect(client!.connected).toBe(true);
+			expect(client?.connected).toBe(true);
 		});
 
 		test("connect rejects on invalid URL", async () => {
@@ -359,8 +359,8 @@ describe("CdpClient", () => {
 		test("sends enable for required and optional domains", async () => {
 			const c = client!;
 			const sentMethods: string[] = [];
-			const originalSend = c["ws"].send.bind(c["ws"]);
-			c["ws"].send = (data: unknown) => {
+			const originalSend = c.ws.send.bind(c.ws);
+			c.ws.send = (data: unknown) => {
 				if (typeof data === "string") {
 					const parsed = JSON.parse(data);
 					sentMethods.push(parsed.method);
@@ -386,8 +386,8 @@ describe("CdpClient", () => {
 
 		test("tracks which optional domains succeed", async () => {
 			const c = client!;
-			const originalSend = c["ws"].send.bind(c["ws"]);
-			c["ws"].send = (data: unknown) => {
+			const originalSend = c.ws.send.bind(c.ws);
+			c.ws.send = (data: unknown) => {
 				if (typeof data === "string") {
 					const parsed = JSON.parse(data);
 					setTimeout(() => {
@@ -417,8 +417,8 @@ describe("CdpClient", () => {
 		test("sends Runtime.runIfWaitingForDebugger", async () => {
 			const c = client!;
 			const sentMethods: string[] = [];
-			const originalSend = c["ws"].send.bind(c["ws"]);
-			c["ws"].send = (data: unknown) => {
+			const originalSend = c.ws.send.bind(c.ws);
+			c.ws.send = (data: unknown) => {
 				if (typeof data === "string") {
 					const parsed = JSON.parse(data);
 					sentMethods.push(parsed.method);
@@ -498,7 +498,7 @@ describe("CdpClient", () => {
 			await promise;
 
 			// Listener should be cleaned up
-			expect(c["listeners"].get("Debugger.paused")?.size ?? 0).toBe(0);
+			expect(c.listeners.get("Debugger.paused")?.size ?? 0).toBe(0);
 		});
 
 		test("cleans up listener after timeout", async () => {
@@ -511,7 +511,7 @@ describe("CdpClient", () => {
 				// expected
 			}
 
-			expect(c["listeners"].get("Debugger.paused")?.size ?? 0).toBe(0);
+			expect(c.listeners.get("Debugger.paused")?.size ?? 0).toBe(0);
 		});
 
 		test("works with untyped events", async () => {

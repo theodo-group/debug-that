@@ -131,8 +131,11 @@ export class CdpClient {
 		event: string,
 		opts?: { timeoutMs?: number; filter?: (params: unknown) => boolean },
 	): Promise<unknown>;
-	// biome-ignore lint/suspicious/noExplicitAny: Implementation signature accepts both typed and untyped filter functions
-	waitFor(event: string, opts?: { timeoutMs?: number; filter?: (...args: any[]) => boolean }): Promise<unknown> {
+	waitFor(
+		event: string,
+		// biome-ignore lint/suspicious/noExplicitAny: Implementation signature accepts both typed and untyped filter functions
+		opts?: { timeoutMs?: number; filter?: (...args: any[]) => boolean },
+	): Promise<unknown> {
 		const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		const filter = opts?.filter;
 
@@ -171,6 +174,7 @@ export class CdpClient {
 		await Promise.allSettled(
 			optional.map(async (domain) => {
 				try {
+					// biome-ignore lint/suspicious/noExplicitAny: dynamic domain enable
 					await this.send(`${domain}.enable` as any);
 					this.enabledDomains.add(domain);
 				} catch {

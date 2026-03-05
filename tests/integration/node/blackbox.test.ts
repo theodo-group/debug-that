@@ -18,12 +18,16 @@ describe("Blackbox patterns", () => {
 		}));
 
 	test("remove specific pattern", () =>
-		withPausedSession("test-blackbox-rm-specific", "tests/fixtures/step-app.js", async (session) => {
-			await session.addBlackbox(["node_modules", "vendor"]);
-			const result = await session.removeBlackbox(["node_modules"]);
-			expect(result).toEqual(["vendor"]);
-			expect(session.listBlackbox()).toEqual(["vendor"]);
-		}));
+		withPausedSession(
+			"test-blackbox-rm-specific",
+			"tests/fixtures/step-app.js",
+			async (session) => {
+				await session.addBlackbox(["node_modules", "vendor"]);
+				const result = await session.removeBlackbox(["node_modules"]);
+				expect(result).toEqual(["vendor"]);
+				expect(session.listBlackbox()).toEqual(["vendor"]);
+			},
+		));
 
 	test("remove all patterns", () =>
 		withPausedSession("test-blackbox-rm-all", "tests/fixtures/step-app.js", async (session) => {
@@ -45,6 +49,8 @@ describe("Blackbox patterns", () => {
 	test("blackbox throws when no session", async () => {
 		const session = new DebugSession("test-blackbox-no-session");
 		await expect(session.addBlackbox(["node_modules"])).rejects.toThrow("No active debug session");
-		await expect(session.removeBlackbox(["node_modules"])).rejects.toThrow("No active debug session");
+		await expect(session.removeBlackbox(["node_modules"])).rejects.toThrow(
+			"No active debug session",
+		);
 	});
 });

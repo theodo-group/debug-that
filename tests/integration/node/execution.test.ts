@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
 import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("Execution control", () => {
@@ -12,7 +11,7 @@ describe("Execution control", () => {
 
 	test("continue resumes and hits next breakpoint", () =>
 		withPausedSession("test-exec-continue-bp", "tests/fixtures/step-app.js", async (session) => {
-			await session.cdp!.send("Debugger.setBreakpointByUrl", {
+			await session.cdp?.send("Debugger.setBreakpointByUrl", {
 				lineNumber: 11,
 				urlRegex: "step-app\\.js",
 			});
@@ -55,7 +54,7 @@ describe("Execution control", () => {
 				currentLine = session.getStatus().pauseInfo?.line ?? currentLine;
 			}
 			await session.step("into");
-			let line = session.getStatus().pauseInfo?.line;
+			const line = session.getStatus().pauseInfo?.line;
 			if (line !== undefined && line >= 10) {
 				await session.step("into");
 			}

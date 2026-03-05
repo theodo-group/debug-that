@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
-import { launchPaused, withSession } from "../../helpers.ts";
+import type { DebugSession } from "../../../src/daemon/session.ts";
+import { launchPaused } from "../../helpers.ts";
 
 /**
  * Launch console-app.js, continue to debugger, and wait for console events.
@@ -125,8 +125,8 @@ describe("Exception capture", () => {
 		withExceptionSession("test-exception-timestamp", async (session) => {
 			const exceptions = session.getExceptions();
 			expect(exceptions.length).toBeGreaterThanOrEqual(1);
-			expect(exceptions[0]!.timestamp).toBeGreaterThan(0);
-			expect(exceptions[0]!.timestamp).toBeLessThanOrEqual(Date.now());
+			expect(exceptions[0]?.timestamp).toBeGreaterThan(0);
+			expect(exceptions[0]?.timestamp).toBeLessThanOrEqual(Date.now());
 		}));
 
 	test("exceptions --since returns only last N entries", () =>

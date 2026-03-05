@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
 import { withSession } from "../../helpers.ts";
 
 describe("Bun debugging", () => {

@@ -31,7 +31,9 @@ describe("DebugSession integration", () => {
 
 	test("launch without brk starts running", () =>
 		withSession("test-nobrk", async (session) => {
-			const result = await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], { brk: false });
+			const result = await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], {
+				brk: false,
+			});
 			expect(result.pid).toBeGreaterThan(0);
 			expect(result.paused).toBe(false);
 			expect(session.sessionState).toBe("running");
@@ -50,7 +52,9 @@ describe("DebugSession integration", () => {
 
 	test("stop disconnects and kills process", async () => {
 		const session = new DebugSession("test-stop");
-		const result = await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], { brk: true });
+		const result = await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], {
+			brk: true,
+		});
 		const pid = result.pid;
 		await session.stop();
 		expect(session.sessionState).toBe("idle");
@@ -58,13 +62,20 @@ describe("DebugSession integration", () => {
 		expect(session.targetPid).toBeNull();
 		await Bun.sleep(100);
 		let alive = false;
-		try { process.kill(pid, 0); alive = true; } catch { alive = false; }
+		try {
+			process.kill(pid, 0);
+			alive = true;
+		} catch {
+			alive = false;
+		}
 		expect(alive).toBe(false);
 	});
 
 	test("attach connects to running inspector", async () => {
 		const proc = Bun.spawn(["node", "--inspect=0", "-e", "setTimeout(() => {}, 30000)"], {
-			stdin: "ignore", stdout: "pipe", stderr: "pipe",
+			stdin: "ignore",
+			stdout: "pipe",
+			stderr: "pipe",
 		});
 		try {
 			const stderr = await readStderrUntilInspector(proc.stderr);
@@ -82,7 +93,9 @@ describe("DebugSession integration", () => {
 
 	test("attach by port discovers ws URL", async () => {
 		const proc = Bun.spawn(["node", "--inspect=0", "-e", "setTimeout(() => {}, 30000)"], {
-			stdin: "ignore", stdout: "pipe", stderr: "pipe",
+			stdin: "ignore",
+			stdout: "pipe",
+			stderr: "pipe",
 		});
 		try {
 			const stderr = await readStderrUntilInspector(proc.stderr);

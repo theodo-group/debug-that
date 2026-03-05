@@ -51,9 +51,9 @@ describe("DaemonLogger", () => {
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(3);
-		expect(entries[0]!.event).toBe("event.one");
-		expect(entries[1]!.event).toBe("event.two");
-		expect(entries[2]!.event).toBe("event.three");
+		expect(entries[0]?.event).toBe("event.one");
+		expect(entries[1]?.event).toBe("event.two");
+		expect(entries[2]?.event).toBe("event.three");
 	});
 
 	test("clear() truncates", () => {
@@ -100,7 +100,7 @@ describe("DaemonLogger", () => {
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(1);
-		expect(entries[0]!.level).toBe("debug");
+		expect(entries[0]?.level).toBe("debug");
 	});
 
 	test("entries without data omit data field", () => {
@@ -112,6 +112,6 @@ describe("DaemonLogger", () => {
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(1);
-		expect(entries[0]!.data).toBeUndefined();
+		expect(entries[0]?.data).toBeUndefined();
 	});
 });
