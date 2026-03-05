@@ -176,6 +176,7 @@ export async function hotpatch(
 	const setSourceParams: Protocol.Debugger.SetScriptSourceRequest = {
 		scriptId,
 		scriptSource: newSource,
+		allowTopFrameEditing: true,
 	};
 	if (options.dryRun) {
 		setSourceParams.dryRun = true;

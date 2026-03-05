@@ -1,4 +1,4 @@
-import { existsSync, openSync } from "node:fs";
+import { existsSync, openSync, readFileSync } from "node:fs";
 import { DaemonClient } from "./client.ts";
 import { ensureSocketDir, getDaemonLogPath, getSocketPath } from "./paths.ts";
 
@@ -18,9 +18,9 @@ export async function spawnDaemon(
 	const execPath = process.execPath;
 	const scriptPath = process.argv[1];
 
-	// If argv[1] exists and is a .ts file, we're running via `bun run src/main.ts`
-	// Otherwise we're running as a compiled binary
-	if (scriptPath && scriptPath.endsWith(".ts")) {
+	// If argv[1] exists and is a script file (.ts or .js), we're running via
+	// `bun run src/main.ts` or `bun dist/main.js`. Otherwise we're a compiled binary.
+	if (scriptPath && (scriptPath.endsWith(".ts") || scriptPath.endsWith(".js"))) {
 		spawnArgs.push(execPath, "run", scriptPath);
 	} else {
 		spawnArgs.push(execPath);
@@ -55,7 +55,23 @@ export async function spawnDaemon(
 		await Bun.sleep(POLL_INTERVAL_MS);
 	}
 
-	throw new Error(`Daemon for session "${session}" failed to start within ${SPAWN_TIMEOUT_MS}ms`);
+	// Read daemon log to surface the actual error
+	const logPath = getDaemonLogPath(session);
+	let logTail = "";
+	try {
+		const log = readFileSync(logPath, "utf-8");
+		const lines = log.trimEnd().split("\n");
+		logTail = lines.slice(-20).join("\n");
+	} catch {}
+
+	const details = [
+		`Daemon for session "${session}" failed to start within ${SPAWN_TIMEOUT_MS}ms`,
+		`Spawn command: ${spawnArgs.join(" ")}`,
+		`Socket path: ${socketPath}`,
+		logTail ? `Daemon log (last 20 lines):\n${logTail}` : `No daemon log at ${logPath}`,
+	].join("\n");
+
+	throw new Error(details);
 }
 
 /**

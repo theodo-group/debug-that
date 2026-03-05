@@ -165,6 +165,39 @@ describe("Mutation: hotpatch", () => {
 		}
 	});
 
+	test("hotpatch works when edited function is on the call stack", async () => {
+		const session = new DebugSession("test-hotpatch-active-fn");
+		try {
+			await session.launch(["node", "tests/fixtures/hotpatch-active-fn.js"], {
+				brk: true,
+			});
+			await waitForState(session, "paused");
+
+			// Continue past --brk to the `debugger;` inside compute()
+			await session.continue();
+			await waitForState(session, "paused");
+
+			// We're now paused inside compute() — it's on the call stack
+			expect(session.isPaused()).toBe(true);
+
+			// Get original source and modify compute to multiply by 3 instead of 2
+			const source = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
+			const originalText = source.lines.map((l) => l.text).join("\n");
+			const modifiedSource = originalText.replace("x * 2", "x * 3");
+
+			// Hotpatch should succeed thanks to allowTopFrameEditing
+			const result = await session.hotpatch("hotpatch-active-fn.js", modifiedSource);
+			expect(result.status).toBe("Ok");
+
+			// Verify source was updated
+			const newSource = await session.getSource({ file: "hotpatch-active-fn.js", all: true });
+			const newText = newSource.lines.map((l) => l.text).join("\n");
+			expect(newText).toContain("x * 3");
+		} finally {
+			await session.stop();
+		}
+	});
+
 	test("hotpatch throws for unknown file", async () => {
 		const session = await launchAndPauseAtDebugger("test-hotpatch-unknown");
 		try {
