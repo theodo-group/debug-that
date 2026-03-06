@@ -133,6 +133,7 @@ const StackRequest = z.object({
 	args: z.object({
 		asyncDepth: z.optional(z.number()),
 		generated: z.optional(z.boolean()),
+		filter: z.optional(z.string()),
 	}),
 });
 
@@ -271,6 +272,13 @@ const StopRequest = z.object({ cmd: z.literal("stop") });
 
 // ── Union of all requests (discriminated on cmd) ───────────────────
 
+const ModulesRequest = z.object({
+	cmd: z.literal("modules"),
+	args: z.object({
+		filter: z.optional(z.string()),
+	}),
+});
+
 export const DaemonRequestSchema = z.union([
 	PingRequest,
 	LaunchRequest,
@@ -309,6 +317,7 @@ export const DaemonRequestSchema = z.union([
 	SourcemapRequest,
 	SourcemapDisableRequest,
 	StopRequest,
+	ModulesRequest,
 ]);
 
 export type DaemonRequest = z.infer<typeof DaemonRequestSchema>;

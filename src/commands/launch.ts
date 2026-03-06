@@ -14,13 +14,13 @@ registerCommand("launch", async (args) => {
 	// Reconstruct the full command from subcommand + positionals.
 	// The parser treats the second non-flag word as subcommand, but for launch
 	// it should be part of the command to execute.
-	// e.g., "agent-dbg launch node app.js" -> subcommand="node", positionals=["app.js"]
+	// e.g., "dbg launch node app.js" -> subcommand="node", positionals=["app.js"]
 	// We need command = ["node", "app.js"]
 	const command = args.subcommand ? [args.subcommand, ...args.positionals] : [...args.positionals];
 
 	if (command.length === 0) {
 		console.error("No command specified");
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 

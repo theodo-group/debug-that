@@ -1,4 +1,4 @@
-# Contributing to agent-dbg
+# Contributing to dbg
 
 Thank you for your interest in contributing! This guide will help you get started.
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing! This guide will help you get starte
 ### Getting Started
 
 ```bash
-git clone https://github.com/theodo-group/agent-dbg.git
-cd agent-dbg
+git clone https://github.com/theodo-group/dbg.git
+cd dbg
 bun install
 ```
 
@@ -83,9 +83,9 @@ tests/
 ## Reporting Issues
 
 - Use GitHub Issues
-- Include the output of `agent-dbg --version`
+- Include the output of `dbg --version`
 - Include reproduction steps and expected vs actual behavior
-- Include relevant debug logs (`agent-dbg logs`)
+- Include relevant debug logs (`dbg logs`)
 
 ## License
 

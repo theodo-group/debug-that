@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import type {
 	ConsoleMessage,
@@ -11,17 +13,37 @@ import type {
 import { RefTable } from "../refs/ref-table.ts";
 import { DapClient } from "./client.ts";
 
+/** Directory where managed adapter binaries are stored. */
+export function getManagedAdaptersDir(): string {
+	const home = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
+	return join(home, ".debug-that", "adapters");
+}
+
 /**
  * Resolves the path to a DAP adapter binary for a given runtime.
- * Returns the command array to spawn (e.g. ["lldb-dap"] or ["/opt/homebrew/opt/llvm/bin/lldb-dap"]).
+ * Checks managed install path first, then known system paths, then PATH.
  */
 function resolveAdapterCommand(runtime: string): string[] {
 	switch (runtime) {
 		case "lldb":
 		case "lldb-dap": {
-			// Try homebrew LLVM path first, fall back to PATH
+			// 1. Check managed install
+			const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
+			if (existsSync(managedPath)) {
+				return [managedPath];
+			}
+			// 2. Check system PATH
+			const whichResult = Bun.spawnSync(["which", "lldb-dap"]);
+			if (whichResult.exitCode === 0) {
+				return ["lldb-dap"];
+			}
+			// 3. Try homebrew LLVM path
 			const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
-			return [brewPath];
+			if (existsSync(brewPath)) {
+				return [brewPath];
+			}
+			// 4. Fallback — will fail at spawn with a clear error
+			return ["lldb-dap"];
 		}
 		case "codelldb":
 			return ["codelldb", "--port", "0"];
@@ -60,7 +82,7 @@ interface DapStackFrame {
 
 /**
  * DapSession implements the same public interface as DebugSession, but communicates
- * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows agent-dbg
+ * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows debug-that
  * to debug native code (C/C++/Rust via LLDB), Python, Ruby, etc.
  */
 export class DapSession {
@@ -584,7 +606,7 @@ export class DapSession {
 		});
 	}
 
-	getStack(_options: { asyncDepth?: number; generated?: boolean } = {}): Array<{
+	getStack(options: { asyncDepth?: number; generated?: boolean; filter?: string } = {}): Array<{
 		ref: string;
 		functionName: string;
 		file: string;
@@ -592,7 +614,7 @@ export class DapSession {
 		column?: number;
 	}> {
 		// Return cached stack frames from last stopped event
-		return this._stackFrames.map((frame) => {
+		const frames = this._stackFrames.map((frame) => {
 			const ref = this.refs.addFrame(String(frame.id), frame.name);
 			return {
 				ref,
@@ -602,6 +624,17 @@ export class DapSession {
 				column: frame.column > 0 ? frame.column : undefined,
 			};
 		});
+
+		if (options.filter) {
+			const filterLower = options.filter.toLowerCase();
+			return frames.filter(
+				(f) =>
+					f.functionName.toLowerCase().includes(filterLower) ||
+					f.file.toLowerCase().includes(filterLower),
+			);
+		}
+
+		return frames;
 	}
 
 	async getSource(options: { file?: string; lines?: number; all?: boolean } = {}): Promise<{
@@ -833,15 +866,72 @@ export class DapSession {
 		throw new Error("Frame restart is not supported in DAP mode.");
 	}
 
-	async runTo(_file: string, _line: number): Promise<never> {
-		throw new Error(
-			"Run-to-location is not yet supported in DAP mode. Set a breakpoint and continue.",
-		);
+	async runTo(file: string, line: number): Promise<void> {
+		this.requireConnected();
+		this.requirePaused();
+
+		// Set a temporary breakpoint
+		const tempBp = await this.setBreakpoint(file, line);
+
+		try {
+			// Continue execution to the temporary breakpoint
+			await this.continue();
+		} finally {
+			// Remove the temporary breakpoint regardless of outcome
+			try {
+				await this.removeBreakpoint(tempBp.ref);
+			} catch {
+				// Breakpoint may already be gone if process exited
+			}
+		}
 	}
 
 	getScripts(_filter?: string): Array<{ scriptId: string; url: string }> {
 		// DAP doesn't have a script list concept like CDP
 		return [];
+	}
+
+	async getModules(
+		filter?: string,
+	): Promise<Array<{ id: string; name: string; path?: string; symbolStatus?: string }>> {
+		this.requireConnected();
+
+		if (!this.capabilities.supportsModulesRequest) {
+			throw new Error(
+				"This debug adapter does not support the modules request.\n  -> The adapter may not report module/symbol information.",
+			);
+		}
+
+		const response = await this.getDap().send("modules", { startModule: 0, moduleCount: 0 });
+		const body = response.body as {
+			modules: Array<{
+				id: number | string;
+				name: string;
+				path?: string;
+				symbolStatus?: string;
+				symbolFilePath?: string;
+				version?: string;
+			}>;
+			totalModules?: number;
+		};
+
+		let modules = body.modules ?? [];
+
+		if (filter) {
+			const filterLower = filter.toLowerCase();
+			modules = modules.filter(
+				(m) =>
+					m.name.toLowerCase().includes(filterLower) ||
+					(m.path?.toLowerCase().includes(filterLower) ?? false),
+			);
+		}
+
+		return modules.map((m) => ({
+			id: String(m.id),
+			name: m.name,
+			path: m.path,
+			symbolStatus: m.symbolStatus,
+		}));
 	}
 
 	async addBlackbox(_patterns: string[]): Promise<never> {
@@ -909,8 +999,8 @@ export class DapSession {
 	private async initializeAdapter(): Promise<void> {
 		const response = await this.getDap().send("initialize", {
 			adapterID: this._runtime,
-			clientID: "agent-dbg",
-			clientName: "agent-dbg",
+			clientID: "debug-that",
+			clientName: "debug-that",
 			linesStartAt1: true,
 			columnsStartAt1: true,
 			pathFormat: "path",

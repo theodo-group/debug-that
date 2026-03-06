@@ -6,7 +6,7 @@ registerCommand("set-return", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
@@ -20,7 +20,7 @@ registerCommand("set-return", async (args) => {
 
 	if (!value) {
 		console.error("No value specified");
-		console.error("  -> Try: agent-dbg set-return 42");
+		console.error("  -> Try: dbg set-return 42");
 		return 1;
 	}
 

@@ -9,21 +9,21 @@ registerCommand("logpoint", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const target = args.subcommand;
 	if (!target) {
 		console.error("No target specified");
-		console.error('  -> Try: agent-dbg logpoint src/app.ts:42 "x =", x');
+		console.error('  -> Try: dbg logpoint src/app.ts:42 "x =", x');
 		return 1;
 	}
 
 	const parsed = parseFileLine(target);
 	if (!parsed) {
 		console.error(`Invalid logpoint target: "${target}"`);
-		console.error('  -> Try: agent-dbg logpoint src/app.ts:42 "x =", x');
+		console.error('  -> Try: dbg logpoint src/app.ts:42 "x =", x');
 		return 1;
 	}
 	const { file, line } = parsed;
@@ -32,7 +32,7 @@ registerCommand("logpoint", async (args) => {
 	const template = args.positionals[0];
 	if (!template) {
 		console.error("No log template specified");
-		console.error('  -> Try: agent-dbg logpoint src/app.ts:42 "x =", x');
+		console.error('  -> Try: dbg logpoint src/app.ts:42 "x =", x');
 		return 1;
 	}
 

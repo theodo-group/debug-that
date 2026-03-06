@@ -9,7 +9,7 @@ registerCommand("stack", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
@@ -21,6 +21,9 @@ registerCommand("stack", async (args) => {
 	if (asyncDepth !== undefined) stackArgs.asyncDepth = asyncDepth;
 	if (args.flags.generated === true) {
 		stackArgs.generated = true;
+	}
+	if (typeof args.flags.filter === "string") {
+		stackArgs.filter = args.flags.filter;
 	}
 
 	const response = await client.request("stack", stackArgs);

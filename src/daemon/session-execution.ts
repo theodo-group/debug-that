@@ -1,6 +1,9 @@
 import { escapeRegex } from "../util/escape-regex.ts";
 import type { DebugSession } from "./session.ts";
 
+/** Grace period to wait for an immediate re-pause (e.g. breakpoint on next line). */
+const CONTINUE_GRACE_MS = 500;
+
 export async function continueExecution(session: DebugSession): Promise<void> {
 	if (!session.isPaused()) {
 		throw new Error("Cannot continue: process is not paused");
@@ -8,7 +11,9 @@ export async function continueExecution(session: DebugSession): Promise<void> {
 	if (!session.cdp) {
 		throw new Error("Cannot continue: no CDP connection");
 	}
-	const waiter = session.createPauseWaiter();
+	// Wait briefly for an immediate re-pause (breakpoint hit right away),
+	// but don't block for 30s waiting for the next pause like step does.
+	const waiter = session.createPauseWaiter(CONTINUE_GRACE_MS);
 	await session.cdp.send("Debugger.resume");
 	await waiter;
 }
@@ -36,8 +41,8 @@ export async function stepExecution(
 }
 
 export async function pauseExecution(session: DebugSession): Promise<void> {
-	if (session.sessionState !== "running") {
-		throw new Error("Cannot pause: process is not running");
+	if (session.isPaused()) {
+		throw new Error("Cannot pause: process is already paused");
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot pause: no CDP connection");

@@ -8,7 +8,7 @@ registerCommand("continue", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 

@@ -646,25 +646,25 @@ describe("formatError", () => {
 		const result = formatError(
 			"Cannot set breakpoint at src/queue/processor.ts:46 \u2014 no breakable location",
 			["Nearest valid lines: 45, 47"],
-			"agent-dbg break src/queue/processor.ts:47",
+			"debug-that break src/queue/processor.ts:47",
 		);
 		const lines = result.split("\n");
 		expect(lines).toHaveLength(3);
 		expect(lines[0]).toContain("\u2717");
 		expect(lines[1]).toBe("  Nearest valid lines: 45, 47");
-		expect(lines[2]).toBe("  \u2192 Try: agent-dbg break src/queue/processor.ts:47");
+		expect(lines[2]).toBe("  \u2192 Try: debug-that break src/queue/processor.ts:47");
 	});
 
 	test("formats error without details but with suggestion", () => {
 		const result = formatError(
 			"No active session",
 			undefined,
-			"agent-dbg launch --brk node app.js",
+			"debug-that launch --brk node app.js",
 		);
 		const lines = result.split("\n");
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toBe("\u2717 No active session");
-		expect(lines[1]).toBe("  \u2192 Try: agent-dbg launch --brk node app.js");
+		expect(lines[1]).toBe("  \u2192 Try: debug-that launch --brk node app.js");
 	});
 });
 

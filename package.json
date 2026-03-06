@@ -1,14 +1,14 @@
 {
-  "name": "agent-dbg",
+  "name": "debug-that",
   "version": "0.2.0",
   "description": "Node.js Debugger CLI for AI Agents",
   "license": "MIT",
   "author": "Theodo Group",
   "repository": {
     "type": "git",
-    "url": "https://github.com/theodo-group/agent-dbg.git"
+    "url": "https://github.com/theodo-group/debug-that.git"
   },
-  "homepage": "https://github.com/theodo-group/agent-dbg",
+  "homepage": "https://github.com/theodo-group/debug-that",
   "keywords": [
     "debugger",
     "cli",
@@ -22,7 +22,8 @@
   ],
   "type": "module",
   "bin": {
-    "agent-dbg": "./dist/main.js"
+    "debug-that": "./dist/main.js",
+    "dbg": "./dist/main.js"
   },
   "files": [
     "dist",

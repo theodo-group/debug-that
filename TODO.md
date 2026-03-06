@@ -2,14 +2,14 @@
 
 ## Context
 
-While debugging a React Native iOS crash (SIGABRT in Yoga C++ caused by `width: 'fit-content'` in a StyleSheet), we used agent-dbg with `--runtime lldb` (DAP mode) to attach to the running app, catch the exception, and walk the stack to identify the problematic component.
+While debugging a React Native iOS crash (SIGABRT in Yoga C++ caused by `width: 'fit-content'` in a StyleSheet), we used dbg with `--runtime lldb` (DAP mode) to attach to the running app, catch the exception, and walk the stack to identify the problematic component.
 
 The full workflow was:
-1. `agent-dbg attach --runtime lldb <pid>` to connect to the RN app
-2. `agent-dbg catch all` to break on exceptions
+1. `dbg attach --runtime lldb <pid>` to connect to the RN app
+2. `dbg catch all` to break on exceptions
 3. Trigger the crash in the app (toggle theme)
-4. `agent-dbg stack` to get 50 frames from `__pthread_kill` through Yoga to unistyles
-5. `agent-dbg vars --frame @fN` + `agent-dbg props @vN` repeated many times to drill into `ShadowNodeFamily` objects and find which component had the bad style
+4. `dbg stack` to get 50 frames from `__pthread_kill` through Yoga to unistyles
+5. `dbg vars --frame @fN` + `dbg props @vN` repeated many times to drill into `ShadowNodeFamily` objects and find which component had the bad style
 
 This revealed several friction points, ordered by impact for AI agent usage.
 
@@ -24,13 +24,13 @@ This revealed several friction points, ordered by impact for AI agent usage.
 **Example:**
 ```bash
 # Current: 4 round-trips to reach componentName_
-agent-dbg props @v386          # tagToProps map → 6 entries
-agent-dbg props @v40           # entry 0 → {first: 4, second: @v41}
-agent-dbg props @v41           # second → ShadowNodeFamily object
-agent-dbg props @v42           # ShadowNodeFamily → {tag_: 4, componentName_: "View", ...}
+dbg props @v386          # tagToProps map → 6 entries
+dbg props @v40           # entry 0 → {first: 4, second: @v41}
+dbg props @v41           # second → ShadowNodeFamily object
+dbg props @v42           # ShadowNodeFamily → {tag_: 4, componentName_: "View", ...}
 
 # Desired: 1 round-trip
-agent-dbg props @v386 --depth 3
+dbg props @v386 --depth 3
 # Returns the full tree expanded 3 levels deep
 ```
 
@@ -45,15 +45,15 @@ agent-dbg props @v386 --depth 3
 **Example:**
 ```bash
 # After finding the suspicious variable:
-agent-dbg vars --frame @f288
+dbg vars --frame @f288
 # @v50  tagToProps  size=6
 
 # Desired: break when a specific tag's props are modified
-agent-dbg watch @v50 --write
+dbg watch @v50 --write
 # → WP#1 set on tagToProps (0x7ff8a0012340), break on write
 
 # Continue execution → breaks exactly when the bad style is applied
-agent-dbg continue
+dbg continue
 # Paused: watchpoint WP#1 hit — tagToProps modified at ShadowTreeManager.cpp:34
 ```
 
@@ -68,12 +68,12 @@ agent-dbg continue
 **Example:**
 ```bash
 # Current: blind trial-and-error
-agent-dbg eval 'this->tag_' --frame @f300
+dbg eval 'this->tag_' --frame @f300
 # Error: invalid use of 'this' outside of a non-static member function
 # (Why? No debug symbols — but the error message doesn't say that)
 
 # Desired: check what has symbols first
-agent-dbg modules
+dbg modules
 # MODULE                              SYMBOLS   PATH
 # MyApp                               full      /path/to/MyApp.app/MyApp
 # React.framework                     stripped  /path/to/React.framework/React
@@ -81,7 +81,7 @@ agent-dbg modules
 # react-native-unistyles.framework    full      /path/to/unistyles.framework/...
 ```
 
-**Suggested fix:** Add a `modules` command that sends DAP `modules` request. Display module name, symbol status (full/stripped/none), version, and path. Optionally filter: `agent-dbg modules --filter yoga`. For CDP, return the loaded scripts list (already available via `getScripts`).
+**Suggested fix:** Add a `modules` command that sends DAP `modules` request. Display module name, symbol status (full/stripped/none), version, and path. Optionally filter: `dbg modules --filter yoga`. For CDP, return the loaded scripts list (already available via `getScripts`).
 
 ---
 
@@ -93,10 +93,10 @@ agent-dbg modules
 ```bash
 # Current: manual PID lookup
 pgrep -f "debug-rn-wrong-dimensions"   # → 12345
-agent-dbg attach --runtime lldb 12345
+dbg attach --runtime lldb 12345
 
 # Desired: attach by name
-agent-dbg attach --runtime lldb --name "debug-rn-wrong-dimensions"
+dbg attach --runtime lldb --name "debug-rn-wrong-dimensions"
 # Attached to PID 12345 (debug-rn-wrong-dimensions)
 ```
 
@@ -111,14 +111,14 @@ agent-dbg attach --runtime lldb --name "debug-rn-wrong-dimensions"
 **Example:**
 ```bash
 # Current: 3 commands
-agent-dbg break ShadowTreeManager.cpp:22
+dbg break ShadowTreeManager.cpp:22
 # BP#5 set
-agent-dbg continue
+dbg continue
 # Paused at ShadowTreeManager.cpp:22
-agent-dbg break-rm BP#5
+dbg break-rm BP#5
 
 # Desired: 1 command
-agent-dbg run-to ShadowTreeManager.cpp:22
+dbg run-to ShadowTreeManager.cpp:22
 # Paused at ShadowTreeManager.cpp:22 (temporary breakpoint auto-removed)
 ```
 
@@ -135,11 +135,11 @@ agent-dbg run-to ShadowTreeManager.cpp:22
 **Example:**
 ```bash
 # Current: no source available
-agent-dbg source --frame @f300
+dbg source --frame @f300
 # Error: no source available for this frame
 
 # Desired: fall back to disassembly
-agent-dbg disassemble --frame @f300
+dbg disassemble --frame @f300
 # 0x1a2b3c40  stp x29, x30, [sp, #-16]!
 # 0x1a2b3c44  mov x29, sp
 # 0x1a2b3c48  bl  0x1a2b4000        ; yoga::Style::operator==
@@ -158,11 +158,11 @@ agent-dbg disassemble --frame @f300
 **Example:**
 ```bash
 # Current: opaque object
-agent-dbg eval '*(folly::dynamic::ObjectImpl*)(0x7ff8a0012340)'
+dbg eval '*(folly::dynamic::ObjectImpl*)(0x7ff8a0012340)'
 # Error: no member named 'ObjectImpl' in namespace 'folly::dynamic'
 
 # Desired: read raw memory
-agent-dbg memory 0x7ff8a0012340 --count 128
+dbg memory 0x7ff8a0012340 --count 128
 # 0x7ff8a001_2340: 06 00 00 00 00 00 00 00  03 00 00 00 00 00 00 00  ................
 # 0x7ff8a001_2350: 40 56 01 a0 f8 7f 00 00  00 00 00 00 00 00 00 00  @V..............
 ```
@@ -178,13 +178,13 @@ agent-dbg memory 0x7ff8a0012340 --count 128
 **Example:**
 ```bash
 # Current: catch everything
-agent-dbg catch all
+dbg catch all
 # Stops on SIGTRAP (thread created) — irrelevant, continue
 # Stops on SIGTRAP (breakpoint) — irrelevant, continue
 # Stops on SIGABRT — the actual crash
 
 # Desired: catch specific signals
-agent-dbg catch --filter SIGABRT
+dbg catch --filter SIGABRT
 # Only stops on SIGABRT
 ```
 
@@ -199,11 +199,11 @@ agent-dbg catch --filter SIGABRT
 **Example:**
 ```bash
 # Current: 2 commands + re-specify args
-agent-dbg stop
-agent-dbg attach --runtime lldb 12345
+dbg stop
+dbg attach --runtime lldb 12345
 
 # Desired: 1 command
-agent-dbg restart
+dbg restart
 # Re-attached to PID 12345
 ```
 
@@ -218,7 +218,7 @@ agent-dbg restart
 **Example:**
 ```bash
 # Current: 50 frames, most are system/framework noise
-agent-dbg stack
+dbg stack
 # @f0  __pthread_kill (libsystem_kernel.dylib)
 # @f1  pthread_kill (libsystem_pthread.dylib)
 # ... 45 more framework frames ...
@@ -226,13 +226,13 @@ agent-dbg stack
 # @f48 UIApplicationMain
 
 # Desired: filter by keyword
-agent-dbg stack --filter yoga
+dbg stack --filter yoga
 # @f5  yoga::StyleValuePool::getLength (yoga.cpp:1234)
 # @f6  yoga::Node::setStyle (Node.cpp:567)
 # @f8  facebook::react::updateYogaProps (Props.cpp:89)
 
 # Or show only user code (non-system frames)
-agent-dbg stack --user
+dbg stack --user
 # @f10 margelo::nitro::unistyles::HybridStyleSheet::onPlatformDependenciesChange
 # @f12 margelo::nitro::unistyles::ShadowTreeManager::updateShadowTree
 ```
@@ -249,7 +249,7 @@ agent-dbg stack --user
 
 **Example:**
 ```bash
-agent-dbg break-toggle BP#3
+dbg break-toggle BP#3
 # BP#3 disabled (was enabled)
 ```
 
@@ -263,7 +263,7 @@ agent-dbg break-toggle BP#3
 
 **Example:**
 ```bash
-agent-dbg scripts --filter unistyles
+dbg scripts --filter unistyles
 # (empty — no scripts tracked in DAP mode)
 
 # Desired:
@@ -282,15 +282,15 @@ agent-dbg scripts --filter unistyles
 **Example:**
 ```bash
 # Current:
-agent-dbg eval 'this->tag_' --frame @f300
+dbg eval 'this->tag_' --frame @f300
 # Error: invalid use of 'this' outside of a non-static member function
 
 # Desired:
-agent-dbg eval 'this->tag_' --frame @f300
+dbg eval 'this->tag_' --frame @f300
 # Error: invalid use of 'this' outside of a non-static member function
-#   -> This frame may lack debug symbols. Try 'agent-dbg modules' to check.
+#   -> This frame may lack debug symbols. Try 'dbg modules' to check.
 #   -> Try accessing the variable directly: 'tag_'
-#   -> Try a different frame: 'agent-dbg eval 'this->tag_' --frame @f301'
+#   -> Try a different frame: 'dbg eval 'this->tag_' --frame @f301'
 ```
 
 **Suggested fix:** In the eval error handler, pattern-match common LLDB error messages and append contextual suggestions. Examples:
@@ -302,7 +302,7 @@ agent-dbg eval 'this->tag_' --frame @f300
 
 ## Infrastructure
 
-### Managed adapter binaries (`agent-dbg install lldb`)
+### Managed adapter binaries (`dbg install lldb`)
 
 **Issue:** LLDB debugging requires `lldb-dap` which is a system dependency (Homebrew LLVM on macOS, apt on Linux). Relying on users to install it separately is fragile for an open source tool. Integration tests skip when it's missing.
 
@@ -310,16 +310,16 @@ agent-dbg eval 'this->tag_' --frame @f300
 
 **Design:**
 ```bash
-agent-dbg install lldb    # downloads lldb-dap for current platform
-agent-dbg install --list  # shows installed adapters
+dbg install lldb    # downloads lldb-dap for current platform
+dbg install --list  # shows installed adapters
 ```
 
-Storage: `~/.agent-dbg/adapters/lldb-dap`
+Storage: `~/.dbg/adapters/lldb-dap`
 
 **Implementation steps:**
 1. Add `install` CLI command that detects platform+arch (darwin-arm64, linux-x64, etc.)
 2. Download pre-built `lldb-dap` + `liblldb` from LLVM GitHub releases
-3. Store in `~/.agent-dbg/adapters/`
+3. Store in `~/.dbg/adapters/`
 4. Update `resolveAdapterCommand()` in `src/dap/session.ts` to check managed path first, then system PATH
 5. Integration tests check managed path OR system PATH (current skip-if-not-found behavior)
 

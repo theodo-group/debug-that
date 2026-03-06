@@ -1,4 +1,4 @@
-# agent-dbg — Debugger CLI for AI Agents
+# debug-that — Debugger CLI for AI Agents
 
 ## Project Overview
 CLI debugger built with Bun, optimized for AI agent consumption.

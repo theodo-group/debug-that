@@ -22,6 +22,7 @@ if (process.argv.includes("--daemon")) {
 	await import("./commands/catch.ts");
 	await import("./commands/source.ts");
 	await import("./commands/scripts.ts");
+	await import("./commands/modules.ts");
 	await import("./commands/stack.ts");
 	await import("./commands/search.ts");
 	await import("./commands/console.ts");
@@ -39,6 +40,7 @@ if (process.argv.includes("--daemon")) {
 	await import("./commands/breakable.ts");
 	await import("./commands/restart-frame.ts");
 	await import("./commands/sourcemap.ts");
+	await import("./commands/install.ts");
 	await import("./commands/logs.ts");
 	const { parseArgs, run } = await import("./cli/parser.ts");
 

@@ -6,14 +6,14 @@ registerCommand("hotpatch", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const file = args.subcommand;
 	if (!file) {
 		console.error("No file specified");
-		console.error("  -> Try: agent-dbg hotpatch app.js");
+		console.error("  -> Try: dbg hotpatch app.js");
 		return 1;
 	}
 

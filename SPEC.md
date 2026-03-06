@@ -1,4 +1,4 @@
-# agent-dbg — Node.js Debugger CLI for AI Agents
+# dbg — Node.js Debugger CLI for AI Agents
 
 ## Specification v1.0
 
@@ -6,7 +6,7 @@
 
 ## 1. Vision
 
-`agent-dbg` is a command-line debugger for Node.js designed specifically for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI, etc.). It wraps the V8 Inspector Protocol (Chrome DevTools Protocol) behind a token-efficient, stateless CLI interface that lets agents autonomously set breakpoints, step through code, inspect variables, profile memory, and even hot-patch code — all through bash.
+`dbg` is a command-line debugger for Node.js designed specifically for AI coding agents (Claude Code, Codex, Cursor, Gemini CLI, etc.). It wraps the V8 Inspector Protocol (Chrome DevTools Protocol) behind a token-efficient, stateless CLI interface that lets agents autonomously set breakpoints, step through code, inspect variables, profile memory, and even hot-patch code — all through bash.
 
 **Core principle:** every tool call should return maximum debugging insight for minimum token cost.
 
@@ -28,9 +28,9 @@ Humans can use it too. `--color` flag enables ANSI colors for terminal use.
 
 ### 2.2 CLI over MCP
 
-agent-dbg is a CLI tool, not an MCP server. Rationale:
+dbg is a CLI tool, not an MCP server. Rationale:
 
-- **Zero setup** — `npm i -g agent-dbg` or `npx agent-dbg`, no MCP config files
+- **Zero setup** — `npm i -g dbg` or `npx dbg`, no MCP config files
 - **Context efficient** — no JSON-RPC overhead, no schema in every call
 - **Composable** — can pipe to grep/jq, chain with other bash commands
 - **Universal** — works with any agent that has shell access, not just MCP clients
@@ -38,9 +38,9 @@ agent-dbg is a CLI tool, not an MCP server. Rationale:
 
 ### 2.3 Daemon architecture
 
-Debugging is inherently stateful (a process paused at a breakpoint). agent-dbg uses a background daemon model:
+Debugging is inherently stateful (a process paused at a breakpoint). dbg uses a background daemon model:
 
-- `agent-dbg launch` starts a daemon that holds the WebSocket connection to the V8 inspector
+- `dbg launch` starts a daemon that holds the WebSocket connection to the V8 inspector
 - All subsequent CLI calls communicate with the daemon via a local Unix socket
 - Each CLI invocation is fast and stateless from the agent's perspective
 - The daemon manages the debug session lifecycle
@@ -57,7 +57,7 @@ Debugging is inherently stateful (a process paused at a breakpoint). agent-dbg u
 
 ## 3. The @ref System
 
-Inspired by agent-browser's `@e1` element refs, agent-dbg assigns short stable references to every inspectable entity in its output. Agents use these refs instead of long object IDs, file paths, or frame indices.
+Inspired by agent-browser's `@e1` element refs, dbg assigns short stable references to every inspectable entity in its output. Agents use these refs instead of long object IDs, file paths, or frame indices.
 
 ### 3.1 Ref types
 
@@ -65,7 +65,7 @@ Inspired by agent-browser's `@e1` element refs, agent-dbg assigns short stable r
 |--------|--------|---------|----------|
 | `@v` | Variable / value | `@v1`, `@v2` | Until next pause (step/continue) |
 | `@f` | Stack frame | `@f0`, `@f1` | Until next pause |
-| `@o` | Expanded object | `@o1`, `@o2` | Until session ends or `agent-dbg gc-refs` |
+| `@o` | Expanded object | `@o1`, `@o2` | Until session ends or `dbg gc-refs` |
 | `BP#` | Breakpoint | `BP#1`, `BP#2` | Until removed |
 | `LP#` | Logpoint | `LP#1`, `LP#2` | Until removed |
 | `HS#` | Heap snapshot | `HS#1`, `HS#2` | Until session ends |
@@ -75,13 +75,13 @@ Inspired by agent-browser's `@e1` element refs, agent-dbg assigns short stable r
 Refs can be used anywhere an identifier is expected:
 
 ```bash
-agent-dbg props @v1                 # expand variable @v1
-agent-dbg eval "@v1.retryCount"     # use ref in expressions
-agent-dbg set @v2 true              # mutate variable @v2
-agent-dbg frame @f1                 # switch to stack frame @f1
-agent-dbg restart-frame @f0         # restart frame @f0
-agent-dbg break-rm BP#1             # remove breakpoint BP#1
-agent-dbg heap diff HS#1 HS#2       # diff two heap snapshots
+dbg props @v1                 # expand variable @v1
+dbg eval "@v1.retryCount"     # use ref in expressions
+dbg set @v2 true              # mutate variable @v2
+dbg frame @f1                 # switch to stack frame @f1
+dbg restart-frame @f0         # restart frame @f0
+dbg break-rm BP#1             # remove breakpoint BP#1
+dbg heap diff HS#1 HS#2       # diff two heap snapshots
 ```
 
 ### 3.3 Ref resolution
@@ -149,7 +149,7 @@ Breakpoints:
 
 Commands that return state: `continue`, `step`, `step over`, `step into`, `step out`, `run-to`, `restart-frame`, `pause`.
 
-The auto-returned state uses the same format as `agent-dbg state` and respects a configurable default verbosity (see `agent-dbg config`).
+The auto-returned state uses the same format as `dbg state` and respects a configurable default verbosity (see `dbg config`).
 
 ---
 
@@ -158,7 +158,7 @@ The auto-returned state uses the same format as `agent-dbg state` and respects a
 ### 5.1 Session Management
 
 ```
-agent-dbg launch [--brk] [--session NAME] <command...>
+dbg launch [--brk] [--session NAME] <command...>
 ```
 Start a Node.js process with `--inspect` (or `--inspect-brk` if `--brk` is passed) and attach the debugger daemon. Returns initial state if `--brk`.
 
@@ -168,27 +168,27 @@ Start a Node.js process with `--inspect` (or `--inspect-brk` if `--brk` is passe
 - `--timeout SECS` — daemon idle timeout (default: 300)
 
 ```
-agent-dbg attach <pid | ws-url | port>
+dbg attach <pid | ws-url | port>
 ```
 Attach to an already-running Node.js process (started with `--inspect`).
 
 ```
-agent-dbg stop [--session NAME]
+dbg stop [--session NAME]
 ```
 Kill the debugged process and shut down the daemon.
 
 ```
-agent-dbg sessions
+dbg sessions
 ```
 List active debug sessions with PID, status (paused/running), and session name.
 
 ```
-agent-dbg sessions --cleanup
+dbg sessions --cleanup
 ```
 Kill all orphaned daemon processes.
 
 ```
-agent-dbg status
+dbg status
 ```
 Current session info: PID, pause state, attached breakpoints, memory usage, uptime.
 
@@ -197,7 +197,7 @@ Current session info: PID, pause state, attached breakpoints, memory usage, upti
 ### 5.2 Breakpoints
 
 ```
-agent-dbg break <file>:<line> [OPTIONS]
+dbg break <file>:<line> [OPTIONS]
 ```
 Set a breakpoint. Returns the breakpoint ID and resolved location (with source map).
 
@@ -205,45 +205,45 @@ Options:
 - `--condition <expr>` — only pause when expression is truthy
 - `--hit-count <n>` — only pause on the Nth hit
 - `--continue` — immediately continue after setting (composite command)
-- `--log <template>` — convert to logpoint (shortcut for `agent-dbg logpoint`)
+- `--log <template>` — convert to logpoint (shortcut for `dbg logpoint`)
 
 ```
-agent-dbg break --pattern <urlRegex>:<line>
+dbg break --pattern <urlRegex>:<line>
 ```
 Set breakpoint on all files matching a URL regex pattern. Useful for breaking in `node_modules` or dynamically loaded scripts.
 
 ```
-agent-dbg break-fn <expr>
+dbg break-fn <expr>
 ```
-Set a breakpoint on every call to the function returned by evaluating `<expr>`. Example: `agent-dbg break-fn "require('express').Router"`.
+Set a breakpoint on every call to the function returned by evaluating `<expr>`. Example: `dbg break-fn "require('express').Router"`.
 
 ```
-agent-dbg break-on-load [--sourcemap]
+dbg break-on-load [--sourcemap]
 ```
 Break whenever a new script is parsed. With `--sourcemap`, only break on scripts with source maps (i.e., your code, not node internals).
 
 ```
-agent-dbg break-rm <BP#id | LP#id | all>
+dbg break-rm <BP#id | LP#id | all>
 ```
 Remove a breakpoint or logpoint by ref. `all` removes everything.
 
 ```
-agent-dbg break-ls
+dbg break-ls
 ```
 List all breakpoints and logpoints with their locations, conditions, and hit counts.
 
 ```
-agent-dbg break-toggle [BP#id | all]
+dbg break-toggle [BP#id | all]
 ```
 Enable/disable breakpoint(s) without removing them.
 
 ```
-agent-dbg breakable <file>:<start>-<end>
+dbg breakable <file>:<start>-<end>
 ```
 List valid breakpoint locations in a line range. Useful when the agent picks a non-breakable line.
 
 ```
-agent-dbg logpoint <file>:<line> <template>
+dbg logpoint <file>:<line> <template>
 ```
 Set a logpoint — logs the interpolated template string each time the line is hit, without pausing. Template uses `${expr}` syntax.
 
@@ -251,7 +251,7 @@ Set a logpoint — logs the interpolated template string each time the line is h
 - `--condition <expr>` — only log when condition is true
 
 ```
-agent-dbg catch [all | uncaught | caught | none]
+dbg catch [all | uncaught | caught | none]
 ```
 Configure pause-on-exception behavior. `all` catches even exceptions inside try/catch. `uncaught` is the most useful default.
 
@@ -262,12 +262,12 @@ Configure pause-on-exception behavior. `all` catches even exceptions inside try/
 All execution commands **return a state snapshot** when the process next pauses.
 
 ```
-agent-dbg continue
+dbg continue
 ```
 Resume execution until next breakpoint, exception, or manual pause.
 
 ```
-agent-dbg step [over | into | out]
+dbg step [over | into | out]
 ```
 Step one statement. Default is `over`.
 
@@ -275,22 +275,22 @@ Step one statement. Default is `over`.
 - `step over` / `step into` — accept `--skip <pattern>` to skip over matching files (inline blackboxing)
 
 ```
-agent-dbg run-to <file>:<line>
+dbg run-to <file>:<line>
 ```
 Continue execution until a specific location. Does not create a persistent breakpoint.
 
 ```
-agent-dbg restart-frame [@fN]
+dbg restart-frame [@fN]
 ```
 Re-execute the specified frame (or current frame) from the beginning. The process continues immediately and pauses at the beginning of the restarted function.
 
 ```
-agent-dbg pause
+dbg pause
 ```
 Interrupt a running process. Returns state at the interrupt point.
 
 ```
-agent-dbg kill-execution
+dbg kill-execution
 ```
 Terminate the current JavaScript execution without killing the Node.js process. Useful for stopping infinite loops while keeping the debug session alive.
 
@@ -299,34 +299,34 @@ Terminate the current JavaScript execution without killing the Node.js process. 
 ### 5.4 Inspection
 
 ```
-agent-dbg state [FLAGS]
+dbg state [FLAGS]
 ```
 Return the current debug state snapshot. See Section 4 for flags.
 
 ```
-agent-dbg vars [name1, name2, ...]
+dbg vars [name1, name2, ...]
 ```
 Show local variables in the current frame. Optionally filter to specific names. Output assigns `@v` refs.
 
 ```
-agent-dbg stack [--async-depth N]
+dbg stack [--async-depth N]
 ```
 Show the call stack. `--async-depth` controls how many async frames to resolve (default: 8, 0 to disable).
 
 ```
-agent-dbg eval <expression>
+dbg eval <expression>
 ```
 Evaluate an expression in the context of the current call frame.
 
 - Supports `await` (uses CDP's `awaitPromise`)
-- Supports `@ref` interpolation: `agent-dbg eval "@v1.retryCount"`
+- Supports `@ref` interpolation: `dbg eval "@v1.retryCount"`
 - `--frame @fN` — evaluate in a specific frame
 - `--silent` — suppress exception reporting
 - `--timeout MS` — kill evaluation after N milliseconds (default: 5000)
 - `--side-effect-free` — throw if expression has side effects (safe inspection)
 
 ```
-agent-dbg props <@ref> [OPTIONS]
+dbg props <@ref> [OPTIONS]
 ```
 Expand the properties of an object ref. Returns `@o` refs for nested values.
 
@@ -336,17 +336,17 @@ Expand the properties of an object ref. Returns `@o` refs for nested values.
 - `--internal` — include V8 internal properties (e.g., `[[PromiseState]]`)
 
 ```
-agent-dbg instances <expression>
+dbg instances <expression>
 ```
-Find all live instances of a prototype/constructor. Evaluates the expression to get a prototype, then queries all objects sharing it. Example: `agent-dbg instances "EventEmitter.prototype"`.
+Find all live instances of a prototype/constructor. Evaluates the expression to get a prototype, then queries all objects sharing it. Example: `dbg instances "EventEmitter.prototype"`.
 
 ```
-agent-dbg globals
+dbg globals
 ```
 List all global `let`, `const`, and `class` declarations in the current execution context.
 
 ```
-agent-dbg source [OPTIONS]
+dbg source [OPTIONS]
 ```
 Show source code around the current pause location.
 
@@ -355,7 +355,7 @@ Show source code around the current pause location.
 - `--all` — show full file
 
 ```
-agent-dbg search <query> [OPTIONS]
+dbg search <query> [OPTIONS]
 ```
 Search across all loaded scripts.
 
@@ -364,12 +364,12 @@ Search across all loaded scripts.
 - `--file <scriptId>` — search within a specific script
 
 ```
-agent-dbg scripts [--filter <pattern>]
+dbg scripts [--filter <pattern>]
 ```
 List all loaded scripts (files). Useful to find the right `scriptId` for breakpoints in dynamically loaded code.
 
 ```
-agent-dbg console [OPTIONS]
+dbg console [OPTIONS]
 ```
 Show captured console output (log, warn, error, etc.) with timestamps and stack traces.
 
@@ -379,7 +379,7 @@ Show captured console output (log, warn, error, etc.) with timestamps and stack 
 - `--clear` — clear captured console buffer
 
 ```
-agent-dbg exceptions [OPTIONS]
+dbg exceptions [OPTIONS]
 ```
 Show captured uncaught exceptions.
 
@@ -393,28 +393,28 @@ Show captured uncaught exceptions.
 These commands let an agent **test hypotheses and fixes without restarting**.
 
 ```
-agent-dbg set <@vRef | varName> <value>
+dbg set <@vRef | varName> <value>
 ```
 Change the value of a local, closure, or catch-scope variable in the current frame.
 
 - Value is parsed as JSON or as a JavaScript primitive
 - Only works on `local`, `closure`, and `catch` scope types (V8 limitation)
-- Example: `agent-dbg set @v2 true`, `agent-dbg set retryCount 0`
+- Example: `dbg set @v2 true`, `dbg set retryCount 0`
 
 ```
-agent-dbg set-return <value>
+dbg set-return <value>
 ```
 Change the return value of the current function. Only available when paused at a return point.
 
 ```
-agent-dbg hotpatch <file>
+dbg hotpatch <file>
 ```
 Live-edit the source of a loaded script. Reads the file from disk and pushes it to V8 via `Debugger.setScriptSource`.
 
 - If the edited function is the top-most stack frame (and only activation), it auto-restarts
 - `--dry-run` — check if the edit would succeed without applying
 - Returns status: `Ok`, `CompileError`, `BlockedByActiveFunction`, etc.
-- **This is agent-dbg's killer feature for agents** — fix code and immediately verify, no restart
+- **This is dbg's killer feature for agents** — fix code and immediately verify, no restart
 
 ---
 
@@ -423,20 +423,20 @@ Live-edit the source of a loaded script. Reads the file from disk and pushes it 
 Control which code the debugger steps into, preventing agents from getting lost in framework internals.
 
 ```
-agent-dbg blackbox <pattern...>
+dbg blackbox <pattern...>
 ```
 Skip stepping into scripts matching the given patterns (regex). Stepping into a blackboxed function will step over it instead.
 
-- Example: `agent-dbg blackbox "node_modules" "internal/"`
+- Example: `dbg blackbox "node_modules" "internal/"`
 - Stacks with previous patterns
 
 ```
-agent-dbg blackbox-ls
+dbg blackbox-ls
 ```
 List current blackbox patterns.
 
 ```
-agent-dbg blackbox-rm <pattern | all>
+dbg blackbox-rm <pattern | all>
 ```
 Remove blackbox patterns.
 
@@ -445,12 +445,12 @@ Remove blackbox patterns.
 ### 5.7 CPU Profiling
 
 ```
-agent-dbg cpu start [--interval <μs>]
+dbg cpu start [--interval <μs>]
 ```
 Start the V8 CPU profiler. Default sampling interval is 1000μs.
 
 ```
-agent-dbg cpu stop [--top N]
+dbg cpu stop [--top N]
 ```
 Stop profiling and return results.
 
@@ -459,12 +459,12 @@ Stop profiling and return results.
 - Full profile saved to a file for external tools
 
 ```
-agent-dbg coverage start [--detailed]
+dbg coverage start [--detailed]
 ```
 Start precise code coverage collection. `--detailed` enables block-level granularity (not just function-level).
 
 ```
-agent-dbg coverage stop [OPTIONS]
+dbg coverage stop [OPTIONS]
 ```
 Stop coverage and report.
 
@@ -477,22 +477,22 @@ Stop coverage and report.
 ### 5.8 Memory / Heap
 
 ```
-agent-dbg heap usage
+dbg heap usage
 ```
 Quick heap statistics: used, total, embedder heap, backing store. No snapshot needed.
 
 ```
-agent-dbg heap snapshot [--tag <name>]
+dbg heap snapshot [--tag <name>]
 ```
 Take a full V8 heap snapshot. Assigns an `HS#` ref.
 
 ```
-agent-dbg heap diff <HS#a> <HS#b> [--top N]
+dbg heap diff <HS#a> <HS#b> [--top N]
 ```
 Compare two heap snapshots. Output: table of constructors with delta count and delta size, sorted by size impact.
 
 ```
-agent-dbg heap sample start [--interval <bytes>] [--include-gc]
+dbg heap sample start [--interval <bytes>] [--include-gc]
 ```
 Start sampling heap profiler. Lightweight alternative to full snapshots.
 
@@ -500,27 +500,27 @@ Start sampling heap profiler. Lightweight alternative to full snapshots.
 - `--include-gc` — include objects already garbage-collected (shows temporary allocations)
 
 ```
-agent-dbg heap sample stop [--top N]
+dbg heap sample stop [--top N]
 ```
 Stop sampling and report top allocation sites.
 
 ```
-agent-dbg heap track start
+dbg heap track start
 ```
 Start allocation tracking over time (timeline mode).
 
 ```
-agent-dbg heap track stop
+dbg heap track stop
 ```
 Stop tracking and report allocation rate by callsite.
 
 ```
-agent-dbg heap inspect <heapObjectId>
+dbg heap inspect <heapObjectId>
 ```
 Get a remote object reference from a heap snapshot node, bridging heap analysis with runtime inspection. Returns an `@o` ref.
 
 ```
-agent-dbg gc
+dbg gc
 ```
 Force a garbage collection cycle. Useful before taking a snapshot to see what truly leaks.
 
@@ -529,26 +529,26 @@ Force a garbage collection cycle. Useful before taking a snapshot to see what tr
 ### 5.9 Advanced / Utility
 
 ```
-agent-dbg inject-hook <name>
+dbg inject-hook <name>
 ```
 Create a runtime binding that, when called from application code, sends a notification to the daemon. Use for custom instrumentation.
 
-- Adds a global function `__agent-dbg_<name>()` that the app can call
+- Adds a global function `__dbg_<name>()` that the app can call
 - When called, the daemon captures the call's arguments and stack
-- View with: `agent-dbg hooks [--follow]`
+- View with: `dbg hooks [--follow]`
 
 ```
-agent-dbg contexts
+dbg contexts
 ```
 List all V8 execution contexts (useful for debugging Jest VM sandboxes, workers, or vm.runInContext scenarios). Each context gets an ID.
 
 ```
-agent-dbg async-depth <N>
+dbg async-depth <N>
 ```
 Set the async call stack trace depth. Default: 16. Set to 0 to disable async stacks. Higher values cost more memory but show the full async chain.
 
 ```
-agent-dbg config [key] [value]
+dbg config [key] [value]
 ```
 Get/set daemon configuration:
 
@@ -560,12 +560,12 @@ Get/set daemon configuration:
 - `timeout` — daemon idle timeout in seconds
 
 ```
-agent-dbg gc-refs
+dbg gc-refs
 ```
 Clear accumulated `@o` refs to free memory. `@v` and `@f` refs are cleared automatically on each pause.
 
 ```
-agent-dbg --help-agent
+dbg --help-agent
 ```
 Output a compact LLM-optimized reference card with core workflow, quick reference, and common debugging patterns. Designed to be injected into an agent's context window.
 
@@ -580,7 +580,7 @@ Output a compact LLM-optimized reference card with core workflow, quick referenc
 3. **@refs inline** — every inspectable value is prefixed with its ref
 4. **Timing annotations** — execution commands report elapsed time since last pause
 5. **No JSON by default** — JSON wastes tokens on syntax. Available with `--json` flag
-6. **Truncation with hints** — large outputs are truncated with a `... (agent-dbg props @oN for more)` hint
+6. **Truncation with hints** — large outputs are truncated with a `... (dbg props @oN for more)` hint
 
 ### 6.2 Variable formatting
 
@@ -641,17 +641,17 @@ Errors always suggest the next action:
 ```
 ✗ Cannot set breakpoint at src/queue/processor.ts:46 — no breakable location
   Nearest valid lines: 45, 47
-  → Try: agent-dbg break src/queue/processor.ts:47
+  → Try: dbg break src/queue/processor.ts:47
 
 ✗ Variable 'foo' not found in current scope
   Available locals: job, lock, this
-  → Try: agent-dbg vars
+  → Try: dbg vars
 
 ✗ Cannot step — process is running (not paused)
-  → Try: agent-dbg pause
+  → Try: dbg pause
 
 ✗ Session "default" not found — no active debug session
-  → Try: agent-dbg launch --brk "node app.js"
+  → Try: dbg launch --brk "node app.js"
 ```
 
 ---
@@ -664,16 +664,16 @@ Source maps are a first-class concern, not an afterthought.
 
 - All user-facing locations display **source-mapped paths and line numbers** (TypeScript, etc.)
 - The `Debugger.scriptParsed` event provides `sourceMapURL`; the daemon fetches and caches it
-- `agent-dbg break src/foo.ts:42` resolves to the generated `.js` location automatically
+- `dbg break src/foo.ts:42` resolves to the generated `.js` location automatically
 - Stack traces always show source-mapped locations
-- `agent-dbg source` shows the original source (TypeScript), not compiled JS
+- `dbg source` shows the original source (TypeScript), not compiled JS
 - If no source map exists, the generated JS is shown (no error)
 
 ### 7.2 Source map commands
 
 ```
-agent-dbg sourcemap <file>        # Show source map info for a file
-agent-dbg sourcemap --disable     # Disable source map resolution globally
+dbg sourcemap <file>        # Show source map info for a file
+dbg sourcemap --disable     # Disable source map resolution globally
 ```
 
 ---
@@ -682,11 +682,11 @@ agent-dbg sourcemap --disable     # Disable source map resolution globally
 
 ### 8.1 Daemon lifecycle
 
-1. `agent-dbg launch` starts a background daemon process
+1. `dbg launch` starts a background daemon process
 2. Daemon opens a WebSocket to the Node.js inspector (`ws://127.0.0.1:<port>`)
-3. Daemon listens on a Unix socket at `$XDG_RUNTIME_DIR/agent-dbg/<session-name>.sock` (or `$TMPDIR` fallback)
+3. Daemon listens on a Unix socket at `$XDG_RUNTIME_DIR/dbg/<session-name>.sock` (or `$TMPDIR` fallback)
 4. CLI commands connect to the Unix socket, send a request, receive a response, disconnect
-5. Daemon shuts down when: process exits, `agent-dbg stop` is called, or idle timeout is reached
+5. Daemon shuts down when: process exits, `dbg stop` is called, or idle timeout is reached
 
 ### 8.2 Internal protocol
 
@@ -705,20 +705,20 @@ CLI-to-daemon communication uses newline-delimited JSON over Unix socket. Each r
 - Each debug session has a unique name (default: `"default"`)
 - Multiple sessions can run simultaneously (e.g., debugging a client and server)
 - `--session NAME` on any command targets a specific session
-- `agent-dbg sessions` lists all active sessions
+- `dbg sessions` lists all active sessions
 
 ### 8.4 Crash recovery
 
 - If the daemon crashes, the CLI detects the dead socket and reports:
   `✗ Session "default" daemon is not running. The debugged process (PID 42871) is still alive.`
-  `→ Try: agent-dbg attach 42871`
+  `→ Try: dbg attach 42871`
 - Lock files prevent duplicate daemons for the same session
 
 ---
 
 ## 9. SKILL.md for Agent Integration
 
-agent-dbg ships with a SKILL.md for Claude Code's skill system and compatible agents.
+dbg ships with a SKILL.md for Claude Code's skill system and compatible agents.
 
 ```yaml
 ---
@@ -735,73 +735,73 @@ description: >
 
 ### 9.1 `--help-agent` output
 
-The `agent-dbg --help-agent` command outputs a compact reference designed for agent context windows:
+The `dbg --help-agent` command outputs a compact reference designed for agent context windows:
 
 ```
-agent-dbg — Node.js debugger CLI for AI agents
+dbg — Node.js debugger CLI for AI agents
 
 CORE LOOP:
-  1. agent-dbg launch --brk "node app.js"    → pauses at first line, returns state
-  2. agent-dbg break src/file.ts:42          → set breakpoint
-  3. agent-dbg continue                      → run to breakpoint, returns state
-  4. Inspect: agent-dbg vars, agent-dbg eval, agent-dbg props @v1
-  5. Mutate/fix: agent-dbg set @v1 value, agent-dbg hotpatch src/file.ts
+  1. dbg launch --brk "node app.js"    → pauses at first line, returns state
+  2. dbg break src/file.ts:42          → set breakpoint
+  3. dbg continue                      → run to breakpoint, returns state
+  4. Inspect: dbg vars, dbg eval, dbg props @v1
+  5. Mutate/fix: dbg set @v1 value, dbg hotpatch src/file.ts
   6. Repeat from 3
 
 REFS: Every output assigns @refs. Use them everywhere:
-  @v1..@vN  variables    │  agent-dbg props @v1, agent-dbg set @v2 true
-  @f0..@fN  stack frames │  agent-dbg frame @f1, agent-dbg restart-frame @f0
-  BP#1..N   breakpoints  │  agent-dbg break-rm BP#1
-  HS#1..N   heap snaps   │  agent-dbg heap diff HS#1 HS#2
+  @v1..@vN  variables    │  dbg props @v1, dbg set @v2 true
+  @f0..@fN  stack frames │  dbg frame @f1, dbg restart-frame @f0
+  BP#1..N   breakpoints  │  dbg break-rm BP#1
+  HS#1..N   heap snaps   │  dbg heap diff HS#1 HS#2
 
 EXECUTION (all return state automatically):
-  agent-dbg continue              Resume to next breakpoint
-  agent-dbg step [over|into|out]  Step one statement
-  agent-dbg run-to file:line      Continue to location
-  agent-dbg pause                 Interrupt running process
-  agent-dbg restart-frame @f0     Re-run current function
+  dbg continue              Resume to next breakpoint
+  dbg step [over|into|out]  Step one statement
+  dbg run-to file:line      Continue to location
+  dbg pause                 Interrupt running process
+  dbg restart-frame @f0     Re-run current function
 
 BREAKPOINTS:
-  agent-dbg break file:line [--condition expr]
-  agent-dbg logpoint file:line "template ${var}"
-  agent-dbg catch [all|uncaught|none]
-  agent-dbg blackbox "node_modules/**"
+  dbg break file:line [--condition expr]
+  dbg logpoint file:line "template ${var}"
+  dbg catch [all|uncaught|none]
+  dbg blackbox "node_modules/**"
 
 INSPECTION:
-  agent-dbg state [-v|-s|-b|-c] [--depth N]
-  agent-dbg vars [name...]
-  agent-dbg eval <expr>                    (await supported)
-  agent-dbg props @ref [--depth N]
-  agent-dbg instances "Class.prototype"
-  agent-dbg search "query" [--regex]
+  dbg state [-v|-s|-b|-c] [--depth N]
+  dbg vars [name...]
+  dbg eval <expr>                    (await supported)
+  dbg props @ref [--depth N]
+  dbg instances "Class.prototype"
+  dbg search "query" [--regex]
 
 MUTATION:
-  agent-dbg set @v1 <value>        Change variable
-  agent-dbg set-return <value>     Change return value
-  agent-dbg hotpatch <file>        Live-edit code (no restart!)
+  dbg set @v1 <value>        Change variable
+  dbg set-return <value>     Change return value
+  dbg hotpatch <file>        Live-edit code (no restart!)
 
 PROFILING:
-  agent-dbg cpu start / stop [--top N]
-  agent-dbg coverage start [--detailed] / stop [--uncovered]
-  agent-dbg heap usage | snapshot | diff | sample | gc
+  dbg cpu start / stop [--top N]
+  dbg coverage start [--detailed] / stop [--uncovered]
+  dbg heap usage | snapshot | diff | sample | gc
 
 PATTERNS:
   # Race condition → trace with logpoints
-  agent-dbg logpoint src/lock.ts:31 "acquire: ${jobId} by ${workerId}"
-  agent-dbg continue
+  dbg logpoint src/lock.ts:31 "acquire: ${jobId} by ${workerId}"
+  dbg continue
 
   # Circular dependency → trace require chain
-  agent-dbg break-on-load --sourcemap
-  agent-dbg logpoint node_modules/jest-runtime/build/index.js:348 "${from} → ${moduleName}"
+  dbg break-on-load --sourcemap
+  dbg logpoint node_modules/jest-runtime/build/index.js:348 "${from} → ${moduleName}"
 
   # Memory leak → snapshot before/after
-  agent-dbg heap snapshot --tag before
+  dbg heap snapshot --tag before
   # ... trigger load ...
-  agent-dbg heap snapshot --tag after
-  agent-dbg heap diff HS#1 HS#2 --top 5
+  dbg heap snapshot --tag after
+  dbg heap diff HS#1 HS#2 --top 5
 
   # Skip framework noise
-  agent-dbg blackbox "node_modules" "internal/"
+  dbg blackbox "node_modules" "internal/"
 ```
 
 ---
@@ -812,32 +812,32 @@ PATTERNS:
 
 ```bash
 # npx (zero install — recommended for first use)
-npx agent-dbg launch --brk "node app.js"
+npx dbg launch --brk "node app.js"
 
 # Global install
-npm install -g agent-dbg
+npm install -g dbg
 
 # Compiled binary (no runtime needed)
-# Download from GitHub releases: agent-dbg-linux-x64, agent-dbg-darwin-arm64, etc.
-curl -fsSL https://github.com/<org>/agent-dbg/releases/latest/download/agent-dbg-$(uname -s)-$(uname -m) -o /usr/local/bin/agent-dbg
-chmod +x /usr/local/bin/agent-dbg
+# Download from GitHub releases: dbg-linux-x64, dbg-darwin-arm64, etc.
+curl -fsSL https://github.com/<org>/dbg/releases/latest/download/dbg-$(uname -s)-$(uname -m) -o /usr/local/bin/dbg
+chmod +x /usr/local/bin/dbg
 ```
 
 ### 10.2 Skill installation (for Claude Code and compatible agents)
 
 ```bash
 # Via vercel skills CLI
-npx skills add <org>/agent-dbg
+npx skills add <org>/dbg
 
 # Manual: copy SKILL.md to Claude Code skills directory
-cp node_modules/agent-dbg/skills/node-debugger/SKILL.md ~/.claude/skills/node-debugger/SKILL.md
+cp node_modules/dbg/skills/node-debugger/SKILL.md ~/.claude/skills/node-debugger/SKILL.md
 ```
 
 ### 10.3 Requirements
 
 - **Debugged process**: Node.js 16+ (for V8 inspector support)
-- **agent-dbg binary**: no runtime dependency (standalone compiled binary)
-- **agent-dbg via npm/npx**: Bun or Node.js 18+ on the host
+- **dbg binary**: no runtime dependency (standalone compiled binary)
+- **dbg via npm/npx**: Bun or Node.js 18+ on the host
 
 ---
 
@@ -854,21 +854,21 @@ cp node_modules/agent-dbg/skills/node-debugger/SKILL.md ~/.claude/skills/node-de
 
 ### 11.2 Out of scope (v1)
 
-- **Browser debugging** — agent-dbg targets Node.js processes only (no DOM, no CSS)
+- **Browser debugging** — dbg targets Node.js processes only (no DOM, no CSS)
 - **Other languages** — no Python, Rust, Go, etc. (use dedicated tools)
 - **GUI** — no TUI, no web UI (output is text for terminal/agent consumption)
 - **MCP server mode** — may be added later as an optional adapter, but CLI is primary
 - **Remote debugging** — v1 targets localhost only (SSH tunneling is the recommended approach for remote)
 - **Recording/replay** — time-travel debugging (may be a v2 feature)
-- **Test framework integration** — agent-dbg debugs any Node.js process; it doesn't know about Jest/Vitest internals (but can debug them)
+- **Test framework integration** — dbg debugs any Node.js process; it doesn't know about Jest/Vitest internals (but can debug them)
 
 ---
 
 ## 12. V8 Inspector Protocol Mapping
 
-Reference for implementors. Maps agent-dbg commands to CDP methods.
+Reference for implementors. Maps dbg commands to CDP methods.
 
-| agent-dbg command | CDP domain | CDP method(s) |
+| dbg command | CDP domain | CDP method(s) |
 |---|---|---|
 | `launch --brk` | — | Spawns `node --inspect-brk` + `Runtime.runIfWaitingForDebugger` |
 | `break file:line` | Debugger | `setBreakpointByUrl` |

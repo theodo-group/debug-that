@@ -6,14 +6,14 @@ registerCommand("break-toggle", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const ref = args.subcommand;
 	if (!ref) {
 		console.error("No breakpoint ref specified");
-		console.error("  -> Try: agent-dbg break-toggle BP#1");
+		console.error("  -> Try: dbg break-toggle BP#1");
 		return 1;
 	}
 

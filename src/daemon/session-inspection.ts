@@ -230,6 +230,18 @@ export async function getVars(
 	return variables;
 }
 
+export interface PropEntry {
+	ref?: string;
+	name: string;
+	type: string;
+	value: string;
+	isOwn?: boolean;
+	isAccessor?: boolean;
+	children?: PropEntry[];
+}
+
+const MAX_DEPTH = 5;
+
 export async function getProps(
 	session: DebugSession,
 	ref: string,
@@ -238,16 +250,7 @@ export async function getProps(
 		internal?: boolean;
 		depth?: number;
 	} = {},
-): Promise<
-	Array<{
-		ref?: string;
-		name: string;
-		type: string;
-		value: string;
-		isOwn?: boolean;
-		isAccessor?: boolean;
-	}>
-> {
+): Promise<PropEntry[]> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -264,6 +267,16 @@ export async function getProps(
 		throw new Error(`Ref ${ref} is a primitive and has no properties`);
 	}
 
+	const depth = Math.min(options.depth ?? 1, MAX_DEPTH);
+	return fetchPropsRecursive(session, objectId, options, depth);
+}
+
+async function fetchPropsRecursive(
+	session: DebugSession,
+	objectId: string,
+	options: { own?: boolean; internal?: boolean },
+	remainingDepth: number,
+): Promise<PropEntry[]> {
 	const propsParams: Protocol.Runtime.GetPropertiesRequest = {
 		objectId,
 		ownProperties: options.own ?? true,
@@ -274,18 +287,13 @@ export async function getProps(
 		propsParams.accessorPropertiesOnly = false;
 	}
 
-	const propsResult = await session.adapter.getProperties(session.cdp, propsParams);
+	const cdp = session.cdp;
+	if (!cdp) throw new Error("No active debug session");
+	const propsResult = await session.adapter.getProperties(cdp, propsParams);
 	const properties = propsResult.result ?? [];
 	const internalProps = options.internal ? (propsResult.internalProperties ?? []) : [];
 
-	const result: Array<{
-		ref?: string;
-		name: string;
-		type: string;
-		value: string;
-		isOwn?: boolean;
-		isAccessor?: boolean;
-	}> = [];
+	const result: PropEntry[] = [];
 
 	for (const prop of properties) {
 		const propName = prop.name;
@@ -311,14 +319,7 @@ export async function getProps(
 			propRef = session.refs.addObject(propValue.objectId, propName);
 		}
 
-		const item: {
-			ref?: string;
-			name: string;
-			type: string;
-			value: string;
-			isOwn?: boolean;
-			isAccessor?: boolean;
-		} = {
+		const item: PropEntry = {
 			name: propName,
 			type: displayValue.type,
 			value: formatValue(displayValue),
@@ -332,6 +333,16 @@ export async function getProps(
 		}
 		if (isAccessor) {
 			item.isAccessor = true;
+		}
+
+		// Recursive expansion for depth > 1
+		if (propValue?.objectId && remainingDepth > 1) {
+			item.children = await fetchPropsRecursive(
+				session,
+				propValue.objectId,
+				options,
+				remainingDepth - 1,
+			);
 		}
 
 		result.push(item);
@@ -349,14 +360,7 @@ export async function getProps(
 			propRef = session.refs.addObject(propValue.objectId, propName);
 		}
 
-		const item: {
-			ref?: string;
-			name: string;
-			type: string;
-			value: string;
-			isOwn?: boolean;
-			isAccessor?: boolean;
-		} = {
+		const item: PropEntry = {
 			name: `[[${propName}]]`,
 			type: propValue.type,
 			value: formatValue(propValue),
@@ -364,6 +368,16 @@ export async function getProps(
 
 		if (propRef) {
 			item.ref = propRef;
+		}
+
+		// Recursive expansion for internal properties too
+		if (propValue.objectId && remainingDepth > 1) {
+			item.children = await fetchPropsRecursive(
+				session,
+				propValue.objectId,
+				options,
+				remainingDepth - 1,
+			);
 		}
 
 		result.push(item);
@@ -532,7 +546,7 @@ export function getScripts(
 
 export function getStack(
 	session: DebugSession,
-	options: { asyncDepth?: number; generated?: boolean } = {},
+	options: { asyncDepth?: number; generated?: boolean; filter?: string } = {},
 ): Array<{
 	ref: string;
 	functionName: string;
@@ -603,6 +617,15 @@ export function getStack(
 		}
 
 		stackFrames.push(stackEntry);
+	}
+
+	if (options.filter) {
+		const filterLower = options.filter.toLowerCase();
+		return stackFrames.filter(
+			(f) =>
+				f.functionName.toLowerCase().includes(filterLower) ||
+				f.file.toLowerCase().includes(filterLower),
+		);
 	}
 
 	return stackFrames;

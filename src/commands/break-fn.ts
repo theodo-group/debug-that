@@ -6,15 +6,15 @@ registerCommand("break-fn", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk --runtime lldb ./program");
+		console.error("  -> Try: dbg launch --brk --runtime lldb ./program");
 		return 1;
 	}
 
 	const name = args.subcommand;
 	if (!name) {
-		console.error("Usage: agent-dbg break-fn <function-name>");
-		console.error("  Example: agent-dbg break-fn __assert_rtn");
-		console.error("  Example: agent-dbg break-fn 'yoga::Style::operator=='");
+		console.error("Usage: dbg break-fn <function-name>");
+		console.error("  Example: dbg break-fn __assert_rtn");
+		console.error("  Example: dbg break-fn 'yoga::Style::operator=='");
 		return 1;
 	}
 

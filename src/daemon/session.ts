@@ -556,7 +556,7 @@ export class DebugSession {
 		return getScriptsImpl(this, filter);
 	}
 
-	getStack(options: { asyncDepth?: number; generated?: boolean } = {}): Array<{
+	getStack(options: { asyncDepth?: number; generated?: boolean; filter?: string } = {}): Array<{
 		ref: string;
 		functionName: string;
 		file: string;
@@ -750,7 +750,7 @@ export class DebugSession {
 			// (e.g., process exits and monitorProcessExit runs before
 			// onProcessExit is set, or CDP disconnects clearing listeners)
 			const pollTimer = setInterval(() => {
-				if (this.isPaused() || this.state === "idle") {
+				if (this.isPaused() || this.state === "idle" || !this.cdp) {
 					settle();
 				}
 			}, 100);
@@ -882,10 +882,11 @@ export class DebugSession {
 		});
 
 		cdp.on("Runtime.executionContextDestroyed", () => {
-			// The main execution context has been destroyed — the script has
-			// finished. The Node.js process may stay alive because the
-			// inspector connection keeps the event loop running, but debugging
-			// is effectively over.
+			// The main execution context was destroyed — the script's top-level
+			// code has finished. The process may still be alive (servers keep the
+			// event loop running, and --inspect keeps it alive too).
+			// Mark as "idle" so waiters resolve, but the CDP connection stays
+			// open — pause/breakpoints still work if the process is alive.
 			this.state = "idle";
 			this.pauseInfo = null;
 			this._notifyStateWaiters();

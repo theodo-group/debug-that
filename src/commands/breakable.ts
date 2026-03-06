@@ -6,14 +6,14 @@ registerCommand("breakable", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const target = args.subcommand;
 	if (!target) {
 		console.error("No target specified");
-		console.error("  -> Try: agent-dbg breakable src/app.ts:10-20");
+		console.error("  -> Try: dbg breakable src/app.ts:10-20");
 		return 1;
 	}
 

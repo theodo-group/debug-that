@@ -87,7 +87,7 @@ registerCommand("logs", async (args) => {
 
 	if (!existsSync(logPath)) {
 		console.error(`No ${isDaemon ? "daemon " : ""}log file for session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 

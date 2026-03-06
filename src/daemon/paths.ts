@@ -4,10 +4,10 @@ import { join } from "node:path";
 export function getSocketDir(): string {
 	const xdgRuntime = process.env.XDG_RUNTIME_DIR;
 	if (xdgRuntime) {
-		return join(xdgRuntime, "agent-dbg");
+		return join(xdgRuntime, "debug-that");
 	}
 	const tmpdir = process.env.TMPDIR || "/tmp";
-	return join(tmpdir, `agent-dbg-${process.getuid?.() ?? 0}`);
+	return join(tmpdir, `debug-that-${process.getuid?.() ?? 0}`);
 }
 
 export function getSocketPath(session: string): string {

@@ -9,7 +9,7 @@ registerCommand("break", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
@@ -25,7 +25,7 @@ registerCommand("break", async (args) => {
 		const lastColon = patternFlag.lastIndexOf(":");
 		if (lastColon === -1 || lastColon === 0) {
 			console.error(`Invalid --pattern target: "${patternFlag}"`);
-			console.error("  -> Try: agent-dbg break --pattern 'app\\.js':42");
+			console.error("  -> Try: dbg break --pattern 'app\\.js':42");
 			return 1;
 		}
 		file = patternFlag.slice(0, lastColon);
@@ -38,7 +38,7 @@ registerCommand("break", async (args) => {
 		const target = args.subcommand;
 		if (!target) {
 			console.error("No target specified");
-			console.error("  -> Try: agent-dbg break src/app.ts:42");
+			console.error("  -> Try: dbg break src/app.ts:42");
 			return 1;
 		}
 
@@ -46,7 +46,7 @@ registerCommand("break", async (args) => {
 		const parsed = parseFileLineColumn(target);
 		if (!parsed) {
 			console.error(`Invalid breakpoint target: "${target}"`);
-			console.error("  -> Try: agent-dbg break src/app.ts:42 or src/app.ts:42:5");
+			console.error("  -> Try: dbg break src/app.ts:42 or src/app.ts:42:5");
 			return 1;
 		}
 		file = parsed.file;

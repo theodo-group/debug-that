@@ -6,7 +6,7 @@ registerCommand("blackbox", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
@@ -20,7 +20,7 @@ registerCommand("blackbox", async (args) => {
 
 	if (patterns.length === 0) {
 		console.error("No patterns specified");
-		console.error("  -> Try: agent-dbg blackbox node_modules");
+		console.error("  -> Try: dbg blackbox node_modules");
 		return 1;
 	}
 

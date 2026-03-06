@@ -1,4 +1,4 @@
-# agent-dbg
+# debug-that
 
 Debugger CLI built for AI agents. Fast, token-efficient, no fluff.
 
@@ -19,27 +19,27 @@ Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browse
 | Go (delve) | Go | Planned | DAP |
 | Java (JDWP) | Java / Kotlin | Planned | DAP |
 
-agent-dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter. For native languages, use `--runtime lldb` to select the DAP adapter.
+dbg auto-detects the runtime from the launch command and uses the appropriate protocol adapter. For native languages, use `--runtime lldb` to select the DAP adapter.
 
 ## Install
 
 Requires [Bun](https://bun.sh).
 
 ```bash
-bun install --global agent-dbg
-npx skills add theodo-group/agent-dbg # Install Claude Code skill
+bun install --global debug-that
+npx skills add theodo-group/debug-that # Install Claude Code skill
 ```
 
 ## Example
 ```bash
-> agent-dbg launch --brk tsx src/app.ts
+> dbg launch --brk tsx src/app.ts
 Session "default" started (pid 70445)
 Paused at ./src/app.ts:0:1
 
-> agent-dbg break src/app.ts:19
+> dbg break src/app.ts:19
 BP#1 set at src/app.ts:19
 
-> agent-dbg continue
+> dbg continue
 Paused at ./src/app.ts:19:21 (other)
 
 Source:
@@ -69,30 +69,30 @@ Breakpoints: 1 active
 
 ```bash
 # Node.js
-agent-dbg launch --brk node app.js
+dbg launch --brk node app.js
 
 # TypeScript (via tsx)
-agent-dbg launch --brk tsx src/app.ts
+dbg launch --brk tsx src/app.ts
 
 # Bun
-agent-dbg launch --brk bun app.ts
+dbg launch --brk bun app.ts
 
 # C/C++ (via LLDB)
-agent-dbg launch --brk --runtime lldb ./my_program
+dbg launch --brk --runtime lldb ./my_program
 
 # Attach to a running process (any runtime with --inspect)
-agent-dbg attach 9229
+dbg attach 9229
 
 # Debug loop
-agent-dbg break src/handler.ts:42
-agent-dbg continue
-agent-dbg vars
-agent-dbg props @v3
-agent-dbg eval "x + 1"
-agent-dbg step over
-agent-dbg set @v1 100
-agent-dbg hotpatch src/handler.ts   # live-edit from disk (JS/TS only)
-agent-dbg stop
+dbg break src/handler.ts:42
+dbg continue
+dbg vars
+dbg props @v3
+dbg eval "x + 1"
+dbg step over
+dbg set @v1 100
+dbg hotpatch src/handler.ts   # live-edit from disk (JS/TS only)
+dbg stop
 ```
 
 ## Commands
@@ -106,7 +106,7 @@ agent-dbg stop
 | Mutation | `set`, `set-return`, `hotpatch` |
 | Blackbox | `blackbox`, `blackbox-ls`, `blackbox-rm` |
 
-Run `agent-dbg --help` or `agent-dbg --help-agent` for the full reference.
+Run `dbg --help` or `dbg --help-agent` for the full reference.
 
 ## Architecture
 

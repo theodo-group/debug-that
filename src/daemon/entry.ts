@@ -1,5 +1,6 @@
 import { DapSession } from "../dap/session.ts";
 import type { DaemonRequest, DaemonResponse } from "../protocol/messages.ts";
+import { suggestEvalFix } from "./eval-suggestions.ts";
 import { DaemonLogger } from "./logger.ts";
 import { ensureSocketDir, getDaemonLogPath } from "./paths.ts";
 import { DaemonServer } from "./server.ts";
@@ -9,7 +10,7 @@ import { DebugSession } from "./session.ts";
 const daemonIdx = process.argv.indexOf("--daemon");
 const session = daemonIdx !== -1 ? process.argv[daemonIdx + 1] : process.argv[2];
 if (!session) {
-	console.error("Usage: agent-dbg --daemon <session> [--timeout <seconds>]");
+	console.error("Usage: debug-that --daemon <session> [--timeout <seconds>]");
 	process.exit(1);
 }
 
@@ -196,8 +197,13 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 
 		case "eval": {
 			const { expression, ...evalOptions } = req.args;
-			const evalResult = await activeSession().eval(expression, evalOptions);
-			return { ok: true, data: evalResult };
+			try {
+				const evalResult = await activeSession().eval(expression, evalOptions);
+				return { ok: true, data: evalResult };
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				return { ok: false, error: msg, suggestion: suggestEvalFix(msg) };
+			}
 		}
 
 		case "vars": {
@@ -284,6 +290,19 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		case "restart": {
 			const result = await activeSession().restart();
 			return { ok: true, data: result };
+		}
+
+		case "modules": {
+			const session = activeSession();
+			if (!("getModules" in session)) {
+				return {
+					ok: false,
+					error: "Modules are only available in DAP mode (e.g. --runtime lldb)",
+					suggestion: "For CDP sessions, use: debug-that scripts",
+				};
+			}
+			const modulesResult = await (session as DapSession).getModules(req.args.filter);
+			return { ok: true, data: modulesResult };
 		}
 
 		case "stop":

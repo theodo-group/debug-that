@@ -10,14 +10,14 @@ registerCommand("attach", async (args) => {
 
 	if (!target) {
 		console.error("No target specified");
-		console.error("  -> Try: agent-dbg attach <ws-url | port>");
+		console.error("  -> Try: dbg attach <ws-url | port>");
 		return 1;
 	}
 
 	// Check if daemon already running (PID-aware — stale sockets won't block)
 	if (DaemonClient.isRunning(session)) {
 		console.error(`Session "${session}" is already active`);
-		console.error(`  -> Try: agent-dbg stop --session ${session}`);
+		console.error(`  -> Try: dbg stop --session ${session}`);
 		return 1;
 	}
 

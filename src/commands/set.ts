@@ -6,21 +6,21 @@ registerCommand("set", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const varName = args.subcommand;
 	if (!varName) {
 		console.error("No variable name specified");
-		console.error("  -> Try: agent-dbg set counter 42");
+		console.error("  -> Try: dbg set counter 42");
 		return 1;
 	}
 
 	const valueParts = args.positionals;
 	if (valueParts.length === 0) {
 		console.error("No value specified");
-		console.error("  -> Try: agent-dbg set counter 42");
+		console.error("  -> Try: dbg set counter 42");
 		return 1;
 	}
 	const value = valueParts.join(" ");

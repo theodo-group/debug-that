@@ -8,14 +8,14 @@ registerCommand("catch", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const mode = args.subcommand ?? "all";
 	if (!VALID_MODES.has(mode)) {
 		console.error(`Invalid catch mode: "${mode}"`);
-		console.error("  -> Try: agent-dbg catch [all | uncaught | caught | none]");
+		console.error("  -> Try: dbg catch [all | uncaught | caught | none]");
 		return 1;
 	}
 

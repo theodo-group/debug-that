@@ -152,9 +152,9 @@ export async function run(args: ParsedArgs): Promise<number> {
 		const suggestion = suggestCommand(args.command);
 		console.error(`✗ Unknown command: ${args.command}`);
 		if (suggestion) {
-			console.error(`  → Did you mean: agent-dbg ${suggestion}`);
+			console.error(`  → Did you mean: dbg ${suggestion}`);
 		} else {
-			console.error("  → Try: agent-dbg --help");
+			console.error("  → Try: dbg --help");
 		}
 		return 1;
 	}
@@ -175,7 +175,7 @@ export async function run(args: ParsedArgs): Promise<number> {
 function printVersion(): void {
 	// Read version from package.json at build time via Bun's import
 	const pkg = require("../../package.json");
-	console.log(`agent-dbg ${pkg.version}`);
+	console.log(`dbg ${pkg.version}`);
 }
 
 function suggestCommand(input: string): string | null {
@@ -208,9 +208,9 @@ function editDistance(a: string, b: string): number {
 }
 
 function printHelp(): void {
-	console.log(`agent-dbg — Node.js debugger CLI for AI agents
+	console.log(`dbg — Node.js debugger CLI for AI agents
 
-Usage: agent-dbg <command> [options]
+Usage: dbg <command> [options]
 
 Session:
   launch [--brk] <command...>      Start + attach debugger
@@ -232,7 +232,7 @@ Inspection:
   vars [name...]                   Show local variables
     [--frame @fN] [--all-scopes]
   stack [--async-depth N]          Show call stack
-    [--generated]
+    [--generated] [--filter <keyword>]
   eval <expression>                Evaluate expression
     [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
   props <@ref>                     Expand object properties
@@ -242,6 +242,7 @@ Inspection:
   search <query>                   Search loaded scripts
     [--regex] [--case-sensitive] [--file <id>]
   scripts [--filter <pattern>]     List loaded scripts
+  modules [--filter <pattern>]     List loaded modules/libraries (DAP only)
   console [--since N] [--level]    Console output
     [--clear]
   exceptions [--since N]           Captured exceptions
@@ -271,6 +272,10 @@ Source Maps:
   sourcemap [file]                 Show source map info
   sourcemap --disable              Disable resolution globally
 
+Setup:
+  install <adapter>                Download managed adapter binary
+  install --list                   Show installed adapters
+
 Diagnostics:
   logs [-f|--follow]               Show CDP protocol log
     [--limit N] [--domain <name>] [--clear]
@@ -285,67 +290,68 @@ Global flags:
 }
 
 function printHelpAgent(): void {
-	console.log(`agent-dbg — Node.js debugger CLI for AI agents
+	console.log(`dbg — Node.js debugger CLI for AI agents
 
 CORE LOOP:
-  1. agent-dbg launch --brk "node app.js"    → pauses at first line, returns state
-  2. agent-dbg break src/file.ts:42          → set breakpoint
-  3. agent-dbg continue                      → run to breakpoint, returns state
-  4. Inspect: agent-dbg vars, agent-dbg eval, agent-dbg props @v1
-  5. Mutate/fix: agent-dbg set @v1 value, agent-dbg hotpatch src/file.ts
+  1. dbg launch --brk "node app.js"    → pauses at first line, returns state
+  2. dbg break src/file.ts:42          → set breakpoint
+  3. dbg continue                      → run to breakpoint, returns state
+  4. Inspect: dbg vars, dbg eval, dbg props @v1
+  5. Mutate/fix: dbg set @v1 value, dbg hotpatch src/file.ts
   6. Repeat from 3
 
 REFS: Every output assigns @refs. Use them everywhere:
-  @v1..@vN  variables    |  agent-dbg props @v1, agent-dbg set @v2 true
-  @f0..@fN  stack frames |  agent-dbg eval --frame @f1
-  BP#1..N   breakpoints  |  agent-dbg break-rm BP#1, agent-dbg break-toggle BP#1
+  @v1..@vN  variables    |  dbg props @v1, dbg set @v2 true
+  @f0..@fN  stack frames |  dbg eval --frame @f1
+  BP#1..N   breakpoints  |  dbg break-rm BP#1, dbg break-toggle BP#1
 
 EXECUTION (all return state automatically):
-  agent-dbg continue              Resume to next breakpoint
-  agent-dbg step [over|into|out]  Step one statement
-  agent-dbg run-to file:line      Continue to location
-  agent-dbg pause                 Interrupt running process
-  agent-dbg restart-frame [@fN]   Re-run frame from beginning
+  dbg continue              Resume to next breakpoint
+  dbg step [over|into|out]  Step one statement
+  dbg run-to file:line      Continue to location
+  dbg pause                 Interrupt running process
+  dbg restart-frame [@fN]   Re-run frame from beginning
 
 BREAKPOINTS:
-  agent-dbg break file:line [--condition expr] [--hit-count N] [--continue]
-  agent-dbg break --pattern "regex":line
-  agent-dbg break-rm <BP#|all>    Remove breakpoints
-  agent-dbg break-ls              List breakpoints
-  agent-dbg break-toggle <BP#|all>  Enable/disable breakpoints
-  agent-dbg breakable file:start-end  Valid breakpoint locations
-  agent-dbg logpoint file:line "template \${var}" [--condition expr]
-  agent-dbg catch [all|uncaught|caught|none]
+  dbg break file:line [--condition expr] [--hit-count N] [--continue]
+  dbg break --pattern "regex":line
+  dbg break-rm <BP#|all>    Remove breakpoints
+  dbg break-ls              List breakpoints
+  dbg break-toggle <BP#|all>  Enable/disable breakpoints
+  dbg breakable file:start-end  Valid breakpoint locations
+  dbg logpoint file:line "template \${var}" [--condition expr]
+  dbg catch [all|uncaught|caught|none]
 
 INSPECTION:
-  agent-dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  agent-dbg vars [name...] [--frame @fN] [--all-scopes]
-  agent-dbg stack [--async-depth N] [--generated]
-  agent-dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
-  agent-dbg props @ref [--own] [--depth N] [--private] [--internal]
-  agent-dbg source [--lines N] [--file path] [--all] [--generated]
-  agent-dbg search "query" [--regex] [--case-sensitive] [--file id]
-  agent-dbg scripts [--filter pattern]
-  agent-dbg console [--since N] [--level type] [--clear]
-  agent-dbg exceptions [--since N]
+  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
+  dbg vars [name...] [--frame @fN] [--all-scopes]
+  dbg stack [--async-depth N] [--generated] [--filter <keyword>]
+  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
+  dbg props @ref [--own] [--depth N] [--private] [--internal]
+  dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
+  dbg source [--lines N] [--file path] [--all] [--generated]
+  dbg search "query" [--regex] [--case-sensitive] [--file id]
+  dbg scripts [--filter pattern]
+  dbg console [--since N] [--level type] [--clear]
+  dbg exceptions [--since N]
 
 MUTATION:
-  agent-dbg set <@ref|name> <value>   Change variable
-  agent-dbg set-return <value>        Change return value (at return point)
-  agent-dbg hotpatch <file> [--dry-run]  Live-edit code (no restart!)
+  dbg set <@ref|name> <value>   Change variable
+  dbg set-return <value>        Change return value (at return point)
+  dbg hotpatch <file> [--dry-run]  Live-edit code (no restart!)
 
 BLACKBOXING:
-  agent-dbg blackbox <pattern...>     Skip stepping into matching scripts
-  agent-dbg blackbox-ls               List current patterns
-  agent-dbg blackbox-rm <pattern|all> Remove patterns
+  dbg blackbox <pattern...>     Skip stepping into matching scripts
+  dbg blackbox-ls               List current patterns
+  dbg blackbox-rm <pattern|all> Remove patterns
 
 SOURCE MAPS:
-  agent-dbg sourcemap [file]          Show source map info
-  agent-dbg sourcemap --disable       Disable resolution globally
+  dbg sourcemap [file]          Show source map info
+  dbg sourcemap --disable       Disable resolution globally
 
 DIAGNOSTICS:
-  agent-dbg logs [-f|--follow]        Show CDP protocol log
-  agent-dbg logs --limit 100          Show last N entries (default: 50)
-  agent-dbg logs --domain Debugger    Filter by CDP domain
-  agent-dbg logs --clear              Clear the log file`);
+  dbg logs [-f|--follow]        Show CDP protocol log
+  dbg logs --limit 100          Show last N entries (default: 50)
+  dbg logs --domain Debugger    Filter by CDP domain
+  dbg logs --clear              Clear the log file`);
 }

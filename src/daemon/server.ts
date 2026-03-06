@@ -161,7 +161,7 @@ export class DaemonServer {
 					? {
 							ok: false,
 							error: `Unknown command: ${cmd}`,
-							suggestion: "-> Try: agent-dbg --help",
+							suggestion: "-> Try: debug-that --help",
 						}
 					: {
 							ok: false,

@@ -86,7 +86,7 @@ describe("Execution control", () => {
 
 	test("pause throws when not running", () =>
 		withPausedSession("test-exec-pause-err", "tests/fixtures/step-app.js", async (session) => {
-			await expect(session.pause()).rejects.toThrow("not running");
+			await expect(session.pause()).rejects.toThrow("already paused");
 		}));
 
 	test("run-to stops at the specified line", () =>

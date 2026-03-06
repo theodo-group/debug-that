@@ -9,14 +9,14 @@ registerCommand("run-to", async (args) => {
 
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
-		console.error("  -> Try: agent-dbg launch --brk node app.js");
+		console.error("  -> Try: dbg launch --brk node app.js");
 		return 1;
 	}
 
 	const target = args.subcommand ?? args.positionals[0];
 	if (!target) {
 		console.error("No target specified");
-		console.error("  -> Try: agent-dbg run-to src/file.ts:42");
+		console.error("  -> Try: dbg run-to src/file.ts:42");
 		return 1;
 	}
 

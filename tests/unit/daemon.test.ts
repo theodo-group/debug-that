@@ -10,7 +10,7 @@ import {
 import { DaemonServer } from "../../src/daemon/server.ts";
 
 // Use a short test directory to stay within macOS 104-char Unix socket path limit
-const TEST_SOCKET_DIR = `/tmp/agent-dbg-t${process.pid}`;
+const TEST_SOCKET_DIR = `/tmp/debug-that-t${process.pid}`;
 
 let originalEnv: string | undefined;
 let testCounter = 0;
