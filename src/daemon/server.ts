@@ -69,6 +69,17 @@ export class DaemonServer {
 				},
 				data(socket, data) {
 					socket.data.buffer += data.toString();
+
+					// Guard against unbounded buffer growth (max 1MB)
+					if (socket.data.buffer.length > 1_048_576) {
+						server.sendResponse(socket, {
+							ok: false,
+							error: "Request too large (max 1MB)",
+						});
+						socket.data.buffer = "";
+						return;
+					}
+
 					const newlineIdx = socket.data.buffer.indexOf("\n");
 					if (newlineIdx === -1) return;
 

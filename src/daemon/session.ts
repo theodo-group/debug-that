@@ -153,7 +153,7 @@ export class DebugSession {
 	wsUrl: string | null = null;
 	startTime: number = Date.now();
 	session: string;
-	onProcessExit: (() => void) | null = null;
+	onProcessExit: Set<() => void> = new Set();
 	consoleMessages: Array<ConsoleMessage> = [];
 	exceptionEntries: Array<ExceptionEntry> = [];
 	blackboxPatterns: string[] = [];
@@ -726,7 +726,7 @@ export class DebugSession {
 				if (settled) return;
 				settled = true;
 				clearInterval(pollTimer);
-				this.onProcessExit = null;
+				this.onProcessExit.delete(settle);
 				resolve();
 			};
 
@@ -746,7 +746,7 @@ export class DebugSession {
 			}, 100);
 
 			// Also resolve if the process exits during execution
-			this.onProcessExit = settle;
+			this.onProcessExit.add(settle);
 		});
 	}
 
@@ -895,8 +895,9 @@ export class DebugSession {
 				line: topFrame?.lineNumber !== undefined ? topFrame.lineNumber + 1 : undefined,
 			};
 			this.consoleMessages.push(msg);
-			if (this.consoleMessages.length > 1000) {
-				this.consoleMessages.shift();
+			if (this.consoleMessages.length > 1100) {
+				// Drop oldest 100 at once to avoid O(n) shift on every message
+				this.consoleMessages.splice(0, 100);
 			}
 		});
 
@@ -926,8 +927,8 @@ export class DebugSession {
 					.join("\n");
 			}
 			this.exceptionEntries.push(entry);
-			if (this.exceptionEntries.length > 1000) {
-				this.exceptionEntries.shift();
+			if (this.exceptionEntries.length > 1100) {
+				this.exceptionEntries.splice(0, 100);
 			}
 		});
 	}
@@ -948,7 +949,8 @@ export class DebugSession {
 				this.state = "idle";
 				this.pauseInfo = null;
 				this._notifyStateWaiters();
-				this.onProcessExit?.();
+				for (const cb of this.onProcessExit) cb();
+				this.onProcessExit.clear();
 			})
 			.catch((err) => {
 				this.daemonLogger.error("child.exit.error", `Error waiting for process exit: ${err}`, {
