@@ -1,8 +1,7 @@
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.js";
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 import type { CdpLogger } from "./logger.ts";
 import type { CdpEvent, CdpRequest, CdpResponse } from "./types.ts";
-
-import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 type CdpCommand = keyof ProtocolMapping.Commands;
 type CdpEventName = keyof ProtocolMapping.Events;

@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 
@@ -34,8 +35,9 @@ registerCommand("eval", async (args) => {
 	if (args.flags["side-effect-free"] === true) {
 		evalArgs.throwOnSideEffect = true;
 	}
-	if (typeof args.flags.timeout === "string") {
-		evalArgs.timeout = parseInt(args.flags.timeout, 10);
+	const timeout = parseIntFlag(args.flags, "timeout");
+	if (timeout !== undefined) {
+		evalArgs.timeout = timeout;
 	}
 	if (args.flags.await === true) {
 		evalArgs.awaitPromise = true;

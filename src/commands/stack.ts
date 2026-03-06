@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import type { StackFrame } from "../formatter/stack.ts";
@@ -16,9 +17,8 @@ registerCommand("stack", async (args) => {
 
 	const stackArgs: Record<string, unknown> = {};
 
-	if (typeof args.flags["async-depth"] === "string") {
-		stackArgs.asyncDepth = parseInt(args.flags["async-depth"], 10);
-	}
+	const asyncDepth = parseIntFlag(args.flags, "async-depth");
+	if (asyncDepth !== undefined) stackArgs.asyncDepth = asyncDepth;
 	if (args.flags.generated === true) {
 		stackArgs.generated = true;
 	}

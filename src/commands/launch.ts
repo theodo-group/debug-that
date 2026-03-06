@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
@@ -6,9 +7,8 @@ import { shortPath } from "../formatter/path.ts";
 registerCommand("launch", async (args) => {
 	const session = args.global.session;
 	const brk = args.flags.brk === true;
-	const port = typeof args.flags.port === "string" ? parseInt(args.flags.port, 10) : undefined;
-	const timeout =
-		typeof args.flags.timeout === "string" ? parseInt(args.flags.timeout, 10) : undefined;
+	const port = parseIntFlag(args.flags, "port");
+	const timeout = parseIntFlag(args.flags, "timeout");
 	const runtime = typeof args.flags.runtime === "string" ? args.flags.runtime : undefined;
 
 	// Reconstruct the full command from subcommand + positionals.

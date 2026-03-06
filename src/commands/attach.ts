@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
@@ -21,8 +22,7 @@ registerCommand("attach", async (args) => {
 	}
 
 	// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
-	const timeout =
-		typeof args.flags.timeout === "string" ? parseInt(args.flags.timeout, 10) : undefined;
+	const timeout = parseIntFlag(args.flags, "timeout");
 	await ensureDaemon(session, { timeout });
 
 	// Send attach command

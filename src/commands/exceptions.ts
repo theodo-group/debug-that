@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import type { ExceptionEntry } from "../daemon/session.ts";
@@ -15,9 +16,8 @@ registerCommand("exceptions", async (args) => {
 	const client = new DaemonClient(session);
 
 	const exceptionsArgs: Record<string, unknown> = {};
-	if (typeof args.flags.since === "string") {
-		exceptionsArgs.since = parseInt(args.flags.since, 10);
-	}
+	const since = parseIntFlag(args.flags, "since");
+	if (since !== undefined) exceptionsArgs.since = since;
 
 	const response = await client.request("exceptions", exceptionsArgs);
 

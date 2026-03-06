@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import type { StateSnapshot } from "../daemon/session.ts";
@@ -22,12 +23,10 @@ registerCommand("state", async (args) => {
 	if (args.flags.code === true) stateArgs.code = true;
 	if (args.flags.compact === true) stateArgs.compact = true;
 	if (args.flags["all-scopes"] === true) stateArgs.allScopes = true;
-	if (typeof args.flags.depth === "string") {
-		stateArgs.depth = parseInt(args.flags.depth, 10);
-	}
-	if (typeof args.flags.lines === "string") {
-		stateArgs.lines = parseInt(args.flags.lines, 10);
-	}
+	const depth = parseIntFlag(args.flags, "depth");
+	if (depth !== undefined) stateArgs.depth = depth;
+	const lines = parseIntFlag(args.flags, "lines");
+	if (lines !== undefined) stateArgs.lines = lines;
 	if (typeof args.flags.frame === "string") {
 		stateArgs.frame = args.flags.frame;
 	}

@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { parseFileLine } from "../cli/parse-target.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
@@ -36,10 +37,7 @@ registerCommand("logpoint", async (args) => {
 	}
 
 	const condition = typeof args.flags.condition === "string" ? args.flags.condition : undefined;
-	const maxEmissions =
-		typeof args.flags["max-emissions"] === "string"
-			? parseInt(args.flags["max-emissions"], 10)
-			: undefined;
+	const maxEmissions = parseIntFlag(args.flags, "max-emissions");
 
 	const client = new DaemonClient(session);
 	const response = await client.request("logpoint", {

@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 
@@ -30,9 +31,8 @@ registerCommand("props", async (args) => {
 	if (args.flags.private === true) {
 		propsArgs.internal = true;
 	}
-	if (typeof args.flags.depth === "string") {
-		propsArgs.depth = parseInt(args.flags.depth, 10);
-	}
+	const depth = parseIntFlag(args.flags, "depth");
+	if (depth !== undefined) propsArgs.depth = depth;
 
 	const client = new DaemonClient(session);
 	const response = await client.request("props", propsArgs);

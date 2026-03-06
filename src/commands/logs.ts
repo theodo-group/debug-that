@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import type { CdpLogEntry } from "../cdp/logger.ts";
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import type { DaemonLogEntry } from "../daemon/logger.ts";
 import { getDaemonLogPath, getLogPath } from "../daemon/paths.ts";
@@ -93,7 +94,7 @@ registerCommand("logs", async (args) => {
 	const isJson = args.global.json;
 	const domain = typeof args.flags.domain === "string" ? args.flags.domain : undefined;
 	const level = typeof args.flags.level === "string" ? args.flags.level : undefined;
-	const limit = typeof args.flags.limit === "string" ? parseInt(args.flags.limit, 10) : 50;
+	const limit = parseIntFlag(args.flags, "limit") ?? 50;
 	const follow = args.flags.follow === true;
 
 	// Read existing entries

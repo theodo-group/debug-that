@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { shortPath } from "../formatter/path.ts";
@@ -17,9 +18,8 @@ registerCommand("source", async (args) => {
 
 	const sourceArgs: Record<string, unknown> = {};
 
-	if (typeof args.flags.lines === "string") {
-		sourceArgs.lines = parseInt(args.flags.lines, 10);
-	}
+	const lines = parseIntFlag(args.flags, "lines");
+	if (lines !== undefined) sourceArgs.lines = lines;
 	if (typeof args.flags.file === "string") {
 		sourceArgs.file = args.flags.file;
 	}

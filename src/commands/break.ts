@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { parseFileLineColumn } from "../cli/parse-target.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
@@ -54,8 +55,7 @@ registerCommand("break", async (args) => {
 	}
 
 	const condition = typeof args.flags.condition === "string" ? args.flags.condition : undefined;
-	const hitCount =
-		typeof args.flags["hit-count"] === "string" ? parseInt(args.flags["hit-count"], 10) : undefined;
+	const hitCount = parseIntFlag(args.flags, "hit-count");
 	const logTemplate = typeof args.flags.log === "string" ? args.flags.log : undefined;
 
 	const client = new DaemonClient(session);

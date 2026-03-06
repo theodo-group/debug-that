@@ -1,3 +1,4 @@
+import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import type { ConsoleMessage } from "../daemon/session.ts";
@@ -18,9 +19,8 @@ registerCommand("console", async (args) => {
 	if (typeof args.flags.level === "string") {
 		consoleArgs.level = args.flags.level;
 	}
-	if (typeof args.flags.since === "string") {
-		consoleArgs.since = parseInt(args.flags.since, 10);
-	}
+	const since = parseIntFlag(args.flags, "since");
+	if (since !== undefined) consoleArgs.since = since;
 	if (args.flags.clear === true) {
 		consoleArgs.clear = true;
 	}

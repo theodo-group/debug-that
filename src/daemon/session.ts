@@ -395,7 +395,10 @@ export class DebugSession {
 	 * Waits until the session reaches the target state (event-driven, no polling).
 	 * Resolves immediately if already in the target state.
 	 */
-	waitForState(target: "idle" | "running" | "paused", timeoutMs = STATE_WAIT_TIMEOUT_MS): Promise<void> {
+	waitForState(
+		target: "idle" | "running" | "paused",
+		timeoutMs = STATE_WAIT_TIMEOUT_MS,
+	): Promise<void> {
 		if (this.state === target) return Promise.resolve();
 		return new Promise<void>((resolve, reject) => {
 			const waiter = { target, resolve };

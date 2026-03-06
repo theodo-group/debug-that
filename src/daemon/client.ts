@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 import { type DaemonResponse, DaemonResponseSchema } from "../protocol/messages.ts";
 import { getLockPath, getSocketDir, getSocketPath } from "./paths.ts";
-
-import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 export class DaemonClient {
 	private session: string;
