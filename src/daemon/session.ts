@@ -88,6 +88,7 @@ export interface StateSnapshot {
 		isAsync?: boolean;
 	}>;
 	breakpointCount?: number;
+	lastException?: { text: string; description?: string };
 }
 
 export interface ConsoleMessage {
@@ -134,6 +135,7 @@ export interface SessionStatus {
 	pauseInfo?: PauseInfo;
 	uptime: number;
 	scriptCount: number;
+	lastException?: { text: string; description?: string };
 }
 
 // Node.js: "Debugger listening on ws://..."
@@ -345,6 +347,11 @@ export class DebugSession {
 				}
 			}
 			status.pauseInfo = translated;
+		}
+
+		if (this.state === "idle" && this.exceptionEntries.length > 0) {
+			const last = this.exceptionEntries[this.exceptionEntries.length - 1]!;
+			status.lastException = { text: last.text, description: last.description };
 		}
 
 		return status;

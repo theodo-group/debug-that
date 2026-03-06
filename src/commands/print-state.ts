@@ -15,7 +15,16 @@ export function printState(data: StateSnapshot): void {
 	// Non-paused states
 	if (data.status !== "paused") {
 		const icon = data.status === "running" ? "\u25B6" : "\u25CB";
-		console.log(`${icon} ${data.status === "running" ? "Running" : "Idle"}`);
+		const label = data.status === "running" ? "Running" : "Idle";
+		if (data.lastException) {
+			const desc = data.lastException.description ?? data.lastException.text;
+			const firstLine = desc.split("\n")[0] ?? desc;
+			console.log(`${icon} ${label} (crashed)`);
+			console.log(`  ${firstLine}`);
+			console.log("  -> Try: dbg exceptions");
+		} else {
+			console.log(`${icon} ${label}`);
+		}
 		return;
 	}
 

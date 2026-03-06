@@ -33,6 +33,7 @@ registerCommand("status", async (args) => {
 		};
 		uptime: number;
 		scriptCount: number;
+		lastException?: { text: string; description?: string };
 	};
 
 	if (args.global.json) {
@@ -52,6 +53,12 @@ registerCommand("status", async (args) => {
 				? `${shortPath(data.pauseInfo.url)}:${data.pauseInfo.line}${data.pauseInfo.column !== undefined ? `:${data.pauseInfo.column}` : ""}`
 				: "unknown";
 			console.log(`  Paused: ${data.pauseInfo.reason} at ${loc}`);
+		}
+
+		if (data.lastException) {
+			const desc = data.lastException.description ?? data.lastException.text;
+			const firstLine = desc.split("\n")[0] ?? desc;
+			console.log(`  Last exception: ${firstLine}`);
 		}
 	}
 

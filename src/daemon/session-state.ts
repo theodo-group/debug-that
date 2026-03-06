@@ -7,7 +7,12 @@ export async function buildState(
 	options: StateOptions = {},
 ): Promise<StateSnapshot> {
 	if (session.sessionState !== "paused" || !session.cdp || !session.pauseInfo) {
-		return { status: session.sessionState };
+		const snapshot: StateSnapshot = { status: session.sessionState };
+		if (session.sessionState === "idle" && session.exceptionEntries.length > 0) {
+			const last = session.exceptionEntries[session.exceptionEntries.length - 1]!;
+			snapshot.lastException = { text: last.text, description: last.description };
+		}
+		return snapshot;
 	}
 
 	// Clear volatile refs at the START of building state
