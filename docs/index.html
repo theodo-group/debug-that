@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>debug-that — Debugger CLI for AI Agents</title>
+<meta name="description" content="Fast, token-efficient debugger CLI for AI agents. Supports Node.js, Bun, TypeScript, C/C++/Rust/Swift via LLDB. No fluff.">
+<meta name="theme-color" content="#1a1b1e">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1f41b;</text></svg>">
+<style>
+@font-face {
+  font-family: 'Commit';
+  src: local('JetBrains Mono'), local('Fira Code'), local('SF Mono'), local('Cascadia Code'), local('Source Code Pro'), local('Menlo'), local('Consolas');
+  font-display: swap;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #16171a;
+  --bg-raised: #1e1f23;
+  --bg-surface: #252730;
+  --bg-hover: #2c2e38;
+  --border: #33353f;
+  --border-bright: #44465a;
+  --text: #c8cad3;
+  --text-dim: #7e8290;
+  --text-bright: #eceef5;
+  --accent: #6ee7b7;
+  --accent-dim: #34d399;
+  --accent-bg: rgba(110, 231, 183, 0.08);
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --blue: #7dd3fc;
+  --purple: #c4b5fd;
+  --mono: 'Commit', 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+  --sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --max-w: 1080px;
+  --space-xs: 0.5rem;
+  --space-sm: 1rem;
+  --space-md: 2rem;
+  --space-lg: 4rem;
+  --space-xl: 6rem;
+  --radius: 8px;
+}
+
+html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; transition: color 0.15s; }
+a:hover { color: var(--accent-dim); }
+
+/* --- Noise overlay --- */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px;
+}
+
+/* --- Layout --- */
+.container { max-width: var(--max-w); margin: 0 auto; padding: 0 var(--space-md); }
+
+/* --- Nav --- */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(22, 23, 26, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0;
+}
+nav .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.nav-logo {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.nav-logo .prompt { color: var(--accent); }
+.nav-links { display: flex; gap: 1.5rem; align-items: center; }
+.nav-links a {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-weight: 500;
+  transition: color 0.15s;
+}
+.nav-links a:hover { color: var(--text-bright); }
+.nav-version {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.45rem;
+}
+
+/* --- Hero --- */
+.hero {
+  padding: var(--space-xl) 0 var(--space-lg);
+  text-align: center;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid rgba(110, 231, 183, 0.15);
+  border-radius: 100px;
+  padding: 0.35rem 1rem;
+  margin-bottom: var(--space-md);
+}
+.hero h1 {
+  font-family: var(--mono);
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  font-weight: 800;
+  color: var(--text-bright);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin-bottom: var(--space-sm);
+}
+.hero h1 .accent { color: var(--accent); }
+.hero-sub {
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  color: var(--text-dim);
+  max-width: 560px;
+  margin: 0 auto var(--space-md);
+  line-height: 1.5;
+}
+
+/* Install bar */
+.install-bar {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  margin-bottom: var(--space-md);
+  cursor: pointer;
+  transition: border-color 0.2s;
+  overflow: hidden;
+}
+.install-bar:hover { border-color: var(--border-bright); }
+.install-bar-prefix {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  padding: 0.7rem 0 0.7rem 1rem;
+  user-select: none;
+}
+.install-bar code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--text-bright);
+  padding: 0.7rem 0.5rem;
+}
+.install-bar-copy {
+  color: var(--text-dim);
+  padding: 0.7rem 1rem;
+  border-left: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+.install-bar:hover .install-bar-copy { color: var(--accent); background: var(--accent-bg); }
+.install-bar.copied .install-bar-copy { color: var(--accent); }
+
+/* CTA Buttons */
+.cta-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.65rem 1.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn:hover { border-color: var(--border-bright); color: var(--text-bright); background: var(--bg-surface); }
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.btn-primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); color: var(--bg); }
+
+/* --- Demo --- */
+.demo {
+  padding: var(--space-md) 0 var(--space-xl);
+}
+.demo-window {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  max-width: 800px;
+  margin: 0 auto;
+}
+.demo-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.demo-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-bright);
+}
+.demo-dot:nth-child(1) { background: #f87171; opacity: 0.7; }
+.demo-dot:nth-child(2) { background: #fbbf24; opacity: 0.7; }
+.demo-dot:nth-child(3) { background: #4ade80; opacity: 0.7; }
+.demo-title {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-left: 0.5rem;
+}
+.demo-window img {
+  width: 100%;
+  display: block;
+}
+
+/* --- Section --- */
+.section { padding: var(--space-xl) 0; }
+.section-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  margin-bottom: var(--space-xs);
+}
+.section-title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: var(--space-sm);
+  letter-spacing: -0.02em;
+}
+.section-desc {
+  color: var(--text-dim);
+  max-width: 540px;
+  margin-bottom: var(--space-lg);
+}
+
+.section + .section { border-top: 1px solid var(--border); }
+
+/* --- Features grid --- */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.feature-card {
+  background: var(--bg-raised);
+  padding: var(--space-md);
+  transition: background 0.2s;
+}
+.feature-card:hover { background: var(--bg-surface); }
+.feature-icon {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 6px;
+  margin-bottom: var(--space-sm);
+  border: 1px solid rgba(110, 231, 183, 0.12);
+}
+.feature-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 0.35rem;
+}
+.feature-card p {
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* --- Runtimes --- */
+.runtimes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-sm);
+}
+.runtime-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+.runtime-card:hover { border-color: var(--border-bright); background: var(--bg-surface); }
+.runtime-card.planned { opacity: 0.5; }
+.runtime-name {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-bright);
+  margin-bottom: 0.25rem;
+}
+.runtime-lang {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+}
+.runtime-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  display: inline-block;
+}
+.runtime-badge.supported { color: var(--accent); background: var(--accent-bg); }
+.runtime-badge.planned { color: var(--yellow); background: rgba(251, 191, 36, 0.08); }
+
+/* --- Commands --- */
+.commands-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+}
+.cmd-tab {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: 0.75rem 1.25rem;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.cmd-tab:hover { color: var(--text); }
+.cmd-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.cmd-panel {
+  display: none;
+  padding: var(--space-md) 0;
+}
+.cmd-panel.active { display: block; }
+.cmd-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.cmd-item {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text-bright);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.85rem;
+  border-radius: 4px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.cmd-item:hover { border-color: var(--border-bright); background: var(--bg-surface); }
+
+/* --- Example session --- */
+.terminal {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.65;
+}
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+}
+.terminal-bar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-bright);
+}
+.terminal-bar-dot:nth-child(1) { background: rgba(248,113,113,0.6); }
+.terminal-bar-dot:nth-child(2) { background: rgba(251,191,36,0.6); }
+.terminal-bar-dot:nth-child(3) { background: rgba(74,222,128,0.6); }
+.terminal-body {
+  padding: 1.25rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+.t-prompt { color: var(--accent); }
+.t-cmd { color: var(--text-bright); }
+.t-flag { color: var(--blue); }
+.t-output { color: var(--text-dim); }
+.t-file { color: var(--yellow); }
+.t-ref { color: var(--purple); font-weight: 700; }
+.t-str { color: var(--accent); }
+.t-num { color: var(--blue); }
+.t-kw { color: var(--red); }
+.t-comment { color: var(--text-dim); font-style: italic; }
+.t-line { color: var(--text-dim); user-select: none; }
+.t-arrow { color: var(--accent); font-weight: 700; }
+.t-type { color: var(--blue); }
+
+/* --- Architecture --- */
+.arch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  max-width: 780px;
+  margin: 0 auto;
+}
+.arch-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+.arch-node {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-bright);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 1.2rem;
+  text-align: center;
+  position: relative;
+  transition: border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+.arch-node:hover { border-color: var(--border-bright); background: var(--bg-surface); }
+.arch-node small {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-top: 0.15rem;
+}
+.arch-node.accent { border-color: rgba(110,231,183,0.3); background: var(--accent-bg); }
+.arch-node.accent > span { color: var(--accent); }
+.arch-node.blue { border-color: rgba(125,211,252,0.25); background: rgba(125,211,252,0.06); }
+.arch-node.blue > span { color: var(--blue); }
+.arch-node.yellow { border-color: rgba(251,191,36,0.25); background: rgba(251,191,36,0.06); }
+.arch-node.yellow > span { color: var(--yellow); }
+.arch-node.purple { border-color: rgba(196,181,253,0.25); background: rgba(196,181,253,0.06); }
+.arch-node.purple > span { color: var(--purple); }
+
+.arch-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.35rem 0;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  gap: 0.1rem;
+}
+.arch-connector .arch-line {
+  width: 1px;
+  height: 16px;
+  background: var(--border-bright);
+}
+.arch-connector .arch-arrow {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--border-bright);
+}
+.arch-connector-label {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  padding: 0.15rem 0.6rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+}
+.arch-connector-h {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  color: var(--text-dim);
+}
+.arch-connector-h .arch-hline {
+  width: 24px;
+  height: 1px;
+  background: var(--border-bright);
+}
+.arch-split {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-md);
+  width: 100%;
+  position: relative;
+}
+.arch-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  max-width: 280px;
+}
+.arch-split-line {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50%;
+  height: 1px;
+  background: var(--border-bright);
+}
+.arch-split::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 25%;
+  right: 25%;
+  height: 1px;
+  background: var(--border-bright);
+}
+
+@media (max-width: 640px) {
+  .arch-node { font-size: 0.7rem; padding: 0.5rem 0.8rem; }
+  .arch-node small { font-size: 0.6rem; }
+  .arch-split { flex-direction: column; align-items: center; gap: var(--space-sm); }
+  .arch-split::before { display: none; }
+  .arch-branch { max-width: 100%; }
+}
+
+/* --- Footer --- */
+footer {
+  border-top: 1px solid var(--border);
+  padding: var(--space-md) 0;
+  text-align: center;
+}
+.footer-links {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-sm);
+}
+.footer-links a {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.footer-links a:hover { color: var(--text); }
+.footer-copy {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* --- Animations --- */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate {
+  opacity: 0;
+  animation: fadeUp 0.5s ease forwards;
+}
+.delay-1 { animation-delay: 0.1s; }
+.delay-2 { animation-delay: 0.2s; }
+.delay-3 { animation-delay: 0.3s; }
+.delay-4 { animation-delay: 0.4s; }
+
+/* Scroll-triggered */
+.reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* --- Responsive --- */
+@media (max-width: 640px) {
+  .hero { padding: var(--space-lg) 0 var(--space-md); }
+  .section { padding: var(--space-lg) 0; }
+  .nav-links a.hide-mobile { display: none; }
+  .features-grid { grid-template-columns: 1fr; }
+  .runtimes-grid { grid-template-columns: 1fr 1fr; }
+  .install-bar code { font-size: 0.75rem; }
+  .terminal-body { font-size: 0.7rem; padding: 1rem; }
+  .arch-box pre { font-size: 0.65rem; }
+  .arch-box { padding: 1rem; }
+}
+
+@media (max-width: 420px) {
+  .runtimes-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="container">
+    <a href="#" class="nav-logo"><span class="prompt">&gt;</span> dbg</a>
+    <div class="nav-links">
+      <a href="#features" class="hide-mobile">Features</a>
+      <a href="#runtimes" class="hide-mobile">Runtimes</a>
+      <a href="#commands">Commands</a>
+      <a href="#quickstart">Quick Start</a>
+      <span class="nav-version">v0.2.1</span>
+      <a href="https://github.com/theodo-group/agent-dbg" target="_blank" rel="noopener" aria-label="GitHub">
+        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge animate delay-1">Open Source &middot; MIT License</div>
+    <h1 class="animate delay-2">
+      Debugger CLI for<br><span class="accent">AI Agents</span>
+    </h1>
+    <p class="hero-sub animate delay-3">Fast, token-efficient, no fluff. Real debugging for agents — variables, stack, breakpoints — via short <code style="color:var(--purple);font-family:var(--mono)">@ref</code> handles.</p>
+
+    <div class="animate delay-3" style="margin-bottom: var(--space-md); display: flex; flex-direction: column; align-items: center; gap: 0.5rem;">
+      <div class="install-bar" onclick="copyInstall(this, 'bun install --global debug-that')" title="Click to copy">
+        <span class="install-bar-prefix">$</span>
+        <code>bun install --global debug-that</code>
+        <span class="install-bar-copy">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </span>
+      </div>
+      <div class="install-bar" onclick="copyInstall(this, 'npx skills add theodo-group/debug-that')" title="Click to copy — Claude Code skill">
+        <span class="install-bar-prefix">$</span>
+        <code>npx skills add theodo-group/debug-that</code>
+        <span class="install-bar-copy">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </span>
+      </div>
+    </div>
+
+    <div class="cta-row animate delay-4">
+      <a href="https://github.com/theodo-group/agent-dbg" target="_blank" rel="noopener" class="btn btn-primary">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://www.npmjs.com/package/debug-that" target="_blank" rel="noopener" class="btn">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M0 7.334v8h6.666v1.332H12v-1.332h12v-8H0zm6.666 6.664H5.334v-4H3.999v4H1.335V8.667h5.331v5.331zm4 0h-2.666V8.667h5.334v5.331h-2.668zm12 0h-1.332v-4h-1.334v4h-1.334v-4h-1.334v4h-2.666V8.667h8v5.331zM10.666 10h1.332v2.668h-1.332V10z"/></svg>
+        npm
+      </a>
+      <a href="#quickstart" class="btn">Quick Start</a>
+    </div>
+  </div>
+</section>
+
+<!-- Demo -->
+<section class="demo">
+  <div class="container">
+    <div class="demo-window reveal">
+      <div class="demo-titlebar">
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-title">dbg — debug-that</span>
+      </div>
+      <img src="./demo.gif" alt="debug-that CLI demo showing launch, breakpoints, and variable inspection" loading="lazy">
+    </div>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section class="section" id="quickstart">
+  <div class="container">
+    <div class="section-label reveal">Quick Start</div>
+    <h2 class="section-title reveal">Debug in 30 seconds</h2>
+
+    <div class="terminal reveal" style="max-width: 720px;">
+      <div class="terminal-bar">
+        <span class="terminal-bar-dot"></span>
+        <span class="terminal-bar-dot"></span>
+        <span class="terminal-bar-dot"></span>
+      </div>
+      <div class="terminal-body"><span class="t-comment"># Launch and pause at entry</span>
+<span class="t-prompt">&gt;</span> <span class="t-cmd">dbg launch</span> <span class="t-flag">--brk</span> <span class="t-cmd">tsx</span> <span class="t-file">src/app.ts</span>
+<span class="t-output">Session "default" started (pid 70445)</span>
+<span class="t-output">Paused at <span class="t-file">./src/app.ts:0:1</span></span>
+
+<span class="t-comment"># Set a breakpoint</span>
+<span class="t-prompt">&gt;</span> <span class="t-cmd">dbg break</span> <span class="t-file">src/app.ts:19</span>
+<span class="t-ref">BP#1</span><span class="t-output"> set at <span class="t-file">src/app.ts:19</span></span>
+
+<span class="t-comment"># Run to breakpoint</span>
+<span class="t-prompt">&gt;</span> <span class="t-cmd">dbg continue</span>
+<span class="t-output">Paused at <span class="t-file">./src/app.ts:19:21</span></span>
+
+<span class="t-output">Source:</span>
+<span class="t-line">   17|</span><span class="t-kw">const</span> alice: <span class="t-type">Person</span> = { name: <span class="t-str">"Alice"</span>, age: <span class="t-num">30</span> };
+<span class="t-line">   18|</span><span class="t-kw">const</span> greeting: <span class="t-type">string</span> = greet(alice);
+<span class="t-arrow"> &gt; 19|</span><span class="t-kw">const</span> sum: <span class="t-type">number</span> = add(<span class="t-num">2</span>, <span class="t-num">3</span>);
+<span class="t-line">   20|</span>console.log(greeting);
+
+<span class="t-output">Locals:</span>
+<span class="t-ref">@v1</span>  greet     <span class="t-output">Function greet(person)</span>
+<span class="t-ref">@v2</span>  add       <span class="t-output">Function add(a,b)</span>
+<span class="t-ref">@v3</span>  alice     <span class="t-output">Object { name: <span class="t-str">"Alice"</span>, age: <span class="t-num">30</span> }</span>
+<span class="t-ref">@v4</span>  greeting  <span class="t-str">"Hello, Alice! Age: 30"</span>
+
+<span class="t-comment"># Inspect deeper</span>
+<span class="t-prompt">&gt;</span> <span class="t-cmd">dbg props</span> <span class="t-ref">@v3</span>
+<span class="t-output">  name  <span class="t-str">"Alice"</span></span>
+<span class="t-output">  age   <span class="t-num">30</span></span>
+
+<span class="t-comment"># Evaluate expressions</span>
+<span class="t-prompt">&gt;</span> <span class="t-cmd">dbg eval</span> <span class="t-str">"alice.name.toUpperCase()"</span>
+<span class="t-str">"ALICE"</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="section" id="features">
+  <div class="container">
+    <div class="section-label reveal">Features</div>
+    <h2 class="section-title reveal">Built for machines, useful for humans</h2>
+    <p class="section-desc reveal">Every design decision optimizes for token efficiency and programmatic consumption. No colors, no decorations — just structured data.</p>
+
+    <div class="features-grid reveal">
+      <div class="feature-card">
+        <div class="feature-icon">@</div>
+        <h3>@ref System</h3>
+        <p>Every variable, frame, and breakpoint gets a short handle like <code>@v1</code>, <code>@f0</code>, <code>BP#1</code>. Agents reference entities without parsing complex output.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&lt;</div>
+        <h3>Token-Efficient</h3>
+        <p>No ANSI colors, no box drawing. Compact one-line-per-entity output. Every byte of output is meaningful data, not decoration.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&gt;</div>
+        <h3>Multi-Runtime</h3>
+        <p>Node.js, Bun, TypeScript, C/C++/Rust/Swift via LLDB. Auto-detects runtime from the launch command. One CLI for everything.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">~</div>
+        <h3>Daemon Architecture</h3>
+        <p>Persistent background sessions with stateless CLI commands. Launch once, inspect repeatedly. Sessions survive between agent turns.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">!</div>
+        <h3>Hot-Patching</h3>
+        <p>Live-edit running JavaScript/TypeScript code without restarting. Fix bugs mid-session. Changes take effect on next function call.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">#</div>
+        <h3>Source Maps</h3>
+        <p>Debug TypeScript with original source locations. Breakpoints resolve to TS files. Stack traces show your code, not compiled output.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Runtimes -->
+<section class="section" id="runtimes">
+  <div class="container">
+    <div class="section-label reveal">Runtimes</div>
+    <h2 class="section-title reveal">One debugger, every runtime</h2>
+    <p class="section-desc reveal">Auto-detects the runtime from your launch command and connects via the appropriate protocol adapter.</p>
+
+    <div class="runtimes-grid reveal">
+      <div class="runtime-card">
+        <div class="runtime-name">Node.js</div>
+        <div class="runtime-lang">JavaScript / TypeScript</div>
+        <span class="runtime-badge supported">Supported</span>
+        <div style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);margin-top:0.5rem;">V8 Inspector (CDP)</div>
+      </div>
+      <div class="runtime-card">
+        <div class="runtime-name">Bun</div>
+        <div class="runtime-lang">JavaScript / TypeScript</div>
+        <span class="runtime-badge supported">Supported</span>
+        <div style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);margin-top:0.5rem;">WebKit Inspector (JSC)</div>
+      </div>
+      <div class="runtime-card">
+        <div class="runtime-name">LLDB</div>
+        <div class="runtime-lang">C / C++ / Rust / Swift</div>
+        <span class="runtime-badge supported">Supported</span>
+        <div style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);margin-top:0.5rem;">Debug Adapter Protocol</div>
+      </div>
+      <div class="runtime-card">
+        <div class="runtime-name">Python</div>
+        <div class="runtime-lang">Python</div>
+        <span class="runtime-badge supported">Supported</span>
+        <div style="font-family:var(--mono);font-size:0.7rem;color:var(--text-dim);margin-top:0.5rem;">DAP (debugpy)</div>
+      </div>
+      <div class="runtime-card planned">
+        <div class="runtime-name">Deno</div>
+        <div class="runtime-lang">JavaScript / TypeScript</div>
+        <span class="runtime-badge planned">Planned</span>
+      </div>
+      <div class="runtime-card planned">
+        <div class="runtime-name">Go</div>
+        <div class="runtime-lang">delve</div>
+        <span class="runtime-badge planned">Planned</span>
+      </div>
+      <div class="runtime-card planned">
+        <div class="runtime-name">Java</div>
+        <div class="runtime-lang">Java / Kotlin (JDWP)</div>
+        <span class="runtime-badge planned">Planned</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Commands -->
+<section class="section" id="commands">
+  <div class="container">
+    <div class="section-label reveal">Commands</div>
+    <h2 class="section-title reveal">30+ commands, zero ambiguity</h2>
+    <p class="section-desc reveal">Each command does one thing. Every error suggests the next valid command.</p>
+
+    <div class="reveal">
+      <div class="commands-tabs" role="tablist">
+        <button class="cmd-tab active" onclick="switchTab(this, 'tab-session')" role="tab">Session</button>
+        <button class="cmd-tab" onclick="switchTab(this, 'tab-execution')" role="tab">Execution</button>
+        <button class="cmd-tab" onclick="switchTab(this, 'tab-inspection')" role="tab">Inspection</button>
+        <button class="cmd-tab" onclick="switchTab(this, 'tab-breakpoints')" role="tab">Breakpoints</button>
+        <button class="cmd-tab" onclick="switchTab(this, 'tab-mutation')" role="tab">Mutation</button>
+        <button class="cmd-tab" onclick="switchTab(this, 'tab-blackbox')" role="tab">Blackbox</button>
+      </div>
+
+      <div class="cmd-panel active" id="tab-session">
+        <div class="cmd-list">
+          <span class="cmd-item">launch</span>
+          <span class="cmd-item">attach</span>
+          <span class="cmd-item">stop</span>
+          <span class="cmd-item">status</span>
+          <span class="cmd-item">sessions</span>
+        </div>
+      </div>
+      <div class="cmd-panel" id="tab-execution">
+        <div class="cmd-list">
+          <span class="cmd-item">continue</span>
+          <span class="cmd-item">step over</span>
+          <span class="cmd-item">step into</span>
+          <span class="cmd-item">step out</span>
+          <span class="cmd-item">pause</span>
+          <span class="cmd-item">run-to</span>
+          <span class="cmd-item">restart-frame</span>
+        </div>
+      </div>
+      <div class="cmd-panel" id="tab-inspection">
+        <div class="cmd-list">
+          <span class="cmd-item">state</span>
+          <span class="cmd-item">vars</span>
+          <span class="cmd-item">stack</span>
+          <span class="cmd-item">eval</span>
+          <span class="cmd-item">props</span>
+          <span class="cmd-item">source</span>
+          <span class="cmd-item">scripts</span>
+          <span class="cmd-item">search</span>
+          <span class="cmd-item">console</span>
+          <span class="cmd-item">exceptions</span>
+        </div>
+      </div>
+      <div class="cmd-panel" id="tab-breakpoints">
+        <div class="cmd-list">
+          <span class="cmd-item">break</span>
+          <span class="cmd-item">break-rm</span>
+          <span class="cmd-item">break-ls</span>
+          <span class="cmd-item">break-toggle</span>
+          <span class="cmd-item">breakable</span>
+          <span class="cmd-item">logpoint</span>
+          <span class="cmd-item">catch</span>
+          <span class="cmd-item">break-fn</span>
+        </div>
+      </div>
+      <div class="cmd-panel" id="tab-mutation">
+        <div class="cmd-list">
+          <span class="cmd-item">set</span>
+          <span class="cmd-item">set-return</span>
+          <span class="cmd-item">hotpatch</span>
+        </div>
+      </div>
+      <div class="cmd-panel" id="tab-blackbox">
+        <div class="cmd-list">
+          <span class="cmd-item">blackbox</span>
+          <span class="cmd-item">blackbox-ls</span>
+          <span class="cmd-item">blackbox-rm</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section class="section" id="architecture">
+  <div class="container">
+    <div class="section-label reveal">Architecture</div>
+    <h2 class="section-title reveal">Daemon + adapter pattern</h2>
+    <p class="section-desc reveal">Stateless CLI talks to a persistent daemon over Unix sockets. The daemon manages sessions and delegates to runtime-specific protocol adapters.</p>
+
+    <div class="arch reveal">
+      <!-- CLI -->
+      <div class="arch-row">
+        <div class="arch-node"><span>CLI</span><small>stateless commands</small></div>
+      </div>
+      <div class="arch-connector">
+        <div class="arch-line"></div>
+        <div class="arch-connector-label">Unix socket IPC</div>
+        <div class="arch-line"></div>
+        <div class="arch-arrow"></div>
+      </div>
+      <!-- Daemon -->
+      <div class="arch-row">
+        <div class="arch-node accent"><span>Daemon</span><small>persistent, per-session</small></div>
+      </div>
+      <div class="arch-connector">
+        <div class="arch-line"></div>
+        <div class="arch-arrow"></div>
+      </div>
+      <!-- Split: CDP vs DAP -->
+      <div class="arch-split">
+        <!-- CDP Branch -->
+        <div class="arch-branch">
+          <div class="arch-node blue"><span>DebugSession</span><small>CDP path (JavaScript)</small></div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-node blue"><span>RuntimeAdapter</span><small>strategy pattern</small></div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-row" style="gap:0.5rem;">
+            <div class="arch-node blue"><span>NodeAdapter</span><small>V8 / CDP</small></div>
+            <div class="arch-node purple"><span>BunAdapter</span><small>JSC / WebKit</small></div>
+          </div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-node accent"><span>CdpClient</span><small>WebSocket</small></div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-node"><span>V8 / JSC Inspector</span></div>
+        </div>
+        <!-- DAP Branch -->
+        <div class="arch-branch">
+          <div class="arch-node yellow"><span>DapSession</span><small>DAP path (native)</small></div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-node yellow"><span>DapClient</span><small>stdin / stdout</small></div>
+          <div class="arch-connector">
+            <div class="arch-line"></div>
+            <div class="arch-arrow"></div>
+          </div>
+          <div class="arch-node"><span>lldb-dap</span><small>debugpy, etc.</small></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/theodo-group/agent-dbg">GitHub</a>
+      <a href="https://www.npmjs.com/package/debug-that">npm</a>
+      <a href="https://github.com/theodo-group/agent-dbg/blob/main/LICENSE">MIT License</a>
+      <a href="https://github.com/theodo-group/agent-dbg/issues">Issues</a>
+    </div>
+    <p class="footer-copy">Built by <a href="https://www.theodo.com" target="_blank" rel="noopener">Theodo Group</a></p>
+  </div>
+</footer>
+
+<script>
+// Copy install command
+function copyInstall(el, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    el.classList.add('copied');
+    const copyEl = el.querySelector('.install-bar-copy');
+    const origHTML = copyEl.innerHTML;
+    copyEl.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+    setTimeout(() => {
+      el.classList.remove('copied');
+      copyEl.innerHTML = origHTML;
+    }, 2000);
+  });
+}
+
+// Tab switching
+function switchTab(btn, panelId) {
+  btn.parentElement.querySelectorAll('.cmd-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.cmd-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(panelId).classList.add('active');
+}
+
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// Smooth scroll for anchor links
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) {
+      e.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+});
+</script>
+
+</body>
+</html>
