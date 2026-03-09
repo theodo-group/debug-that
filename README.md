@@ -2,6 +2,10 @@
 
 Debugger CLI built for AI agents. Fast, token-efficient, no fluff.
 
+<p align="center">
+  <img src="docs/demo-2x.gif" alt="debug-that demo" />
+</p>
+
 **Why?** Agents waste tokens on print-debugging. A real debugger gives precise state inspection in minimal output — variables, stack, breakpoints — all via short `@ref` handles.
 
 Inspired by Vercel's [agent-browser](https://github.com/vercel-labs/agent-browser) CLI — the same `@ref` concept, applied to debugging instead of browsing.
