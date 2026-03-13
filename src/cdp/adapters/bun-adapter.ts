@@ -1,9 +1,9 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import type { CdpClient } from "../../cdp/client.ts";
-import { JscClient } from "../../cdp/jsc-client.ts";
 import { escapeRegex } from "../../util/escape-regex.ts";
-import type { RuntimeAdapter } from "../runtime-adapter.ts";
-import type { DebugSession, ScriptInfo } from "../session.ts";
+import type { CdpClient } from "../client.ts";
+import type { CdpDialect } from "../dialect.ts";
+import { JscClient } from "../jsc-client.ts";
+import type { CdpSession, ScriptInfo } from "../session.ts";
 
 /**
  * BunAdapter handles WebKit Inspector Protocol differences from CDP.
@@ -16,7 +16,7 @@ import type { DebugSession, ScriptInfo } from "../session.ts";
  * - Inspector.enable must be called before other domains
  * - Inspector.initialized starts JS execution (replaces runIfWaitingForDebugger)
  */
-export class BunAdapter implements RuntimeAdapter {
+export class BunAdapter implements CdpDialect {
 	readonly name = "bun" as const;
 	readonly internalUrlPrefix = "bun:";
 	private jsc: JscClient | null = null;
@@ -35,7 +35,7 @@ export class BunAdapter implements RuntimeAdapter {
 	 * breakpoints auto-resolve to the nearest breakable location in JSC,
 	 * unlike line 0 which silently fails.
 	 */
-	async waitForBrkPause(session: DebugSession): Promise<void> {
+	async waitForBrkPause(session: CdpSession): Promise<void> {
 		if (!this.jsc) return;
 
 		await this.jsc.send("Debugger.setBreakpointsActive", { active: true });
@@ -176,7 +176,7 @@ export class BunAdapter implements RuntimeAdapter {
 		return undefined;
 	}
 
-	private resolveEntryScript(session: DebugSession): string | null {
+	private resolveEntryScript(session: CdpSession): string | null {
 		if (!session.launchCommand) return null;
 		for (let i = session.launchCommand.length - 1; i >= 0; i--) {
 			const arg = session.launchCommand[i] as string;

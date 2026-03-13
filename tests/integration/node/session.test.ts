@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withSession } from "../../helpers.ts";
 
 async function readStderrUntilInspector(stderr: ReadableStream<Uint8Array>): Promise<string> {
@@ -19,7 +19,7 @@ async function readStderrUntilInspector(stderr: ReadableStream<Uint8Array>): Pro
 	return output;
 }
 
-describe("DebugSession integration", () => {
+describe("CdpSession integration", () => {
 	test("launch with brk pauses at first line", () =>
 		withSession("test-launch", async (session) => {
 			const result = await session.launch(["node", "tests/fixtures/js/simple-app.js"], {
@@ -53,7 +53,7 @@ describe("DebugSession integration", () => {
 		}));
 
 	test("stop disconnects and kills process", async () => {
-		const session = new DebugSession("test-stop");
+		const session = new CdpSession("test-stop");
 		const result = await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], {
 			brk: true,
 		});

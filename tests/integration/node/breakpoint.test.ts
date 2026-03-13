@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withPausedSession } from "../../helpers.ts";
 
 describe("Breakpoint integration", () => {
@@ -94,12 +94,12 @@ describe("Breakpoint integration", () => {
 		}));
 
 	test("setBreakpoint without CDP throws error", async () => {
-		const session = new DebugSession("test-bp-no-cdp");
+		const session = new CdpSession("test-bp-no-cdp");
 		await expect(session.setBreakpoint("file.js", 1)).rejects.toThrow("No active debug session");
 	});
 
 	test("setExceptionPause without CDP throws error", async () => {
-		const session = new DebugSession("test-catch-no-cdp");
+		const session = new CdpSession("test-catch-no-cdp");
 		await expect(session.setExceptionPause("all")).rejects.toThrow("No active debug session");
 	});
 });

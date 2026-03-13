@@ -1,6 +1,6 @@
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
-import type { SessionStatus } from "../daemon/session.ts";
+import type { SessionStatus } from "../session/types.ts";
 
 registerCommand("restart-frame", async (args) => {
 	const session = args.global.session;

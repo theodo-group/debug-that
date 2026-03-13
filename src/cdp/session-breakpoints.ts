@@ -1,8 +1,8 @@
 import { escapeRegex } from "../util/escape-regex.ts";
-import type { DebugSession } from "./session.ts";
+import type { CdpSession } from "./session.ts";
 
 export async function setBreakpoint(
-	session: DebugSession,
+	session: CdpSession,
 	file: string,
 	line: number,
 	options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
@@ -104,7 +104,7 @@ export async function setBreakpoint(
 	return { ref, location };
 }
 
-export async function removeBreakpoint(session: DebugSession, ref: string): Promise<void> {
+export async function removeBreakpoint(session: CdpSession, ref: string): Promise<void> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -125,7 +125,7 @@ export async function removeBreakpoint(session: DebugSession, ref: string): Prom
 	session.refs.remove(ref);
 }
 
-export async function removeAllBreakpoints(session: DebugSession): Promise<void> {
+export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -142,7 +142,7 @@ export async function removeAllBreakpoints(session: DebugSession): Promise<void>
 	}
 }
 
-export function listBreakpoints(session: DebugSession): Array<{
+export function listBreakpoints(session: CdpSession): Array<{
 	ref: string;
 	type: "BP" | "LP";
 	url: string;
@@ -253,7 +253,7 @@ export function listBreakpoints(session: DebugSession): Array<{
 }
 
 export async function toggleBreakpoint(
-	session: DebugSession,
+	session: CdpSession,
 	ref: string,
 ): Promise<{ ref: string; state: "enabled" | "disabled" }> {
 	if (!session.cdp) {
@@ -319,7 +319,7 @@ export async function toggleBreakpoint(
 }
 
 async function reEnableBreakpoint(
-	session: DebugSession,
+	session: CdpSession,
 	ref: string,
 	entry: { breakpointId: string; meta: Record<string, unknown> },
 ): Promise<void> {
@@ -369,7 +369,7 @@ async function reEnableBreakpoint(
 }
 
 export async function getBreakableLocations(
-	session: DebugSession,
+	session: CdpSession,
 	file: string,
 	startLine: number,
 	endLine: number,
@@ -400,7 +400,7 @@ export async function getBreakableLocations(
 }
 
 export async function setLogpoint(
-	session: DebugSession,
+	session: CdpSession,
 	file: string,
 	line: number,
 	template: string,
@@ -481,7 +481,7 @@ export async function setLogpoint(
 }
 
 export async function setExceptionPause(
-	session: DebugSession,
+	session: CdpSession,
 	mode: "all" | "uncaught" | "caught" | "none",
 ): Promise<void> {
 	if (!session.cdp) {

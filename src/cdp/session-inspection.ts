@@ -1,10 +1,10 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
-import type { ConsoleMessage, DebugSession, ExceptionEntry } from "./session.ts";
+import type { CdpSession } from "./session.ts";
 
 export async function evalExpression(
-	session: DebugSession,
+	session: CdpSession,
 	expression: string,
 	options: {
 		frame?: string;
@@ -137,7 +137,7 @@ export async function evalExpression(
 }
 
 export async function getVars(
-	session: DebugSession,
+	session: CdpSession,
 	options: { frame?: string; names?: string[]; allScopes?: boolean } = {},
 ): Promise<Array<{ ref: string; name: string; type: string; value: string; scope: string }>> {
 	if (!session.cdp) {
@@ -243,7 +243,7 @@ export interface PropEntry {
 const MAX_DEPTH = 5;
 
 export async function getProps(
-	session: DebugSession,
+	session: CdpSession,
 	ref: string,
 	options: {
 		own?: boolean;
@@ -272,7 +272,7 @@ export async function getProps(
 }
 
 async function fetchPropsRecursive(
-	session: DebugSession,
+	session: CdpSession,
 	objectId: string,
 	options: { own?: boolean; internal?: boolean },
 	remainingDepth: number,
@@ -387,7 +387,7 @@ async function fetchPropsRecursive(
 }
 
 export async function getSource(
-	session: DebugSession,
+	session: CdpSession,
 	options: { file?: string; lines?: number; all?: boolean; generated?: boolean } = {},
 ): Promise<{
 	url: string;
@@ -522,7 +522,7 @@ export async function getSource(
 }
 
 export function getScripts(
-	session: DebugSession,
+	session: CdpSession,
 	filter?: string,
 ): Array<{ scriptId: string; url: string; sourceMapURL?: string }> {
 	const result: Array<{ scriptId: string; url: string; sourceMapURL?: string }> = [];
@@ -545,7 +545,7 @@ export function getScripts(
 }
 
 export function getStack(
-	session: DebugSession,
+	session: CdpSession,
 	options: { asyncDepth?: number; generated?: boolean; filter?: string } = {},
 ): Array<{
 	ref: string;
@@ -632,7 +632,7 @@ export function getStack(
 }
 
 export async function searchInScripts(
-	session: DebugSession,
+	session: CdpSession,
 	query: string,
 	options: {
 		scriptId?: string;
@@ -685,36 +685,4 @@ export async function searchInScripts(
 	}
 
 	return results;
-}
-
-export function getConsoleMessages(
-	session: DebugSession,
-	options: { level?: string; since?: number; clear?: boolean } = {},
-): ConsoleMessage[] {
-	let messages = [...session.consoleMessages];
-	if (options.level) {
-		messages = messages.filter((m) => m.level === options.level);
-	}
-	if (options.since !== undefined && options.since > 0) {
-		messages = messages.slice(-options.since);
-	}
-	if (options.clear) {
-		session.consoleMessages = [];
-	}
-	return messages;
-}
-
-export function getExceptions(
-	session: DebugSession,
-	options: { since?: number } = {},
-): ExceptionEntry[] {
-	let entries = [...session.exceptionEntries];
-	if (options.since !== undefined && options.since > 0) {
-		entries = entries.slice(-options.since);
-	}
-	return entries;
-}
-
-export function clearConsole(session: DebugSession): void {
-	session.consoleMessages = [];
 }

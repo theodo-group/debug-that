@@ -354,10 +354,22 @@ const SuccessResponse = z.object({
 
 const ErrorResponse = z.object({
 	ok: z.literal(false),
-	error: z.optional(z.string()),
+	error: z.string(),
 	suggestion: z.optional(z.string()),
 });
 
 export const DaemonResponseSchema = z.union([SuccessResponse, ErrorResponse]);
 
 export type DaemonResponse = z.infer<typeof DaemonResponseSchema>;
+export type ErrorResponse = z.infer<typeof ErrorResponse>;
+export type SuccessResponse = z.infer<typeof SuccessResponse>;
+
+export function isError(response: unknown): response is ErrorResponse {
+	return typeof response === "object" && response !== null && "error" in response;
+}
+
+export function isSuccess(response: unknown): response is SuccessResponse {
+	return (
+		typeof response === "object" && response !== null && "ok" in response && response.ok === true
+	);
+}

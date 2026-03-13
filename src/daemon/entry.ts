@@ -1,18 +1,24 @@
-import { DapSession } from "../dap/session.ts";
-import type { DaemonRequest, DaemonResponse } from "../protocol/messages.ts";
+import {
+	type DaemonRequest,
+	type DaemonResponse,
+	type ErrorResponse,
+	isError,
+} from "../protocol/messages.ts";
+import { createSession } from "../session/factory.ts";
+import type { PendingConfig, Session } from "../session/session.ts";
 import { suggestEvalFix } from "./eval-suggestions.ts";
 import { DaemonLogger } from "./logger.ts";
 import { ensureSocketDir, getDaemonLogPath } from "./paths.ts";
 import { DaemonServer } from "./server.ts";
-import { DebugSession } from "./session.ts";
 
 // Session name follows --daemon in argv
 const daemonIdx = process.argv.indexOf("--daemon");
-const session = daemonIdx !== -1 ? process.argv[daemonIdx + 1] : process.argv[2];
-if (!session) {
+const sessionArg = daemonIdx !== -1 ? process.argv[daemonIdx + 1] : process.argv[2];
+if (!sessionArg) {
 	console.error("Usage: debug-that --daemon <session> [--timeout <seconds>]");
 	process.exit(1);
 }
+const session: string = sessionArg;
 
 let timeout = 300; // default 5 minutes
 const timeoutIdx = process.argv.indexOf("--timeout");
@@ -35,18 +41,29 @@ daemonLogger.info("daemon.start", `Daemon starting for session "${session}"`, {
 });
 
 const server = new DaemonServer(session, { idleTimeout: timeout, logger: daemonLogger });
-const cdpSession = new DebugSession(session, { daemonLogger });
-let dapSession: DapSession | null = null;
-let pendingRemaps: [string, string][] = [];
-let pendingSymbolPaths: string[] = [];
 
-function isDapRuntime(runtime: string | undefined): runtime is string {
-	return runtime !== undefined && runtime !== "node";
+// Session is created lazily on launch/attach. Null until then.
+let activeSession: Session | null = null;
+
+// Config accumulated before launch (e.g. remaps set before DAP launch).
+// Flushed into the session on launch/attach, then cleared.
+const pendingConfig: PendingConfig = { remaps: [], symbolPaths: [] };
+
+/**
+ * Returns the active session or a structured error response if none exists.
+ */
+function requireSession(): Session | ErrorResponse {
+	if (activeSession) return activeSession;
+	return {
+		ok: false,
+		error: "No active debug session",
+		suggestion: "Use 'launch <command>' or 'attach <target>' first",
+	};
 }
 
-/** Return the active session — DapSession if one was launched, otherwise the CDP session. */
-function activeSession(): DebugSession | DapSession {
-	return dapSession ?? cdpSession;
+function resetConfig() {
+	pendingConfig.remaps = [];
+	pendingConfig.symbolPaths = [];
 }
 
 server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
@@ -56,72 +73,75 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 
 		case "launch": {
 			const { command, brk = true, port, runtime } = req.args;
-			if (isDapRuntime(runtime)) {
-				dapSession = new DapSession(session, runtime);
-				// Apply any pending config from pre-launch calls
-				if (pendingRemaps.length > 0) {
-					dapSession.setRemaps(pendingRemaps);
-					pendingRemaps = [];
-				}
-				if (pendingSymbolPaths.length > 0) {
-					dapSession.setSymbolPaths(pendingSymbolPaths);
-					pendingSymbolPaths = [];
-				}
-				const result = await dapSession.launch(command, { brk });
-				return { ok: true, data: result };
-			}
-			const result = await cdpSession.launch(command, { brk, port });
+			activeSession = createSession(session, runtime, { daemonLogger });
+			activeSession.applyPendingConfig(pendingConfig);
+			resetConfig();
+			const result = await activeSession.launch(command, { brk, port });
 			return { ok: true, data: result };
 		}
 
 		case "attach": {
 			const { target, runtime } = req.args;
-			if (isDapRuntime(runtime)) {
-				dapSession = new DapSession(session, runtime);
-				const result = await dapSession.attach(target);
-				return { ok: true, data: result };
-			}
-			const result = await cdpSession.attach(target);
+			activeSession = createSession(session, runtime, { daemonLogger });
+			activeSession.applyPendingConfig(pendingConfig);
+			resetConfig();
+			const result = await activeSession.attach(target);
 			return { ok: true, data: result };
 		}
 
-		case "status":
-			return { ok: true, data: activeSession().getStatus() };
+		case "status": {
+			if (!activeSession) {
+				return { ok: true, data: { session, state: "idle", uptime: 0, scriptCount: 0 } };
+			}
+			return { ok: true, data: activeSession.getStatus() };
+		}
 
 		case "state": {
-			const stateResult = await activeSession().buildState(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const stateResult = await session.buildState(req.args);
 			return { ok: true, data: stateResult };
 		}
 
 		case "continue": {
-			await activeSession().continue();
-			const stateAfter = await activeSession().buildState();
+			const session = requireSession();
+			if (isError(session)) return session;
+			await session.continue();
+			const stateAfter = await session.buildState();
 			return { ok: true, data: stateAfter };
 		}
 
 		case "step": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { mode = "over" } = req.args;
-			await activeSession().step(mode);
-			const stateAfter = await activeSession().buildState();
+			await session.step(mode);
+			const stateAfter = await session.buildState();
 			return { ok: true, data: stateAfter };
 		}
 
 		case "pause": {
-			await activeSession().pause();
-			const stateAfter = await activeSession().buildState();
+			const session = requireSession();
+			if (isError(session)) return session;
+			await session.pause();
+			const stateAfter = await session.buildState();
 			return { ok: true, data: stateAfter };
 		}
 
 		case "run-to": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file, line } = req.args;
-			await activeSession().runTo(file, line);
-			const stateAfter = await activeSession().buildState();
+			await session.runTo(file, line);
+			const stateAfter = await session.buildState();
 			return { ok: true, data: stateAfter };
 		}
 
 		case "break": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file, line, condition, hitCount, urlRegex, column } = req.args;
-			const bpResult = await activeSession().setBreakpoint(file, line, {
+			const bpResult = await session.setBreakpoint(file, line, {
 				condition,
 				hitCount,
 				urlRegex,
@@ -131,8 +151,9 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		}
 
 		case "break-fn": {
-			const session = activeSession();
-			if (!("setFunctionBreakpoint" in session)) {
+			const session = requireSession();
+			if (isError(session)) return session;
+			if (!session.capabilities.functionBreakpoints || !session.setFunctionBreakpoint) {
 				return {
 					ok: false,
 					error: "Function breakpoints are only supported with DAP runtimes (e.g. --runtime lldb)",
@@ -140,28 +161,33 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				};
 			}
 			const { name, condition } = req.args;
-			const bpResult = await (session as DapSession).setFunctionBreakpoint(name, {
-				condition,
-			});
+			const bpResult = await session.setFunctionBreakpoint(name, { condition });
 			return { ok: true, data: bpResult };
 		}
 
 		case "break-rm": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { ref } = req.args;
 			if (ref === "all") {
-				await activeSession().removeAllBreakpoints();
+				await session.removeAllBreakpoints();
 				return { ok: true, data: "all removed" };
 			}
-			await activeSession().removeBreakpoint(ref);
+			await session.removeBreakpoint(ref);
 			return { ok: true, data: "removed" };
 		}
 
-		case "break-ls":
-			return { ok: true, data: activeSession().listBreakpoints() };
+		case "break-ls": {
+			const session = requireSession();
+			if (isError(session)) return session;
+			return { ok: true, data: session.listBreakpoints() };
+		}
 
 		case "logpoint": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file, line, template, condition, maxEmissions } = req.args;
-			const lpResult = await activeSession().setLogpoint(file, line, template, {
+			const lpResult = await session.setLogpoint(file, line, template, {
 				condition,
 				maxEmissions,
 			});
@@ -169,47 +195,63 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		}
 
 		case "catch": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { mode } = req.args;
-			await activeSession().setExceptionPause(mode);
+			await session.setExceptionPause(mode);
 			return { ok: true, data: mode };
 		}
 
 		case "source": {
-			const sourceResult = await activeSession().getSource(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const sourceResult = await session.getSource(req.args);
 			return { ok: true, data: sourceResult };
 		}
 
 		case "scripts": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { filter } = req.args;
-			const scriptsResult = activeSession().getScripts(filter);
+			const scriptsResult = session.getScripts(filter);
 			return { ok: true, data: scriptsResult };
 		}
 
 		case "stack": {
-			const stackResult = activeSession().getStack(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const stackResult = session.getStack(req.args);
 			return { ok: true, data: stackResult };
 		}
 
 		case "search": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { query, ...searchOptions } = req.args;
-			const searchResult = await activeSession().searchInScripts(query, searchOptions);
+			const searchResult = await session.searchInScripts(query, searchOptions);
 			return { ok: true, data: searchResult };
 		}
 
 		case "console": {
-			const consoleResult = activeSession().getConsoleMessages(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const consoleResult = session.getConsoleMessages(req.args);
 			return { ok: true, data: consoleResult };
 		}
 
 		case "exceptions": {
-			const exceptionsResult = activeSession().getExceptions(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const exceptionsResult = session.getExceptions(req.args);
 			return { ok: true, data: exceptionsResult };
 		}
 
 		case "eval": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { expression, ...evalOptions } = req.args;
 			try {
-				const evalResult = await activeSession().eval(expression, evalOptions);
+				const evalResult = await session.eval(expression, evalOptions);
 				return { ok: true, data: evalResult };
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
@@ -218,111 +260,142 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		}
 
 		case "vars": {
-			const varsResult = await activeSession().getVars(req.args);
+			const session = requireSession();
+			if (isError(session)) return session;
+			const varsResult = await session.getVars(req.args);
 			return { ok: true, data: varsResult };
 		}
 
 		case "props": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { ref, ...propsOptions } = req.args;
-			const propsResult = await activeSession().getProps(ref, propsOptions);
+			const propsResult = await session.getProps(ref, propsOptions);
 			return { ok: true, data: propsResult };
 		}
 
 		case "blackbox": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { patterns } = req.args;
-			const result = await activeSession().addBlackbox(patterns);
+			const result = await session.addBlackbox(patterns);
 			return { ok: true, data: result };
 		}
 
 		case "blackbox-ls": {
-			return { ok: true, data: activeSession().listBlackbox() };
+			const session = requireSession();
+			if (isError(session)) return session;
+			return { ok: true, data: session.listBlackbox() };
 		}
 
 		case "blackbox-rm": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { patterns } = req.args;
-			const result = await activeSession().removeBlackbox(patterns);
+			const result = await session.removeBlackbox(patterns);
 			return { ok: true, data: result };
 		}
 
 		case "set": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { name, value, frame } = req.args;
-			const result = await activeSession().setVariable(name, value, { frame });
+			const result = await session.setVariable(name, value, { frame });
 			return { ok: true, data: result };
 		}
 
 		case "set-return": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { value } = req.args;
-			const result = await activeSession().setReturnValue(value);
+			const result = await session.setReturnValue(value);
 			return { ok: true, data: result };
 		}
 
 		case "hotpatch": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file, source, dryRun } = req.args;
-			const result = await activeSession().hotpatch(file, source, { dryRun });
+			const result = await session.hotpatch(file, source, { dryRun });
 			return { ok: true, data: result };
 		}
 
 		case "break-toggle": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { ref } = req.args;
-			const toggleResult = await activeSession().toggleBreakpoint(ref);
+			const toggleResult = await session.toggleBreakpoint(ref);
 			return { ok: true, data: toggleResult };
 		}
 
 		case "breakable": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file, startLine, endLine } = req.args;
-			const breakableResult = await activeSession().getBreakableLocations(file, startLine, endLine);
+			const breakableResult = await session.getBreakableLocations(file, startLine, endLine);
 			return { ok: true, data: breakableResult };
 		}
 
 		case "restart-frame": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { frameRef } = req.args;
-			const restartResult = await activeSession().restartFrame(frameRef);
+			const restartResult = await session.restartFrame(frameRef);
 			return { ok: true, data: restartResult };
 		}
 
 		case "sourcemap": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { file: smFile } = req.args;
 			if (smFile) {
-				const match = activeSession().sourceMapResolver.findScriptForSource(smFile);
+				const match = session.sourceMapResolver.findScriptForSource(smFile);
 				if (match) {
-					const info = activeSession().sourceMapResolver.getInfo(match.scriptId);
+					const info = session.sourceMapResolver.getInfo(match.scriptId);
 					return { ok: true, data: info ? [info] : [] };
 				}
 				return { ok: true, data: [] };
 			}
-			return { ok: true, data: activeSession().sourceMapResolver.getAllInfos() };
+			return { ok: true, data: session.sourceMapResolver.getAllInfos() };
 		}
 
 		case "sourcemap-disable": {
-			activeSession().sourceMapResolver.setDisabled(true);
+			const session = requireSession();
+			if (isError(session)) return session;
+			session.sourceMapResolver.setDisabled(true);
 			return { ok: true, data: "disabled" };
 		}
 
 		case "restart": {
-			const result = await activeSession().restart();
+			const session = requireSession();
+			if (isError(session)) return session;
+			const result = await session.restart();
 			return { ok: true, data: result };
 		}
 
 		case "modules": {
-			const session = activeSession();
-			if (!("getModules" in session)) {
+			const session = requireSession();
+			if (isError(session)) return session;
+			if (!session.capabilities.modules || !session.getModules) {
 				return {
 					ok: false,
 					error: "Modules are only available in DAP mode (e.g. --runtime lldb)",
 					suggestion: "For CDP sessions, use: debug-that scripts",
 				};
 			}
-			const modulesResult = await (session as DapSession).getModules(req.args.filter);
+			const modulesResult = await session.getModules(req.args.filter);
 			return { ok: true, data: modulesResult };
 		}
 
 		case "path-map-add": {
+			const session = requireSession();
+			if (isError(session)) return session;
 			const { from, to } = req.args;
-			if (dapSession) {
-				const result = await dapSession.addRemap(from, to);
+			if (session.addRemap) {
+				const result = await session.addRemap(from, to);
 				return { ok: true, data: result };
 			}
-			pendingRemaps.push([from, to]);
+			pendingConfig.remaps.push([from, to]);
 			return {
 				ok: true,
 				data: `Stored remap "${from}" -> "${to}" (will apply on next DAP launch)`,
@@ -330,41 +403,45 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		}
 
 		case "path-map-list": {
-			if (dapSession) {
-				const result = await dapSession.listRemaps();
+			if (activeSession?.listRemaps) {
+				const result = await activeSession.listRemaps();
 				return { ok: true, data: result };
 			}
-			if (pendingRemaps.length === 0) return { ok: true, data: "No path remappings configured" };
-			const listing = pendingRemaps.map(([f, t]) => `"${f}" -> "${t}"`).join("\n");
+			const remaps = pendingConfig.remaps;
+			if (remaps.length === 0) return { ok: true, data: "No path remappings configured" };
+			const listing = remaps.map(([f, t]) => `"${f}" -> "${t}"`).join("\n");
 			return { ok: true, data: listing };
 		}
 
 		case "path-map-clear": {
-			pendingRemaps = [];
-			if (dapSession) {
-				await dapSession.clearRemaps();
+			pendingConfig.remaps = [];
+			if (activeSession?.clearRemaps) {
+				await activeSession.clearRemaps();
 			}
 			return { ok: true, data: "cleared" };
 		}
 
 		case "symbols-add": {
 			const { path } = req.args;
-			if (dapSession) {
-				const result = await dapSession.addSymbols(path);
+			if (activeSession?.addSymbols) {
+				const result = await activeSession.addSymbols(path);
 				return { ok: true, data: result };
 			}
-			pendingSymbolPaths.push(path);
+			pendingConfig.symbolPaths.push(path);
 			return { ok: true, data: `Stored symbol path "${path}" (will apply on next DAP launch)` };
 		}
 
-		case "stop":
-			await activeSession().stop();
-			dapSession = null;
+		case "stop": {
+			if (activeSession) {
+				await activeSession.stop();
+				activeSession = null;
+			}
 			setTimeout(() => {
 				server.stop();
 				process.exit(0);
 			}, 50);
 			return { ok: true, data: "stopped" };
+		}
 	}
 });
 

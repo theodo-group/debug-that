@@ -2,16 +2,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
-import type {
-	ConsoleMessage,
-	ExceptionEntry,
-	LaunchResult,
-	PauseInfo,
-	SessionStatus,
-	StateOptions,
-	StateSnapshot,
-} from "../daemon/session.ts";
-import { RefTable } from "../refs/ref-table.ts";
+import { BaseSession } from "../session/base-session.ts";
+import type { PendingConfig, SessionCapabilities, SourceMapAccess } from "../session/session.ts";
+import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
 
 /** Directory where managed adapter binaries are stored. */
@@ -90,23 +83,16 @@ interface DapStackFrame {
 }
 
 /**
- * DapSession implements the same public interface as DebugSession, but communicates
+ * DapSession implements the same public interface as CdpSession, but communicates
  * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows debug-that
  * to debug native code (C/C++/Rust via LLDB), Python, Ruby, etc.
  */
-export class DapSession {
+export class DapSession extends BaseSession {
 	private dap: DapClient | null = null;
-	private refs: RefTable = new RefTable();
-	private _state: "idle" | "running" | "paused" = "idle";
-	private _pauseInfo: PauseInfo | null = null;
-	private _session: string;
 	private _runtime: string;
-	private _startTime: number = Date.now();
 	private _threadId = 1; // Most adapters use thread 1; updated on "stopped" event
 	private _stackFrames: DapStackFrame[] = [];
-	private _consoleMessages: ConsoleMessage[] = [];
-	private _exceptionEntries: ExceptionEntry[] = [];
-	private capabilities: DebugProtocol.Capabilities = {};
+	private adapterCapabilities: DebugProtocol.Capabilities = {};
 
 	// Breakpoints: DAP requires sending ALL breakpoints per file at once
 	private breakpoints = new Map<string, DapBreakpointEntry[]>();
@@ -122,9 +108,35 @@ export class DapSession {
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
+	readonly capabilities: SessionCapabilities = {
+		functionBreakpoints: true,
+		logpoints: false,
+		hotpatch: false,
+		blackboxing: false,
+		modules: true,
+		restartFrame: false,
+		scriptSearch: false,
+		sourceMapResolution: false,
+		breakableLocations: false,
+		setReturnValue: false,
+		pathMapping: true,
+		symbolLoading: true,
+		breakpointToggle: false,
+		restart: false,
+	};
+
 	constructor(session: string, runtime: string) {
-		this._session = session;
+		super(session);
 		this._runtime = runtime;
+	}
+
+	override applyPendingConfig(config: PendingConfig): void {
+		if (config.remaps) {
+			this._remaps = [...config.remaps];
+		}
+		if (config.symbolPaths) {
+			this._symbolPaths = [...config.symbolPaths];
+		}
 	}
 
 	// ── Lifecycle ─────────────────────────────────────────────────────
@@ -133,7 +145,7 @@ export class DapSession {
 		command: string[],
 		options: { brk?: boolean; port?: number; program?: string; args?: string[] } = {},
 	): Promise<LaunchResult> {
-		if (this._state !== "idle") {
+		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
 
@@ -188,15 +200,15 @@ export class DapSession {
 			paused: this.isPaused(),
 		};
 
-		if (this._pauseInfo) {
-			result.pauseInfo = this._pauseInfo;
+		if (this.pauseInfo) {
+			result.pauseInfo = this.pauseInfo;
 		}
 
 		return result;
 	}
 
 	async attach(target: string): Promise<{ wsUrl: string }> {
-		if (this._state !== "idle") {
+		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
 
@@ -223,8 +235,8 @@ export class DapSession {
 		});
 
 		// If we're not paused after waiting, the target is running
-		if (this._state === "idle") {
-			this._state = "running";
+		if (this.state === "idle") {
+			this.state = "running";
 		}
 
 		return { wsUrl: `dap://${this._runtime}/${target}` };
@@ -232,12 +244,12 @@ export class DapSession {
 
 	getStatus(): SessionStatus {
 		return {
-			session: this._session,
-			state: this._state,
+			session: this.session,
+			state: this.state,
 			pid: this.dap?.pid,
 			wsUrl: this.dap ? `dap://${this._runtime}` : undefined,
-			pauseInfo: this._pauseInfo ?? undefined,
-			uptime: Math.floor((Date.now() - this._startTime) / 1000),
+			pauseInfo: this.pauseInfo ?? undefined,
+			uptime: Math.floor((Date.now() - this.startTime) / 1000),
 			scriptCount: 0,
 		};
 	}
@@ -253,15 +265,11 @@ export class DapSession {
 			this.dap = null;
 		}
 
-		this._state = "idle";
-		this._pauseInfo = null;
+		this.resetState();
 		this._stackFrames = [];
-		this.refs.clearAll();
 		this.breakpoints.clear();
 		this.allBreakpoints = [];
 		this.functionBreakpoints = [];
-		this._consoleMessages = [];
-		this._exceptionEntries = [];
 	}
 
 	// ── Execution control ─────────────────────────────────────────────
@@ -270,8 +278,8 @@ export class DapSession {
 		this.requireConnected();
 		this.requirePaused();
 
-		this._state = "running";
-		this._pauseInfo = null;
+		this.state = "running";
+		this.pauseInfo = null;
 		this._stackFrames = [];
 		this.refs.clearVolatile();
 
@@ -285,8 +293,8 @@ export class DapSession {
 		this.requireConnected();
 		this.requirePaused();
 
-		this._state = "running";
-		this._pauseInfo = null;
+		this.state = "running";
+		this.pauseInfo = null;
 		this.refs.clearVolatile();
 
 		const waiter = this.createStoppedWaiter(30_000);
@@ -298,7 +306,7 @@ export class DapSession {
 
 	async pause(): Promise<void> {
 		this.requireConnected();
-		if (this._state !== "running") {
+		if (this.state !== "running") {
 			throw new Error("Cannot pause: target is not running");
 		}
 
@@ -678,7 +686,7 @@ export class DapSession {
 		lines: Array<{ line: number; text: string; current?: boolean }>;
 	}> {
 		// For native debuggers, read source from the filesystem
-		const file = options.file ?? this._pauseInfo?.url;
+		const file = options.file ?? this.pauseInfo?.url;
 		if (!file) {
 			throw new Error("No source file available. Specify a file path.");
 		}
@@ -691,7 +699,7 @@ export class DapSession {
 		}
 
 		const allLines = content.split("\n");
-		const currentLine = this._pauseInfo?.line;
+		const currentLine = this.pauseInfo?.line;
 		const windowSize = options.lines ?? 10;
 
 		let startLine: number;
@@ -727,22 +735,22 @@ export class DapSession {
 		if (this.isPaused()) await this.ensureStack();
 
 		const snapshot: StateSnapshot = {
-			status: this._state,
+			status: this.state,
 		};
 
-		if (this._state === "paused" && this._pauseInfo) {
-			snapshot.reason = this._pauseInfo.reason;
-			if (this._pauseInfo.url && this._pauseInfo.line !== undefined) {
+		if (this.state === "paused" && this.pauseInfo) {
+			snapshot.reason = this.pauseInfo.reason;
+			if (this.pauseInfo.url && this.pauseInfo.line !== undefined) {
 				snapshot.location = {
-					url: this._pauseInfo.url,
-					line: this._pauseInfo.line,
-					column: this._pauseInfo.column,
+					url: this.pauseInfo.url,
+					line: this.pauseInfo.line,
+					column: this.pauseInfo.column,
 				};
 			}
 		}
 
 		// Include source code if paused and code not explicitly disabled
-		if (this._state === "paused" && options.code !== false) {
+		if (this.state === "paused" && options.code !== false) {
 			try {
 				const source = await this.getSource({ lines: options.lines });
 				snapshot.source = source;
@@ -752,7 +760,7 @@ export class DapSession {
 		}
 
 		// Include variables if requested or if not compact
-		if (this._state === "paused" && (options.vars !== false || !options.compact)) {
+		if (this.state === "paused" && (options.vars !== false || !options.compact)) {
 			try {
 				const vars = await this.getVars({ frame: options.frame, allScopes: options.allScopes });
 				snapshot.vars = vars.map((v) => ({
@@ -767,7 +775,7 @@ export class DapSession {
 		}
 
 		// Include stack if requested
-		if (this._state === "paused" && options.stack !== false) {
+		if (this.state === "paused" && options.stack !== false) {
 			try {
 				snapshot.stack = this.getStack();
 			} catch {
@@ -782,33 +790,6 @@ export class DapSession {
 		return snapshot;
 	}
 
-	// Console & exceptions
-	getConsoleMessages(
-		options: { level?: string; since?: number; clear?: boolean } = {},
-	): ConsoleMessage[] {
-		let msgs = this._consoleMessages;
-		if (options.level) {
-			msgs = msgs.filter((m) => m.level === options.level);
-		}
-		if (options.since !== undefined) {
-			const since = options.since;
-			msgs = msgs.filter((m) => m.timestamp >= since);
-		}
-		if (options.clear) {
-			this._consoleMessages = [];
-		}
-		return msgs;
-	}
-
-	getExceptions(options: { since?: number } = {}): ExceptionEntry[] {
-		let entries = this._exceptionEntries;
-		if (options.since !== undefined) {
-			const since = options.since;
-			entries = entries.filter((e) => e.timestamp >= since);
-		}
-		return entries;
-	}
-
 	// ── Unsupported methods (throw descriptive errors) ────────────────
 
 	async setLogpoint(
@@ -816,7 +797,7 @@ export class DapSession {
 		_line: number,
 		_template: string,
 		_options?: { condition?: string; maxEmissions?: number },
-	): Promise<never> {
+	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
 		throw new Error(
 			"Logpoints are not supported in DAP mode. Use breakpoints with conditions instead.",
 		);
@@ -826,7 +807,7 @@ export class DapSession {
 		this.requireConnected();
 		// DAP supports exception breakpoints through setExceptionBreakpoints.
 		// Use the adapter's declared exception breakpoint filters if available.
-		const available = this.capabilities.exceptionBreakpointFilters ?? [];
+		const available = this.adapterCapabilities.exceptionBreakpointFilters ?? [];
 		const filterIds = available.map((f) => f.filter);
 		let filters: string[];
 		if (mode === "none") {
@@ -841,21 +822,32 @@ export class DapSession {
 		await this.getDap().send("setExceptionBreakpoints", { filters });
 	}
 
-	async toggleBreakpoint(_ref: string): Promise<never> {
+	async toggleBreakpoint(_ref: string): Promise<{ ref: string; state: "enabled" | "disabled" }> {
 		throw new Error(
 			"Breakpoint toggling is not yet supported in DAP mode. Use break-rm and break.",
 		);
 	}
 
-	async getBreakableLocations(_file: string, _startLine: number, _endLine: number): Promise<never> {
+	async getBreakableLocations(
+		_file: string,
+		_startLine: number,
+		_endLine: number,
+	): Promise<Array<{ line: number; column: number }>> {
 		throw new Error("Breakable locations are not supported in DAP mode.");
 	}
 
-	async hotpatch(_file: string, _source: string, _options?: { dryRun?: boolean }): Promise<never> {
+	async hotpatch(
+		_file: string,
+		_source: string,
+		_options?: { dryRun?: boolean },
+	): Promise<{ status: string; callFrames?: unknown[]; exceptionDetails?: unknown }> {
 		throw new Error("Hot-patching is not supported in DAP mode.");
 	}
 
-	async searchInScripts(_query: string, _options?: Record<string, unknown>): Promise<never> {
+	async searchInScripts(
+		_query: string,
+		_options?: { scriptId?: string; isRegex?: boolean; caseSensitive?: boolean },
+	): Promise<Array<{ url: string; line: number; column: number; content: string }>> {
 		throw new Error(
 			"Script search is not supported in DAP mode. Use your shell to search source files.",
 		);
@@ -894,11 +886,11 @@ export class DapSession {
 		throw new Error(`Variable "${varName}" not found in any scope`);
 	}
 
-	async setReturnValue(_value: string): Promise<never> {
+	async setReturnValue(_value: string): Promise<{ value: string; type: string }> {
 		throw new Error("Setting return values is not supported in DAP mode.");
 	}
 
-	async restartFrame(_frameRef?: string): Promise<never> {
+	async restartFrame(_frameRef?: string): Promise<{ status: string }> {
 		throw new Error("Frame restart is not supported in DAP mode.");
 	}
 
@@ -933,7 +925,7 @@ export class DapSession {
 	}
 
 	private canExecReplCommand(): boolean {
-		return this.dap !== null && this._state === "paused";
+		return this.dap !== null && this.state === "paused";
 	}
 
 	async addRemap(from: string, to: string): Promise<string> {
@@ -998,7 +990,7 @@ export class DapSession {
 	): Promise<Array<{ id: string; name: string; path?: string; symbolStatus?: string }>> {
 		this.requireConnected();
 
-		if (!this.capabilities.supportsModulesRequest) {
+		if (!this.adapterCapabilities.supportsModulesRequest) {
 			throw new Error(
 				"This debug adapter does not support the modules request.\n  -> The adapter may not report module/symbol information.",
 			);
@@ -1036,7 +1028,7 @@ export class DapSession {
 		}));
 	}
 
-	async addBlackbox(_patterns: string[]): Promise<never> {
+	async addBlackbox(_patterns: string[]): Promise<string[]> {
 		throw new Error("Blackboxing is not supported in DAP mode.");
 	}
 
@@ -1044,21 +1036,16 @@ export class DapSession {
 		return [];
 	}
 
-	async removeBlackbox(_patterns: string[]): Promise<never> {
+	async removeBlackbox(_patterns: string[]): Promise<string[]> {
 		throw new Error("Blackboxing is not supported in DAP mode.");
 	}
 
-	async restart(): Promise<never> {
+	async restart(): Promise<LaunchResult> {
 		throw new Error("Restart is not yet supported in DAP mode. Use stop + launch.");
 	}
 
 	// Expose a no-op sourceMapResolver-like object so entry.ts doesn't crash
-	get sourceMapResolver(): {
-		findScriptForSource: (_: string) => null;
-		getInfo: (_: string) => null;
-		getAllInfos: () => [];
-		setDisabled: (_: boolean) => void;
-	} {
+	get sourceMapResolver(): SourceMapAccess {
 		return {
 			findScriptForSource: () => null,
 			getInfo: () => null,
@@ -1068,10 +1055,6 @@ export class DapSession {
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────
-
-	private isPaused(): boolean {
-		return this._state === "paused";
-	}
 
 	/** Ensure stack frames are loaded if we're paused. */
 	private async ensureStack(): Promise<void> {
@@ -1109,7 +1092,7 @@ export class DapSession {
 			supportsVariableType: true,
 		});
 
-		this.capabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
+		this.adapterCapabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
 	}
 
 	private setupEventHandlers(): void {
@@ -1124,12 +1107,12 @@ export class DapSession {
 				allThreadsStopped?: boolean;
 			};
 
-			this._state = "paused";
+			this.state = "paused";
 			if (event.threadId !== undefined) {
 				this._threadId = event.threadId;
 			}
 
-			this._pauseInfo = {
+			this.pauseInfo = {
 				reason: event.reason,
 			};
 
@@ -1144,15 +1127,15 @@ export class DapSession {
 		});
 
 		dap.on("continued", (_body: unknown) => {
-			this._state = "running";
-			this._pauseInfo = null;
+			this.state = "running";
+			this.pauseInfo = null;
 			this._stackFrames = [];
 			this.refs.clearVolatile();
 		});
 
 		dap.on("terminated", (_body: unknown) => {
-			this._state = "idle";
-			this._pauseInfo = null;
+			this.state = "idle";
+			this.pauseInfo = null;
 			this._stackFrames = [];
 
 			// Resolve any waiting promise
@@ -1161,8 +1144,8 @@ export class DapSession {
 		});
 
 		dap.on("exited", (_body: unknown) => {
-			this._state = "idle";
-			this._pauseInfo = null;
+			this.state = "idle";
+			this.pauseInfo = null;
 
 			this.stoppedWaiter?.resolve();
 			this.stoppedWaiter = null;
@@ -1178,7 +1161,7 @@ export class DapSession {
 
 			const category = event.category ?? "console";
 			if (category === "stdout" || category === "console") {
-				this._consoleMessages.push({
+				this.pushConsoleMessage({
 					timestamp: Date.now(),
 					level: "log",
 					text: event.output.trimEnd(),
@@ -1186,17 +1169,13 @@ export class DapSession {
 					line: event.line,
 				});
 			} else if (category === "stderr") {
-				this._consoleMessages.push({
+				this.pushConsoleMessage({
 					timestamp: Date.now(),
 					level: "error",
 					text: event.output.trimEnd(),
 					url: event.source?.path,
 					line: event.line,
 				});
-			}
-
-			if (this._consoleMessages.length > 1000) {
-				this._consoleMessages.shift();
 			}
 		});
 	}
@@ -1216,7 +1195,7 @@ export class DapSession {
 	}
 
 	private async _fetchStackTraceImpl(): Promise<void> {
-		if (!this.dap || this._state !== "paused") return;
+		if (!this.dap || this.state !== "paused") return;
 
 		try {
 			const response = await this.dap.send("stackTrace", {
@@ -1245,11 +1224,11 @@ export class DapSession {
 
 			// Update pauseInfo with top-of-stack location
 			const topFrame = this._stackFrames[0];
-			if (topFrame && this._pauseInfo) {
-				this._pauseInfo.url = topFrame.file;
-				this._pauseInfo.line = topFrame.line;
-				this._pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
-				this._pauseInfo.callFrameCount = this._stackFrames.length;
+			if (topFrame && this.pauseInfo) {
+				this.pauseInfo.url = topFrame.file;
+				this.pauseInfo.line = topFrame.line;
+				this.pauseInfo.column = topFrame.column > 0 ? topFrame.column : undefined;
+				this.pauseInfo.callFrameCount = this._stackFrames.length;
 			}
 		} catch {
 			// Stack trace may not be available

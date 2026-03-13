@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import type { DaemonLogEntry } from "../../../src/daemon/logger.ts";
 import { DaemonLogger } from "../../../src/daemon/logger.ts";
 import { getDaemonLogPath } from "../../../src/daemon/paths.ts";
-import { DebugSession } from "../../../src/daemon/session.ts";
 
 function readEntries(logPath: string): DaemonLogEntry[] {
 	if (!existsSync(logPath)) return [];
@@ -37,9 +37,9 @@ describe("DaemonLogger integration", () => {
 		expect(getDaemonLogPath("my-session")).toEndWith("/my-session.daemon.log");
 	});
 
-	test("DebugSession logs launch events", async () => {
+	test("CdpSession logs launch events", async () => {
 		const sessionName = `test-daemon-log-${Date.now()}`;
-		const session = new DebugSession(sessionName);
+		const session = new CdpSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
 			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
@@ -54,9 +54,9 @@ describe("DaemonLogger integration", () => {
 		}
 	});
 
-	test("DebugSession logs child stderr", async () => {
+	test("CdpSession logs child stderr", async () => {
 		const sessionName = `test-daemon-stderr-${Date.now()}`;
-		const session = new DebugSession(sessionName);
+		const session = new CdpSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
 			await session.launch(["node", "tests/fixtures/js/simple-app.js"], { brk: true });
@@ -73,9 +73,9 @@ describe("DaemonLogger integration", () => {
 		}
 	});
 
-	test("DebugSession logs inspector URL detection failure", async () => {
+	test("CdpSession logs inspector URL detection failure", async () => {
 		const sessionName = `test-daemon-fail-${Date.now()}`;
-		const session = new DebugSession(sessionName);
+		const session = new CdpSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
 			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow(
@@ -90,9 +90,9 @@ describe("DaemonLogger integration", () => {
 		}
 	});
 
-	test("DebugSession logs process exit", async () => {
+	test("CdpSession logs process exit", async () => {
 		const sessionName = `test-daemon-exit-${Date.now()}`;
-		const session = new DebugSession(sessionName);
+		const session = new CdpSession(sessionName);
 		const logPath = getDaemonLogPath(sessionName);
 		try {
 			await session.launch(["node", "-e", "setTimeout(() => process.exit(0), 200)"], {

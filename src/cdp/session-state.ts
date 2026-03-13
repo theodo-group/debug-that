@@ -1,9 +1,10 @@
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
-import type { DebugSession, StateOptions, StateSnapshot } from "./session.ts";
+import type { StateOptions, StateSnapshot } from "../session/types.ts";
+import type { CdpSession } from "./session.ts";
 
 export async function buildState(
-	session: DebugSession,
+	session: CdpSession,
 	options: StateOptions = {},
 ): Promise<StateSnapshot> {
 	if (session.sessionState !== "paused" || !session.cdp || !session.pauseInfo) {

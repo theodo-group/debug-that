@@ -1,8 +1,8 @@
 import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
-import type { ConsoleMessage } from "../daemon/session.ts";
 import { formatTimestamp } from "../formatter/timestamp.ts";
+import type { ConsoleMessage } from "../session/types.ts";
 
 registerCommand("console", async (args) => {
 	const session = args.global.session;

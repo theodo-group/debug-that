@@ -16,10 +16,21 @@ Supports Node.js (CDP), Bun (JSC/WebKit), and native code via LLDB (DAP).
 ```
 src/
   cli/          # CLI argument parsing, command routing, flag utilities
+  session/      # Shared session abstractions
+    session.ts    # Session interface + SessionCapabilities
+    base-session.ts # BaseSession abstract class (shared state, refs, console)
+    types.ts      # Shared types (PauseInfo, StateSnapshot, ConsoleMessage, etc.)
+    factory.ts    # createSession() + isDapRuntime()
   daemon/       # Background daemon process, Unix socket server
-    adapters/   # RuntimeAdapter implementations (NodeAdapter, BunAdapter)
-  cdp/          # Chrome DevTools Protocol WebSocket client
-  dap/          # Debug Adapter Protocol client (LLDB, etc.)
+  cdp/          # Chrome DevTools Protocol (Node.js / Bun)
+    session.ts    # CdpSession (extends BaseSession)
+    session-*.ts  # CDP method modules (breakpoints, execution, inspection, etc.)
+    dialect.ts    # CdpDialect interface (V8 vs JSC strategy)
+    adapters/     # NodeAdapter, BunAdapter (CdpDialect implementations)
+    client.ts     # CdpClient WebSocket wrapper
+  dap/          # Debug Adapter Protocol (LLDB, Python, etc.)
+    session.ts    # DapSession (extends BaseSession)
+    client.ts     # DapClient stdin/stdout wrapper
   refs/         # @ref system (mapping short refs to V8 IDs)
   formatter/    # Output formatting (variables, source, stack traces)
   commands/     # Command implementations (break, step, eval, etc.)

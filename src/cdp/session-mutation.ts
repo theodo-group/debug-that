@@ -1,10 +1,10 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
-import type { DebugSession } from "./session.ts";
+import type { CdpSession } from "./session.ts";
 
 export async function setVariable(
-	session: DebugSession,
+	session: CdpSession,
 	varName: string,
 	value: string,
 	options: { frame?: string } = {},
@@ -87,7 +87,7 @@ export async function setVariable(
 }
 
 export async function setReturnValue(
-	session: DebugSession,
+	session: CdpSession,
 	value: string,
 ): Promise<{ value: string; type: string }> {
 	if (!session.cdp) {
@@ -146,7 +146,7 @@ export async function setReturnValue(
 }
 
 export async function hotpatch(
-	session: DebugSession,
+	session: CdpSession,
 	file: string,
 	newSource: string,
 	options: { dryRun?: boolean } = {},

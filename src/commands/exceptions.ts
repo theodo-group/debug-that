@@ -1,8 +1,8 @@
 import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
-import type { ExceptionEntry } from "../daemon/session.ts";
 import { formatTimestamp } from "../formatter/timestamp.ts";
+import type { ExceptionEntry } from "../session/types.ts";
 
 registerCommand("exceptions", async (args) => {
 	const session = args.global.session;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("break-toggle", () => {
@@ -71,7 +71,7 @@ describe("breakable", () => {
 		));
 
 	test("throws without CDP connection", async () => {
-		const session = new DebugSession("test-breakable-no-cdp");
+		const session = new CdpSession("test-breakable-no-cdp");
 		await expect(session.getBreakableLocations("file.js", 1, 5)).rejects.toThrow(
 			"No active debug session",
 		);

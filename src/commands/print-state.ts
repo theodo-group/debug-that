@@ -1,4 +1,3 @@
-import type { StateSnapshot } from "../daemon/session.ts";
 import { colorize, detectLanguage, type Language } from "../formatter/color.ts";
 import { shortPath } from "../formatter/path.ts";
 import type { SourceLine } from "../formatter/source.ts";
@@ -7,6 +6,7 @@ import type { StackFrame } from "../formatter/stack.ts";
 import { formatStack } from "../formatter/stack.ts";
 import type { Variable } from "../formatter/variables.ts";
 import { formatVariables } from "../formatter/variables.ts";
+import type { StateSnapshot } from "../session/types.ts";
 
 export interface PrintStateOptions {
 	color?: boolean;

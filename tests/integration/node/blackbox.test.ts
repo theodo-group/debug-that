@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withPausedSession } from "../../helpers.ts";
 
 describe("Blackbox patterns", () => {
@@ -47,7 +47,7 @@ describe("Blackbox patterns", () => {
 		}));
 
 	test("blackbox throws when no session", async () => {
-		const session = new DebugSession("test-blackbox-no-session");
+		const session = new CdpSession("test-blackbox-no-session");
 		await expect(session.addBlackbox(["node_modules"])).rejects.toThrow("No active debug session");
 		await expect(session.removeBlackbox(["node_modules"])).rejects.toThrow(
 			"No active debug session",

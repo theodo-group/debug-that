@@ -1,7 +1,7 @@
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
-import type { LaunchResult } from "../daemon/session.ts";
 import { shortPath } from "../formatter/path.ts";
+import type { LaunchResult } from "../session/types.ts";
 
 registerCommand("restart", async (args) => {
 	const session = args.global.session;

@@ -1,6 +1,6 @@
-import type { DebugSession } from "./session.ts";
+import type { CdpSession } from "./session.ts";
 
-export async function addBlackbox(session: DebugSession, patterns: string[]): Promise<string[]> {
+export async function addBlackbox(session: CdpSession, patterns: string[]): Promise<string[]> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -16,11 +16,11 @@ export async function addBlackbox(session: DebugSession, patterns: string[]): Pr
 	return [...session.blackboxPatterns];
 }
 
-export function listBlackbox(session: DebugSession): string[] {
+export function listBlackbox(session: CdpSession): string[] {
 	return [...session.blackboxPatterns];
 }
 
-export async function removeBlackbox(session: DebugSession, patterns: string[]): Promise<string[]> {
+export async function removeBlackbox(session: CdpSession, patterns: string[]): Promise<string[]> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}

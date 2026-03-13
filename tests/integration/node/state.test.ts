@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DebugSession } from "../../../src/daemon/session.ts";
+import { CdpSession } from "../../../src/cdp/session.ts";
 import { withPausedSession, withSession } from "../../helpers.ts";
 
 describe("buildState integration", () => {
@@ -61,7 +61,7 @@ describe("buildState integration", () => {
 		}));
 
 	test("state returns idle status when no target", async () => {
-		const session = new DebugSession("test-state-idle");
+		const session = new CdpSession("test-state-idle");
 		const snapshot = await session.buildState();
 		expect(snapshot.status).toBe("idle");
 	});

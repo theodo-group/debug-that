@@ -1,4 +1,4 @@
-import { DebugSession } from "../src/daemon/session.ts";
+import { CdpSession } from "../src/cdp/session.ts";
 
 /**
  * Launch a session with --inspect-brk and wait for the initial pause.
@@ -8,8 +8,8 @@ export async function launchPaused(
 	name: string,
 	fixture: string,
 	runtime = "node",
-): Promise<DebugSession> {
-	const session = new DebugSession(name);
+): Promise<CdpSession> {
+	const session = new CdpSession(name);
 	await session.launch([runtime, fixture], { brk: true });
 	await session.waitForState("paused");
 	await session.sourceMapResolver.waitForPendingLoads();
@@ -23,7 +23,7 @@ export async function launchAndContinueToDebugger(
 	name: string,
 	fixture: string,
 	runtime = "node",
-): Promise<DebugSession> {
+): Promise<CdpSession> {
 	const session = await launchPaused(name, fixture, runtime);
 	await session.continue();
 	await session.waitForState("paused");
@@ -37,7 +37,7 @@ export async function launchAndContinueToDebugger(
 export async function withPausedSession(
 	name: string,
 	fixture: string,
-	fn: (session: DebugSession) => Promise<void>,
+	fn: (session: CdpSession) => Promise<void>,
 ): Promise<void> {
 	const session = await launchPaused(name, fixture);
 	try {
@@ -53,7 +53,7 @@ export async function withPausedSession(
 export async function withDebuggerSession(
 	name: string,
 	fixture: string,
-	fn: (session: DebugSession) => Promise<void>,
+	fn: (session: CdpSession) => Promise<void>,
 ): Promise<void> {
 	const session = await launchAndContinueToDebugger(name, fixture);
 	try {
@@ -64,13 +64,13 @@ export async function withDebuggerSession(
 }
 
 /**
- * Run a test body with a fresh DebugSession (no launch). Auto-stops.
+ * Run a test body with a fresh CdpSession (no launch). Auto-stops.
  */
 export async function withSession(
 	name: string,
-	fn: (session: DebugSession) => Promise<void>,
+	fn: (session: CdpSession) => Promise<void>,
 ): Promise<void> {
-	const session = new DebugSession(name);
+	const session = new CdpSession(name);
 	try {
 		await fn(session);
 	} finally {

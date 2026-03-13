@@ -1,15 +1,25 @@
 import type { Subprocess } from "bun";
 import type Protocol from "devtools-protocol/types/protocol.js";
-import { CdpClient } from "../cdp/client.ts";
-import { CdpLogger } from "../cdp/logger.ts";
+import { DaemonLogger } from "../daemon/logger.ts";
+import { ensureSocketDir, getDaemonLogPath, getLogPath } from "../daemon/paths.ts";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
-import { RefTable } from "../refs/ref-table.ts";
+import { BaseSession } from "../session/base-session.ts";
+import type { SessionCapabilities } from "../session/session.ts";
+import type {
+	AttachResult,
+	ConsoleMessage,
+	ExceptionEntry,
+	LaunchResult,
+	SessionStatus,
+	StateOptions,
+	StateSnapshot,
+} from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { createAdapter } from "./adapters/index.ts";
-import { DaemonLogger } from "./logger.ts";
-import { ensureSocketDir, getDaemonLogPath, getLogPath } from "./paths.ts";
-import type { RuntimeAdapter } from "./runtime-adapter.ts";
+import { CdpClient } from "./client.ts";
+import type { CdpDialect } from "./dialect.ts";
+import { CdpLogger } from "./logger.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -33,10 +43,7 @@ import {
 	stepExecution,
 } from "./session-execution.ts";
 import {
-	clearConsole as clearConsoleImpl,
 	evalExpression,
-	getConsoleMessages as getConsoleMessagesImpl,
-	getExceptions as getExceptionsImpl,
 	getProps as getPropsImpl,
 	getScripts as getScriptsImpl,
 	getSource as getSourceImpl,
@@ -51,99 +58,16 @@ import {
 } from "./session-mutation.ts";
 import { buildState as buildStateImpl } from "./session-state.ts";
 
-export interface PauseInfo {
-	reason: string;
-	scriptId?: string;
-	url?: string;
-	line?: number;
-	column?: number;
-	callFrameCount?: number;
-}
-
-export interface StateOptions {
-	vars?: boolean;
-	stack?: boolean;
-	breakpoints?: boolean;
-	code?: boolean;
-	compact?: boolean;
-	depth?: number;
-	lines?: number;
-	frame?: string; // @fN ref
-	allScopes?: boolean;
-	generated?: boolean;
-}
-
-export interface StateSnapshot {
-	status: string; // "paused" | "running" | "idle"
-	reason?: string;
-	location?: { url: string; line: number; column?: number };
-	source?: { lines: Array<{ line: number; text: string; current?: boolean }> };
-	vars?: Array<{ ref: string; name: string; value: string; scope: string }>;
-	stack?: Array<{
-		ref: string;
-		functionName: string;
-		file: string;
-		line: number;
-		column?: number;
-		isAsync?: boolean;
-	}>;
-	breakpointCount?: number;
-	lastException?: { text: string; description?: string };
-}
-
-export interface ConsoleMessage {
-	timestamp: number;
-	level: string; // "log" | "warn" | "error" | "info" | "debug" | "trace"
-	text: string;
-	args?: string[]; // formatted args
-	url?: string;
-	line?: number;
-}
-
-export interface ExceptionEntry {
-	timestamp: number;
-	text: string;
-	description?: string;
-	url?: string;
-	line?: number;
-	column?: number;
-	stackTrace?: string;
-}
-
 export interface ScriptInfo {
 	scriptId: string;
 	url: string;
 	sourceMapURL?: string;
 }
 
-export interface LaunchResult {
-	pid: number;
-	wsUrl: string;
-	paused: boolean;
-	pauseInfo?: PauseInfo;
-}
-
-export interface AttachResult {
-	wsUrl: string;
-}
-
-export interface SessionStatus {
-	session: string;
-	state: "idle" | "running" | "paused";
-	pid?: number;
-	wsUrl?: string;
-	pauseInfo?: PauseInfo;
-	uptime: number;
-	scriptCount: number;
-	lastException?: { text: string; description?: string };
-}
-
 // Node.js: "Debugger listening on ws://..."
 // Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
 import {
-	BUFFER_TRIM_BATCH,
 	INSPECTOR_TIMEOUT_MS,
-	MAX_BUFFERED_MESSAGES,
 	PAUSE_WAITER_TIMEOUT_MS,
 	STATE_WAIT_TIMEOUT_MS,
 } from "../constants.ts";
@@ -153,21 +77,14 @@ const INSPECTOR_URL_REGEX = /(?:Debugger listening on\s+)?(wss?:\/\/\S+)/;
 const ESC = String.fromCharCode(0x1b);
 const ANSI_RE = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
 
-export class DebugSession {
+export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
-	refs: RefTable = new RefTable();
 	sourceMapResolver: SourceMapResolver = new SourceMapResolver();
 	childProcess: Subprocess<"ignore", "ignore", "pipe"> | null = null;
-	state: "idle" | "running" | "paused" = "idle";
-	pauseInfo: PauseInfo | null = null;
 	pausedCallFrames: Protocol.Debugger.CallFrame[] = [];
 	scripts: Map<string, ScriptInfo> = new Map();
 	wsUrl: string | null = null;
-	startTime: number = Date.now();
-	session: string;
 	onProcessExit: Set<() => void> = new Set();
-	consoleMessages: Array<ConsoleMessage> = [];
-	exceptionEntries: Array<ExceptionEntry> = [];
 	blackboxPatterns: string[] = [];
 	disabledBreakpoints: Map<string, { breakpointId: string; meta: Record<string, unknown> }> =
 		new Map();
@@ -177,12 +94,29 @@ export class DebugSession {
 	}> = [];
 	launchCommand: string[] | null = null;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
-	adapter: RuntimeAdapter;
+	adapter: CdpDialect;
 	cdpLogger: CdpLogger;
 	daemonLogger: DaemonLogger;
 
+	readonly capabilities: SessionCapabilities = {
+		functionBreakpoints: false,
+		logpoints: true,
+		hotpatch: true,
+		blackboxing: true,
+		modules: false,
+		restartFrame: true,
+		scriptSearch: true,
+		sourceMapResolution: true,
+		breakableLocations: true,
+		setReturnValue: true,
+		pathMapping: false,
+		symbolLoading: false,
+		breakpointToggle: true,
+		restart: true,
+	};
+
 	constructor(session: string, options?: { daemonLogger?: DaemonLogger }) {
-		this.session = session;
+		super(session);
 		ensureSocketDir();
 		this.cdpLogger = new CdpLogger(getLogPath(session));
 		this.daemonLogger = options?.daemonLogger ?? new DaemonLogger(getDaemonLogPath(session));
@@ -375,14 +309,10 @@ export class DebugSession {
 			this.childProcess = null;
 		}
 
-		this.state = "idle";
+		this.resetState();
 		this._notifyStateWaiters();
-		this.pauseInfo = null;
 		this.wsUrl = null;
 		this.scripts.clear();
-		this.refs.clearAll();
-		this.consoleMessages = [];
-		this.exceptionEntries = [];
 		this.disabledBreakpoints.clear();
 		this.sourceMapResolver.clear();
 	}
@@ -588,20 +518,6 @@ export class DebugSession {
 		return searchInScriptsImpl(this, query, options);
 	}
 
-	getConsoleMessages(
-		options: { level?: string; since?: number; clear?: boolean } = {},
-	): ConsoleMessage[] {
-		return getConsoleMessagesImpl(this, options);
-	}
-
-	getExceptions(options: { since?: number } = {}): ExceptionEntry[] {
-		return getExceptionsImpl(this, options);
-	}
-
-	clearConsole(): void {
-		clearConsoleImpl(this);
-	}
-
 	// Mutation
 	async setVariable(
 		varName: string,
@@ -804,10 +720,6 @@ export class DebugSession {
 		return null;
 	}
 
-	isPaused(): boolean {
-		return this.state === "paused";
-	}
-
 	// ── Private helpers ───────────────────────────────────────────────
 
 	private async waitForBrkPause(): Promise<void> {
@@ -920,10 +832,7 @@ export class DebugSession {
 				url: topFrame?.url,
 				line: topFrame?.lineNumber !== undefined ? topFrame.lineNumber + 1 : undefined,
 			};
-			this.consoleMessages.push(msg);
-			if (this.consoleMessages.length > MAX_BUFFERED_MESSAGES + BUFFER_TRIM_BATCH) {
-				this.consoleMessages.splice(0, BUFFER_TRIM_BATCH);
-			}
+			this.pushConsoleMessage(msg);
 		});
 
 		cdp.on("Runtime.exceptionThrown", (p) => {
@@ -951,10 +860,7 @@ export class DebugSession {
 					})
 					.join("\n");
 			}
-			this.exceptionEntries.push(entry);
-			if (this.exceptionEntries.length > MAX_BUFFERED_MESSAGES + BUFFER_TRIM_BATCH) {
-				this.exceptionEntries.splice(0, BUFFER_TRIM_BATCH);
-			}
+			this.pushException(entry);
 		});
 	}
 

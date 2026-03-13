@@ -1,8 +1,8 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import type { CdpClient } from "../cdp/client.ts";
-import type { DebugSession, ScriptInfo } from "./session.ts";
+import type { CdpClient } from "./client.ts";
+import type { CdpSession, ScriptInfo } from "./session.ts";
 
-export interface RuntimeAdapter {
+export interface CdpDialect {
 	readonly name: "node" | "bun" | "unknown";
 	readonly internalUrlPrefix: string;
 
@@ -10,7 +10,7 @@ export interface RuntimeAdapter {
 	preEnable(cdp: CdpClient): Promise<void>;
 
 	/** Handle --inspect-brk initial pause for this runtime */
-	waitForBrkPause(session: DebugSession): Promise<void>;
+	waitForBrkPause(session: CdpSession): Promise<void>;
 
 	/** Get properties of a remote object, handling runtime-specific API differences */
 	getProperties(

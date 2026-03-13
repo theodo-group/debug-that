@@ -1,8 +1,8 @@
 import { parseIntFlag } from "../cli/parse-flag.ts";
 import { registerCommand } from "../cli/registry.ts";
 import { DaemonClient } from "../daemon/client.ts";
-import type { StateSnapshot } from "../daemon/session.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
+import type { StateSnapshot } from "../session/types.ts";
 import { printState } from "./print-state.ts";
 
 registerCommand("state", async (args) => {

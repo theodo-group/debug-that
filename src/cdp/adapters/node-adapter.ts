@@ -1,10 +1,10 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import type { CdpClient } from "../../cdp/client.ts";
 import { BRK_PAUSE_TIMEOUT_MS, MAX_INTERNAL_PAUSE_SKIPS } from "../../constants.ts";
-import type { RuntimeAdapter } from "../runtime-adapter.ts";
-import type { DebugSession, ScriptInfo } from "../session.ts";
+import type { CdpClient } from "../client.ts";
+import type { CdpDialect } from "../dialect.ts";
+import type { CdpSession, ScriptInfo } from "../session.ts";
 
-export class NodeAdapter implements RuntimeAdapter {
+export class NodeAdapter implements CdpDialect {
 	readonly name = "node" as const;
 	readonly internalUrlPrefix = "node:";
 
@@ -12,7 +12,7 @@ export class NodeAdapter implements RuntimeAdapter {
 		// Node.js doesn't need anything before enableDomains()
 	}
 
-	async waitForBrkPause(session: DebugSession): Promise<void> {
+	async waitForBrkPause(session: CdpSession): Promise<void> {
 		// Give the Debugger.paused event a moment to arrive (older Node.js)
 		if (!session.isPaused()) {
 			await Bun.sleep(100);
@@ -105,7 +105,7 @@ export class NodeAdapter implements RuntimeAdapter {
 		await cdp.send("Debugger.setBlackboxPatterns", { patterns });
 	}
 
-	private async skipInternalPauses(session: DebugSession): Promise<void> {
+	private async skipInternalPauses(session: CdpSession): Promise<void> {
 		let skips = 0;
 		while (
 			session.isPaused() &&

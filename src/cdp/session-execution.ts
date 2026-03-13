@@ -1,10 +1,10 @@
 import { escapeRegex } from "../util/escape-regex.ts";
-import type { DebugSession } from "./session.ts";
+import type { CdpSession } from "./session.ts";
 
 /** Grace period to wait for an immediate re-pause (e.g. breakpoint on next line). */
 const CONTINUE_GRACE_MS = 500;
 
-export async function continueExecution(session: DebugSession): Promise<void> {
+export async function continueExecution(session: CdpSession): Promise<void> {
 	if (!session.isPaused()) {
 		throw new Error("Cannot continue: process is not paused");
 	}
@@ -19,7 +19,7 @@ export async function continueExecution(session: DebugSession): Promise<void> {
 }
 
 export async function stepExecution(
-	session: DebugSession,
+	session: CdpSession,
 	mode: "over" | "into" | "out",
 ): Promise<void> {
 	if (!session.isPaused()) {
@@ -40,7 +40,7 @@ export async function stepExecution(
 	await waiter;
 }
 
-export async function pauseExecution(session: DebugSession): Promise<void> {
+export async function pauseExecution(session: CdpSession): Promise<void> {
 	if (session.isPaused()) {
 		throw new Error("Cannot pause: process is already paused");
 	}
@@ -53,7 +53,7 @@ export async function pauseExecution(session: DebugSession): Promise<void> {
 }
 
 export async function runToLocation(
-	session: DebugSession,
+	session: CdpSession,
 	file: string,
 	line: number,
 ): Promise<void> {
@@ -94,7 +94,7 @@ export async function runToLocation(
 }
 
 export async function restartFrameExecution(
-	session: DebugSession,
+	session: CdpSession,
 	frameRef?: string,
 ): Promise<{ status: string }> {
 	if (!session.isPaused()) {
