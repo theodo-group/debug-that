@@ -298,7 +298,7 @@ const SymbolsAddRequest = z.object({
 	}),
 });
 
-export const DaemonRequestSchema = z.union([
+export const DaemonRequestSchema = z.discriminatedUnion("cmd", [
 	PingRequest,
 	LaunchRequest,
 	AttachRequest,

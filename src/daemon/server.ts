@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import type { Socket } from "bun";
 import { MAX_REQUEST_SIZE } from "../constants.ts";
 import {
 	type DaemonRequest,
@@ -9,6 +10,12 @@ import type { Logger } from "./logger.ts";
 import { ensureSocketDir, getLockPath, getSocketPath } from "./paths.ts";
 
 type RequestHandler = (req: DaemonRequest) => Promise<DaemonResponse>;
+
+type SocketData = {
+	buffer: string;
+	pendingWrite: Buffer | null;
+	pendingOffset: number;
+};
 
 export class DaemonServer {
 	private session: string;
@@ -57,11 +64,7 @@ export class DaemonServer {
 
 		const server = this;
 
-		this.listener = Bun.listen<{
-			buffer: string;
-			pendingWrite: Buffer | null;
-			pendingOffset: number;
-		}>({
+		this.listener = Bun.listen<SocketData>({
 			unix: this.socketPath,
 			socket: {
 				open(socket) {
@@ -104,12 +107,8 @@ export class DaemonServer {
 		this.resetIdleTimer();
 	}
 
-	// biome-ignore lint/suspicious/noExplicitAny: Bun socket type
-	private flushPending(socket: any): void {
-		const data = socket.data as {
-			pendingWrite: Buffer | null;
-			pendingOffset: number;
-		};
+	private flushPending(socket: Socket<SocketData>): void {
+		const data = socket.data;
 		if (!data.pendingWrite) return;
 
 		while (data.pendingOffset < data.pendingWrite.length) {
@@ -127,8 +126,7 @@ export class DaemonServer {
 		socket.end();
 	}
 
-	// biome-ignore lint/suspicious/noExplicitAny: Bun socket type
-	private sendResponse(socket: any, response: DaemonResponse): void {
+	private sendResponse(socket: Socket<SocketData>, response: DaemonResponse): void {
 		const payload = Buffer.from(`${JSON.stringify(response)}\n`);
 		const written = socket.write(payload);
 		if (written < payload.length) {
@@ -140,56 +138,49 @@ export class DaemonServer {
 		}
 	}
 
-	// biome-ignore lint/suspicious/noExplicitAny: Bun socket type
-	private handleMessage(socket: any, line: string): void {
-		let json: unknown;
+	private async handleMessage(socket: Socket<SocketData>, line: string): Promise<void> {
+		let json: Record<string, unknown>;
 		try {
 			json = JSON.parse(line);
 		} catch {
+			this.logger.info("socket.invalid-json", "Daemon received invalid JSON", { line });
 			this.sendResponse(socket, { ok: false, error: "Invalid JSON" });
 			return;
 		}
 
 		const parsed = DaemonRequestSchema.safeParse(json);
 		if (!parsed.success) {
-			const obj = json as Record<string, unknown> | null;
-			const cmd =
-				obj && typeof obj === "object" && typeof obj.cmd === "string" ? obj.cmd : undefined;
-			this.sendResponse(
-				socket,
-				cmd
-					? {
-						ok: false,
-						error: `Unknown command: ${cmd}`,
-						suggestion: "-> Try: debug-that --help",
-					}
-					: {
-						ok: false,
-						error: "Invalid request: must have { cmd: string, args: object }",
-					},
-			);
+			const cmd = json && typeof json === "object" && typeof json.cmd === "string" ? json.cmd : undefined;
+
+			const response = cmd
+				? {
+					ok: false,
+					error: `Unknown command: ${cmd}`,
+					suggestion: "-> Try: debug-that --help",
+				}
+				: {
+					ok: false,
+					error: "Invalid request: must have { cmd: string, args: object }",
+				};
+
+			this.sendResponse(socket, response);
 			return;
 		}
 		const request: DaemonRequest = parsed.data;
 
 		if (!this.handler) {
-			this.sendResponse(socket, {
-				ok: false,
-				error: "No request handler registered",
-			});
+			this.logger.error("socket.no-handler", "No request handler registered. Did you call `server.onRequest`?");
+			this.sendResponse(socket, { ok: false, error: "No request handler registered" });
 			return;
 		}
 
-		this.handler(request)
-			.then((response) => {
-				this.sendResponse(socket, response);
-			})
-			.catch((err) => {
-				this.sendResponse(socket, {
-					ok: false,
-					error: err instanceof Error ? err.message : String(err),
-				});
-			});
+		try {
+			const response = await this.handler(request);
+			this.sendResponse(socket, response);
+		} catch (err) {
+			this.logger.error("socket.handler-error", "Error in request handler", { error: err });
+			this.sendResponse(socket, { ok: false, error: err instanceof Error ? err.message : String(err) });
+		}
 	}
 
 	resetIdleTimer(): void {

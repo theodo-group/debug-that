@@ -41,11 +41,11 @@ afterEach(() => {
 });
 
 const logger: Logger = {
-	info: () => { },
-	warn: () => { },
-	error: () => { },
-	debug: () => { },
-	clear: () => { },
+	info: () => {},
+	warn: () => {},
+	error: () => {},
+	debug: () => {},
+	clear: () => {},
 };
 
 describe("DaemonServer", () => {
