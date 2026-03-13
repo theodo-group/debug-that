@@ -1,37 +1,42 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { DaemonClient } from "../daemon/client.ts";
 
-registerCommand("symbols", async (args) => {
-	const session = args.global.session;
-	const action = args.subcommand;
+defineCommand({
+	name: "symbols",
+	description: "Load debug symbols (dSYM)",
+	usage: "symbols add <path>",
+	category: "debug-info",
+	positional: {
+		kind: "enum",
+		values: ["add"],
+		default: "add",
+		description: "Action",
+	},
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const path = ctx.raw.positionals[0];
+		if (!path) {
+			console.error("Usage: dbg symbols add <path>");
+			return 1;
+		}
 
-	if (action !== "add") {
-		console.error("Unknown symbols action. Use: add");
-		console.error("  → dbg symbols add <path-to-dSYM>");
-		return 1;
-	}
+		const client = new DaemonClient(ctx.global.session);
+		const response = await client.request("symbols-add", { path });
 
-	const path = args.positionals[0];
-	if (!path) {
-		console.error("Usage: dbg symbols add <path>");
-		return 1;
-	}
+		if (!response.ok) {
+			console.error(`${response.error}`);
+			if (response.suggestion) console.error(`  → ${response.suggestion}`);
+			return 1;
+		}
 
-	const client = new DaemonClient(session);
-	const response = await client.request("symbols-add", { path });
+		if (ctx.global.json) {
+			console.log(JSON.stringify({ ok: true, path, result: response.data }));
+		} else {
+			const result = response.data as string;
+			console.log(result || `Symbols from ${path} will be applied on next launch`);
+		}
 
-	if (!response.ok) {
-		console.error(`${response.error}`);
-		if (response.suggestion) console.error(`  → ${response.suggestion}`);
-		return 1;
-	}
-
-	if (args.global.json) {
-		console.log(JSON.stringify({ ok: true, path, result: response.data }));
-	} else {
-		const result = response.data as string;
-		console.log(result || `Symbols from ${path} will be applied on next launch`);
-	}
-
-	return 0;
+		return 0;
+	},
 });

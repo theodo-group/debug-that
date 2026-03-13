@@ -1,43 +1,41 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("blackbox-rm", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "blackbox-rm",
+	description: "Remove patterns",
+	usage: "blackbox-rm <pattern|all>",
+	category: "blackboxing",
+	positional: {
+		kind: "variadic",
+		name: "pattern",
+		required: true,
+		description: "Patterns or 'all'",
+	},
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const patterns = ctx.positional;
 
-	const patterns: string[] = [];
-	if (args.subcommand) {
-		if (args.subcommand === "all") {
-			patterns.push("all");
+		// When "all" is specified, only send ["all"]
+		const toSend = patterns[0] === "all" ? ["all"] : patterns;
+
+		const data = await daemonRequest(ctx.global.session, "blackbox-rm", { patterns: toSend });
+		if (!data) return 1;
+
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
 		} else {
-			patterns.push(args.subcommand);
-			for (const p of args.positionals) {
-				patterns.push(p);
+			if (data.length === 0) {
+				console.log("All blackbox patterns removed");
+			} else {
+				console.log("Blackbox patterns:");
+				for (const p of data) {
+					console.log(`  ${p}`);
+				}
 			}
 		}
-	}
 
-	if (patterns.length === 0) {
-		console.error("No patterns specified");
-		console.error("  -> Try: dbg blackbox-rm node_modules");
-		console.error("  -> Try: dbg blackbox-rm all");
-		return 1;
-	}
-
-	const data = await daemonRequest(session, "blackbox-rm", { patterns });
-	if (!data) return 1;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		if (data.length === 0) {
-			console.log("All blackbox patterns removed");
-		} else {
-			console.log("Blackbox patterns:");
-			for (const p of data) {
-				console.log(`  ${p}`);
-			}
-		}
-	}
-
-	return 0;
+		return 0;
+	},
 });

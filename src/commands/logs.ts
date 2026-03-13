@@ -8,9 +8,9 @@ import {
 	watch,
 	writeFileSync,
 } from "node:fs";
+import { z } from "zod";
 import type { CdpLogEntry } from "../cdp/logger.ts";
-import { parseIntFlag } from "../cli/parse-flag.ts";
-import { registerCommand } from "../cli/registry.ts";
+import { defineCommand } from "../cli/command.ts";
 import type { DaemonLogEntry } from "../daemon/logger.ts";
 import { getDaemonLogPath, getLogPath } from "../daemon/paths.ts";
 import { formatDaemonLogEntry, formatLogEntry } from "../formatter/logs.ts";
@@ -69,91 +69,107 @@ function printDaemonEntries(entries: DaemonLogEntry[], json: boolean): void {
 	}
 }
 
-registerCommand("logs", async (args) => {
-	const session = args.global.session;
-	const isDaemon = args.flags.daemon === true;
-	const logPath = isDaemon ? getDaemonLogPath(session) : getLogPath(session);
+defineCommand({
+	name: "logs",
+	description: "Show CDP protocol log",
+	usage: "logs [-f|--follow]",
+	category: "diagnostics",
+	noDaemon: true,
+	positional: { kind: "none" },
+	flags: z.object({
+		follow: z.boolean().optional().meta({ description: "Watch for new entries", short: "f" }),
+		limit: z.coerce.number().optional().meta({ description: "Show last N entries" }),
+		domain: z.string().optional().meta({ description: "Filter by CDP domain" }),
+		clear: z.boolean().optional().meta({ description: "Clear the log file" }),
+		daemon: z.boolean().optional().meta({ description: "Show daemon log" }),
+		level: z.string().optional().meta({ description: "Filter by log level" }),
+	}),
+	handler: async (ctx) => {
+		const session = ctx.global.session;
+		const isDaemon = ctx.flags.daemon || false;
+		const logPath = isDaemon ? getDaemonLogPath(session) : getLogPath(session);
 
-	// --clear: truncate log file
-	if (args.flags.clear === true) {
-		if (existsSync(logPath)) {
-			writeFileSync(logPath, "");
-			console.log(`${isDaemon ? "Daemon log" : "Log"} cleared`);
-		} else {
-			console.log(`No ${isDaemon ? "daemon " : ""}log file to clear`);
-		}
-		return 0;
-	}
-
-	if (!existsSync(logPath)) {
-		console.error(`No ${isDaemon ? "daemon " : ""}log file for session "${session}"`);
-		console.error("  -> Try: dbg launch --brk node app.js");
-		return 1;
-	}
-
-	const isJson = args.global.json;
-	const domain = typeof args.flags.domain === "string" ? args.flags.domain : undefined;
-	const level = typeof args.flags.level === "string" ? args.flags.level : undefined;
-	const limit = parseIntFlag(args.flags, "limit") ?? 50;
-	const follow = args.flags.follow === true;
-
-	// Read existing entries
-	const content = readFileSync(logPath, "utf-8");
-
-	if (isDaemon) {
-		let entries = parseDaemonEntries(content);
-		if (level) entries = filterByLevel(entries, level);
-		const sliced = follow ? entries : entries.slice(-limit);
-		printDaemonEntries(sliced, isJson);
-	} else {
-		let entries = parseCdpEntries(content);
-		if (domain) entries = filterByDomain(entries, domain);
-		const sliced = follow ? entries : entries.slice(-limit);
-		printCdpEntries(sliced, isJson);
-	}
-
-	if (!follow) return 0;
-
-	// Follow mode: watch for new lines appended to the file
-	let offset = Buffer.byteLength(content, "utf-8");
-	let watcher: FSWatcher | undefined;
-
-	const readNew = () => {
-		try {
-			const size = Bun.file(logPath).size;
-			if (size <= offset) return;
-
-			const fd = openSync(logPath, "r");
-			const buf = Buffer.alloc(size - offset);
-			readSync(fd, buf, 0, buf.length, offset);
-			closeSync(fd);
-			offset = size;
-
-			if (isDaemon) {
-				let newEntries = parseDaemonEntries(buf.toString("utf-8"));
-				if (level) newEntries = filterByLevel(newEntries, level);
-				printDaemonEntries(newEntries, isJson);
+		// --clear: truncate log file
+		if (ctx.flags.clear) {
+			if (existsSync(logPath)) {
+				writeFileSync(logPath, "");
+				console.log(`${isDaemon ? "Daemon log" : "Log"} cleared`);
 			} else {
-				let newEntries = parseCdpEntries(buf.toString("utf-8"));
-				if (domain) newEntries = filterByDomain(newEntries, domain);
-				printCdpEntries(newEntries, isJson);
+				console.log(`No ${isDaemon ? "daemon " : ""}log file to clear`);
 			}
-		} catch {
-			// File may have been truncated or removed
+			return 0;
 		}
-	};
 
-	watcher = watch(logPath, () => {
-		readNew();
-	});
+		if (!existsSync(logPath)) {
+			console.error(`No ${isDaemon ? "daemon " : ""}log file for session "${session}"`);
+			console.error("  -> Try: dbg launch --brk node app.js");
+			return 1;
+		}
 
-	// Keep alive until Ctrl+C
-	await new Promise<void>((resolve) => {
-		process.on("SIGINT", () => {
-			watcher?.close();
-			resolve();
+		const isJson = ctx.global.json;
+		const domain = ctx.flags.domain;
+		const level = ctx.flags.level;
+		const limit = ctx.flags.limit ?? 50;
+		const follow = ctx.flags.follow || false;
+
+		// Read existing entries
+		const content = readFileSync(logPath, "utf-8");
+
+		if (isDaemon) {
+			let entries = parseDaemonEntries(content);
+			if (level) entries = filterByLevel(entries, level);
+			const sliced = follow ? entries : entries.slice(-limit);
+			printDaemonEntries(sliced, isJson);
+		} else {
+			let entries = parseCdpEntries(content);
+			if (domain) entries = filterByDomain(entries, domain);
+			const sliced = follow ? entries : entries.slice(-limit);
+			printCdpEntries(sliced, isJson);
+		}
+
+		if (!follow) return 0;
+
+		// Follow mode: watch for new lines appended to the file
+		let offset = Buffer.byteLength(content, "utf-8");
+		let watcher: FSWatcher | undefined;
+
+		const readNew = () => {
+			try {
+				const size = Bun.file(logPath).size;
+				if (size <= offset) return;
+
+				const fd = openSync(logPath, "r");
+				const buf = Buffer.alloc(size - offset);
+				readSync(fd, buf, 0, buf.length, offset);
+				closeSync(fd);
+				offset = size;
+
+				if (isDaemon) {
+					let newEntries = parseDaemonEntries(buf.toString("utf-8"));
+					if (level) newEntries = filterByLevel(newEntries, level);
+					printDaemonEntries(newEntries, isJson);
+				} else {
+					let newEntries = parseCdpEntries(buf.toString("utf-8"));
+					if (domain) newEntries = filterByDomain(newEntries, domain);
+					printCdpEntries(newEntries, isJson);
+				}
+			} catch {
+				// File may have been truncated or removed
+			}
+		};
+
+		watcher = watch(logPath, () => {
+			readNew();
 		});
-	});
 
-	return 0;
+		// Keep alive until Ctrl+C
+		await new Promise<void>((resolve) => {
+			process.on("SIGINT", () => {
+				watcher?.close();
+				resolve();
+			});
+		});
+
+		return 0;
+	},
 });

@@ -1,26 +1,30 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
 import { printState } from "./print-state.ts";
 
-registerCommand("step", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "step",
+	description: "Step one statement",
+	category: "execution",
+	positional: {
+		kind: "enum",
+		values: ["over", "into", "out"],
+		default: "over",
+		description: "Step mode",
+	},
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const data = await daemonRequest(ctx.global.session, "step", { mode: ctx.positional });
+		if (!data) return 1;
 
-	// The subcommand is the step mode: over, into, or out (default: over)
-	const validModes = new Set(["over", "into", "out"]);
-	const mode = (args.subcommand && validModes.has(args.subcommand) ? args.subcommand : "over") as
-		| "over"
-		| "into"
-		| "out";
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+		} else {
+			printState(data, { color: shouldEnableColor(ctx.global.color) });
+		}
 
-	const data = await daemonRequest(session, "step", { mode });
-	if (!data) return 1;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		printState(data, { color: shouldEnableColor(args.global.color) });
-	}
-
-	return 0;
+		return 0;
+	},
 });

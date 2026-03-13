@@ -1,28 +1,30 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("break-toggle", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "break-toggle",
+	description: "Enable/disable breakpoints",
+	category: "breakpoints",
+	usage: "break-toggle <BP#|all>",
+	positional: { kind: "required", name: "ref", description: "BP# or 'all'" },
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const ref = ctx.positional;
 
-	const ref = args.subcommand;
-	if (!ref) {
-		console.error("No breakpoint ref specified");
-		console.error("  -> Try: dbg break-toggle BP#1");
-		return 1;
-	}
+		const data = await daemonRequest(ctx.global.session, "break-toggle", { ref });
+		if (!data) return 1;
 
-	const data = await daemonRequest(session, "break-toggle", { ref });
-	if (!data) return 1;
-
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		if (data.ref === "all") {
-			console.log(`All breakpoints ${data.state}`);
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
 		} else {
-			console.log(`${data.ref} ${data.state}`);
+			if (data.ref === "all") {
+				console.log(`All breakpoints ${data.state}`);
+			} else {
+				console.log(`${data.ref} ${data.state}`);
+			}
 		}
-	}
 
-	return 0;
+		return 0;
+	},
 });

@@ -1,42 +1,23 @@
+import type { ParserConfig } from "./command.ts";
+import { generateCommandHelp, printHelp, printHelpAgent } from "./help.ts";
 import { registry } from "./registry.ts";
 import type { GlobalFlags, ParsedArgs } from "./types.ts";
 
 const GLOBAL_FLAGS = new Set(["session", "json", "color", "help-agent", "help", "version"]);
-const BOOLEAN_FLAGS = new Set([
-	"json",
-	"color",
-	"help-agent",
-	"help",
-	"brk",
-	"compact",
-	"all-scopes",
-	"vars",
-	"stack",
-	"breakpoints",
-	"code",
-	"own",
-	"private",
-	"internal",
-	"regex",
-	"case-sensitive",
-	"detailed",
-	"follow",
-	"clear",
-	"uncovered",
-	"include-gc",
-	"silent",
-	"side-effect-free",
-	"sourcemap",
-	"dry-run",
-	"continue",
-	"all",
-	"cleanup",
-	"disable",
-	"generated",
-	"version",
-]);
 
-export function parseArgs(argv: string[]): ParsedArgs {
+// Hardcoded defaults — merged with derived config from defineCommand() schemas
+const DEFAULT_BOOLEAN_FLAGS = new Set(["json", "color", "help-agent", "help", "version"]);
+
+const DEFAULT_SHORT_MAP: Record<string, string> = {
+	V: "version",
+};
+
+export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
+	const booleanFlags = config
+		? new Set([...DEFAULT_BOOLEAN_FLAGS, ...config.booleanFlags])
+		: DEFAULT_BOOLEAN_FLAGS;
+	const shortMap = config ? { ...DEFAULT_SHORT_MAP, ...config.shortMap } : DEFAULT_SHORT_MAP;
+
 	const flags: Record<string, string | boolean> = {};
 	const positionals: string[] = [];
 	let command = "";
@@ -80,7 +61,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 		if (arg.startsWith("--")) {
 			const key = arg.slice(2);
-			if (BOOLEAN_FLAGS.has(key)) {
+			if (booleanFlags.has(key)) {
 				flags[key] = true;
 			} else {
 				const next = argv[i + 1];
@@ -94,14 +75,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
 		} else if (arg.startsWith("-") && arg.length === 2) {
 			// Short flags
 			const key = arg.slice(1);
-			const shortMap: Record<string, string> = {
-				v: "vars",
-				V: "version",
-				s: "stack",
-				b: "breakpoints",
-				c: "code",
-				f: "follow",
-			};
 			const mapped = shortMap[key];
 			if (mapped) {
 				flags[mapped] = true;
@@ -143,6 +116,13 @@ export async function run(args: ParsedArgs): Promise<number> {
 	}
 
 	if (!args.command || args.global.help) {
+		if (args.global.help && args.command) {
+			const cmdHelp = generateCommandHelp(args.command);
+			if (cmdHelp) {
+				console.log(cmdHelp);
+				return 0;
+			}
+		}
 		printHelp();
 		return args.command ? 0 : 1;
 	}
@@ -205,165 +185,4 @@ function editDistance(a: string, b: string): number {
 		prev = curr;
 	}
 	return prev[n] ?? m;
-}
-
-function printHelp(): void {
-	console.log(`dbg — Debugger CLI for AI agents
-
-Usage: dbg <command> [options]
-
-Session:
-  launch [--brk] <command...>      Start + attach debugger
-  attach <pid|ws-url|port>         Attach to running process
-  stop                             Kill process + daemon
-  sessions [--cleanup]             List active sessions
-  status                           Session info
-
-Execution (returns state automatically):
-  continue                         Resume execution
-  step [over|into|out]             Step one statement
-  run-to <file>:<line>             Continue to location
-  pause                            Interrupt running process
-  restart-frame [@fN]              Re-execute frame from beginning
-
-Inspection:
-  state [-v|-s|-b|-c]              Debug state snapshot
-    [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  vars [name...]                   Show local variables
-    [--frame @fN] [--all-scopes] [--all]
-  stack [--async-depth N]          Show call stack
-    [--generated] [--filter <keyword>]
-  eval <expression>                Evaluate expression
-    [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
-  props <@ref>                     Expand object properties
-    [--own] [--depth N] [--private] [--internal]
-  source [--lines N]               Show source code
-    [--file <path>] [--all] [--generated]
-  search <query>                   Search loaded scripts
-    [--regex] [--case-sensitive] [--file <id>]
-  scripts [--filter <pattern>]     List loaded scripts
-  modules [--filter <pattern>]     List loaded modules/libraries (DAP only)
-  console [--since N] [--level]    Console output
-    [--clear]
-  exceptions [--since N]           Captured exceptions
-
-Breakpoints:
-  break <file>:<line>              Set breakpoint
-    [--condition <expr>] [--hit-count <n>] [--continue] [--pattern <regex>:<line>]
-  break-rm <BP#|all>               Remove breakpoint
-  break-ls                         List breakpoints
-  break-toggle <BP#|all>           Enable/disable breakpoints
-  breakable <file>:<start>-<end>   List valid breakpoint locations
-  logpoint <file>:<line> <tpl>     Set logpoint
-    [--condition <expr>]
-  catch [all|uncaught|caught|none] Pause on exceptions
-
-Mutation:
-  set <@ref|name> <value>          Change variable value
-  set-return <value>               Change return value (at return point)
-  hotpatch <file> [--dry-run]      Live-edit script source
-
-Blackboxing:
-  blackbox <pattern...>            Skip stepping into matching scripts
-  blackbox-ls                      List current patterns
-  blackbox-rm <pattern|all>        Remove patterns
-
-Source Maps:
-  sourcemap [file]                 Show source map info
-  sourcemap --disable              Disable resolution globally
-
-Debug Info (DAP only):
-  path-map add <from> <to>         Remap debug info source paths
-  path-map list                    Show current path remappings
-  path-map clear                   Remove all path remappings
-  symbols add <path>               Load debug symbols (dSYM)
-
-Setup:
-  install <adapter>                Download managed adapter binary
-  install --list                   Show installed adapters
-
-Diagnostics:
-  logs [-f|--follow]               Show CDP protocol log
-    [--limit N] [--domain <name>] [--clear]
-
-Global flags:
-  --session NAME                   Target session (default: "default")
-  --json                           JSON output
-  --color                          ANSI colors
-  --help-agent                     LLM reference card
-  --help                           Show this help
-  --version                        Show version`);
-}
-
-function printHelpAgent(): void {
-	console.log(`dbg — Debugger CLI for AI agents
-
-CORE LOOP:
-  1. dbg launch --brk "node app.js"    → pauses at first line, returns state
-  2. dbg break src/file.ts:42          → set breakpoint
-  3. dbg continue                      → run to breakpoint, returns state
-  4. Inspect: dbg vars, dbg eval, dbg props @v1
-  5. Mutate/fix: dbg set @v1 value, dbg hotpatch src/file.ts
-  6. Repeat from 3
-
-REFS: Every output assigns @refs. Use them everywhere:
-  @v1..@vN  variables    |  dbg props @v1, dbg set @v2 true
-  @f0..@fN  stack frames |  dbg eval --frame @f1
-  BP#1..N   breakpoints  |  dbg break-rm BP#1, dbg break-toggle BP#1
-
-EXECUTION (all return state automatically):
-  dbg continue              Resume to next breakpoint
-  dbg step [over|into|out]  Step one statement
-  dbg run-to file:line      Continue to location
-  dbg pause                 Interrupt running process
-  dbg restart-frame [@fN]   Re-run frame from beginning
-
-BREAKPOINTS:
-  dbg break file:line [--condition expr] [--hit-count N] [--continue]
-  dbg break --pattern "regex":line
-  dbg break-rm <BP#|all>    Remove breakpoints
-  dbg break-ls              List breakpoints
-  dbg break-toggle <BP#|all>  Enable/disable breakpoints
-  dbg breakable file:start-end  Valid breakpoint locations
-  dbg logpoint file:line "template \${var}" [--condition expr]
-  dbg catch [all|uncaught|caught|none]
-
-INSPECTION:
-  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
-  dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
-  dbg stack [--async-depth N] [--generated] [--filter <keyword>]
-  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
-  dbg props @ref [--own] [--depth N] [--private] [--internal]
-  dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
-  dbg source [--lines N] [--file path] [--all] [--generated]
-  dbg search "query" [--regex] [--case-sensitive] [--file id]
-  dbg scripts [--filter pattern]
-  dbg console [--since N] [--level type] [--clear]
-  dbg exceptions [--since N]
-
-MUTATION:
-  dbg set <@ref|name> <value>   Change variable
-  dbg set-return <value>        Change return value (at return point)
-  dbg hotpatch <file> [--dry-run]  Live-edit code (no restart!)
-
-BLACKBOXING:
-  dbg blackbox <pattern...>     Skip stepping into matching scripts
-  dbg blackbox-ls               List current patterns
-  dbg blackbox-rm <pattern|all> Remove patterns
-
-SOURCE MAPS:
-  dbg sourcemap [file]          Show source map info
-  dbg sourcemap --disable       Disable resolution globally
-
-DEBUG INFO (DAP only):
-  dbg path-map add <from> <to>  Remap DWARF/debug source paths
-  dbg path-map list             Show current remappings
-  dbg path-map clear            Remove all remappings
-  dbg symbols add <path>        Load debug symbols (dSYM)
-
-DIAGNOSTICS:
-  dbg logs [-f|--follow]        Show CDP protocol log
-  dbg logs --limit 100          Show last N entries (default: 50)
-  dbg logs --domain Debugger    Filter by CDP domain
-  dbg logs --clear              Clear the log file`);
 }

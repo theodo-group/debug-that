@@ -1,32 +1,26 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 
-registerCommand("set-return", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "set-return",
+	description: "Change return value (at return point)",
+	category: "mutation",
+	positional: { kind: "joined", name: "value", required: true },
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const value = ctx.positional;
 
-	// Build value from subcommand + positionals
-	const parts: string[] = [];
-	if (args.subcommand) {
-		parts.push(args.subcommand);
-	}
-	parts.push(...args.positionals);
-	const value = parts.join(" ");
+		const data = await daemonRequest(ctx.global.session, "set-return", { value });
+		if (!data) return 1;
 
-	if (!value) {
-		console.error("No value specified");
-		console.error("  -> Try: dbg set-return 42");
-		return 1;
-	}
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return 0;
+		}
 
-	const data = await daemonRequest(session, "set-return", { value });
-	if (!data) return 1;
+		console.log(`return value set to: ${data.value}`);
 
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
 		return 0;
-	}
-
-	console.log(`return value set to: ${data.value}`);
-
-	return 0;
+	},
 });

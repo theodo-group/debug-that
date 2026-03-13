@@ -1,19 +1,25 @@
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
 import { printState } from "./print-state.ts";
 
-registerCommand("pause", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "pause",
+	description: "Interrupt running process",
+	category: "execution",
+	positional: { kind: "none" },
+	flags: z.object({}),
+	handler: async (ctx) => {
+		const data = await daemonRequest(ctx.global.session, "pause");
+		if (!data) return 1;
 
-	const data = await daemonRequest(session, "pause");
-	if (!data) return 1;
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+		} else {
+			printState(data, { color: shouldEnableColor(ctx.global.color) });
+		}
 
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
-	} else {
-		printState(data, { color: shouldEnableColor(args.global.color) });
-	}
-
-	return 0;
+		return 0;
+	},
 });

@@ -1,38 +1,51 @@
-import { parseIntFlag } from "../cli/parse-flag.ts";
-import { registerCommand } from "../cli/registry.ts";
+import { z } from "zod";
+import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
 import { printState } from "./print-state.ts";
 
-registerCommand("state", async (args) => {
-	const session = args.global.session;
+defineCommand({
+	name: "state",
+	description: "Debug state snapshot",
+	usage: "state [-v|-s|-b|-c]",
+	category: "inspection",
+	positional: { kind: "none" },
+	flags: z.object({
+		vars: z.boolean().optional().meta({ description: "Include variables", short: "v" }),
+		stack: z.boolean().optional().meta({ description: "Include call stack", short: "s" }),
+		breakpoints: z.boolean().optional().meta({ description: "Include breakpoints", short: "b" }),
+		code: z.boolean().optional().meta({ description: "Include source code", short: "c" }),
+		compact: z.boolean().optional().meta({ description: "Compact output" }),
+		"all-scopes": z.boolean().optional().meta({ description: "Include all scopes" }),
+		depth: z.coerce.number().optional().meta({ description: "Variable expansion depth" }),
+		lines: z.coerce.number().optional().meta({ description: "Source lines to show" }),
+		frame: z.string().optional().meta({ description: "Stack frame ref (@fN)" }),
+		generated: z.boolean().optional().meta({ description: "Show generated code" }),
+	}),
+	handler: async (ctx) => {
+		const stateArgs: Record<string, unknown> = {};
 
-	const stateArgs: Record<string, unknown> = {};
+		if (ctx.flags.vars) stateArgs.vars = true;
+		if (ctx.flags.stack) stateArgs.stack = true;
+		if (ctx.flags.breakpoints) stateArgs.breakpoints = true;
+		if (ctx.flags.code) stateArgs.code = true;
+		if (ctx.flags.compact) stateArgs.compact = true;
+		if (ctx.flags["all-scopes"]) stateArgs.allScopes = true;
+		if (ctx.flags.depth !== undefined) stateArgs.depth = ctx.flags.depth;
+		if (ctx.flags.lines !== undefined) stateArgs.lines = ctx.flags.lines;
+		if (ctx.flags.frame) stateArgs.frame = ctx.flags.frame;
+		if (ctx.flags.generated) stateArgs.generated = true;
 
-	if (args.flags.vars === true) stateArgs.vars = true;
-	if (args.flags.stack === true) stateArgs.stack = true;
-	if (args.flags.breakpoints === true) stateArgs.breakpoints = true;
-	if (args.flags.code === true) stateArgs.code = true;
-	if (args.flags.compact === true) stateArgs.compact = true;
-	if (args.flags["all-scopes"] === true) stateArgs.allScopes = true;
-	const depth = parseIntFlag(args.flags, "depth");
-	if (depth !== undefined) stateArgs.depth = depth;
-	const lines = parseIntFlag(args.flags, "lines");
-	if (lines !== undefined) stateArgs.lines = lines;
-	if (typeof args.flags.frame === "string") {
-		stateArgs.frame = args.flags.frame;
-	}
-	if (args.flags.generated === true) stateArgs.generated = true;
+		const data = await daemonRequest(ctx.global.session, "state", stateArgs);
+		if (!data) return 1;
 
-	const data = await daemonRequest(session, "state", stateArgs);
-	if (!data) return 1;
+		if (ctx.global.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return 0;
+		}
 
-	if (args.global.json) {
-		console.log(JSON.stringify(data, null, 2));
+		printState(data, { color: shouldEnableColor(ctx.global.color) });
+
 		return 0;
-	}
-
-	printState(data, { color: shouldEnableColor(args.global.color) });
-
-	return 0;
+	},
 });
