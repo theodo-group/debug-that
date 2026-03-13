@@ -8,7 +8,15 @@ export interface DaemonLogEntry {
 	data?: Record<string, unknown>;
 }
 
-export class DaemonLogger {
+export interface Logger {
+	info(event: string, message: string, data?: Record<string, unknown>): void;
+	warn(event: string, message: string, data?: Record<string, unknown>): void;
+	error(event: string, message: string, data?: Record<string, unknown>): void;
+	debug(event: string, message: string, data?: Record<string, unknown>): void;
+	clear(): void;
+}
+
+export class DaemonLogger implements Logger {
 	private logPath: string;
 
 	constructor(logPath: string) {

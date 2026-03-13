@@ -5,7 +5,7 @@ import {
 	DaemonRequestSchema,
 	type DaemonResponse,
 } from "../protocol/messages.ts";
-import type { DaemonLogger } from "./logger.ts";
+import type { Logger } from "./logger.ts";
 import { ensureSocketDir, getLockPath, getSocketPath } from "./paths.ts";
 
 type RequestHandler = (req: DaemonRequest) => Promise<DaemonResponse>;
@@ -18,14 +18,14 @@ export class DaemonServer {
 	private listener: ReturnType<typeof Bun.listen> | null = null;
 	private socketPath: string;
 	private lockPath: string;
-	private logger: DaemonLogger | null;
+	private logger: Logger;
 
-	constructor(session: string, options: { idleTimeout: number; logger?: DaemonLogger }) {
+	constructor(session: string, options: { idleTimeout: number; logger: Logger }) {
 		this.session = session;
 		this.idleTimeout = options.idleTimeout;
 		this.socketPath = getSocketPath(session);
 		this.lockPath = getLockPath(session);
-		this.logger = options.logger ?? null;
+		this.logger = options.logger;
 	}
 
 	onRequest(handler: RequestHandler): void {
@@ -93,9 +93,9 @@ export class DaemonServer {
 					// Continue writing any pending data
 					server.flushPending(socket);
 				},
-				close() {},
+				close() { },
 				error(_socket, error) {
-					server.logger?.error("socket.error", error.message);
+					server.logger.error("socket.error", error.message);
 					console.error(`[daemon] socket error: ${error.message}`);
 				},
 			},
@@ -159,14 +159,14 @@ export class DaemonServer {
 				socket,
 				cmd
 					? {
-							ok: false,
-							error: `Unknown command: ${cmd}`,
-							suggestion: "-> Try: debug-that --help",
-						}
+						ok: false,
+						error: `Unknown command: ${cmd}`,
+						suggestion: "-> Try: debug-that --help",
+					}
 					: {
-							ok: false,
-							error: "Invalid request: must have { cmd: string, args: object }",
-						},
+						ok: false,
+						error: "Invalid request: must have { cmd: string, args: object }",
+					},
 			);
 			return;
 		}
@@ -198,7 +198,7 @@ export class DaemonServer {
 		}
 		if (this.idleTimeout > 0) {
 			this.idleTimer = setTimeout(() => {
-				this.logger?.info(
+				this.logger.info(
 					"daemon.idle",
 					`Idle timeout reached (${this.idleTimeout}s), shutting down`,
 				);

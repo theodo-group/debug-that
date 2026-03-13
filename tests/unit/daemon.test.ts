@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
+import type { Logger } from "@/daemon/logger.ts";
 import { DaemonClient } from "../../src/daemon/client.ts";
 import {
 	ensureSocketDir,
@@ -39,10 +40,18 @@ afterEach(() => {
 	}
 });
 
+const logger: Logger = {
+	info: () => { },
+	warn: () => { },
+	error: () => { },
+	debug: () => { },
+	clear: () => { },
+};
+
 describe("DaemonServer", () => {
 	test("starts and accepts connections", async () => {
 		const session = testSession("start");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 
 		server.onRequest(async (req) => {
 			if (req.cmd === "ping") {
@@ -66,7 +75,7 @@ describe("DaemonServer", () => {
 
 	test("cleans up on stop", async () => {
 		const session = testSession("clean");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 
 		server.onRequest(async () => ({ ok: true }));
 		await server.start();
@@ -87,7 +96,7 @@ describe("DaemonServer", () => {
 describe("DaemonClient", () => {
 	test("sends request and receives response", async () => {
 		const session = testSession("cli");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 
 		server.onRequest(async (req) => {
 			if (req.cmd === "ping") {
@@ -113,7 +122,7 @@ describe("DaemonClient", () => {
 
 	test("sends request with args", async () => {
 		const session = testSession("args");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 
 		server.onRequest(async (req) => {
 			if (req.cmd === "eval") {
@@ -139,7 +148,7 @@ describe("DaemonClient", () => {
 
 	test("handles unknown command", async () => {
 		const session = testSession("unk");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 
 		server.onRequest(async () => {
 			return { ok: true };
@@ -166,7 +175,7 @@ describe("DaemonClient", () => {
 describe("idle timeout", () => {
 	test("auto-terminates after idle timeout", async () => {
 		const session = testSession("idle");
-		const server = new DaemonServer(session, { idleTimeout: 0.05 });
+		const server = new DaemonServer(session, { idleTimeout: 0.05, logger });
 
 		server.onRequest(async () => ({ ok: true, data: "pong" }));
 		await server.start();
@@ -182,7 +191,7 @@ describe("idle timeout", () => {
 
 	test("resets idle timer on request", async () => {
 		const session = testSession("irst");
-		const server = new DaemonServer(session, { idleTimeout: 0.1 });
+		const server = new DaemonServer(session, { idleTimeout: 0.1, logger });
 
 		server.onRequest(async () => ({ ok: true, data: "pong" }));
 		await server.start();
@@ -207,12 +216,12 @@ describe("idle timeout", () => {
 describe("lock file", () => {
 	test("prevents duplicate daemons", async () => {
 		const session = testSession("lock");
-		const server1 = new DaemonServer(session, { idleTimeout: 60 });
+		const server1 = new DaemonServer(session, { idleTimeout: 60, logger });
 		server1.onRequest(async () => ({ ok: true }));
 		await server1.start();
 
 		try {
-			const server2 = new DaemonServer(session, { idleTimeout: 60 });
+			const server2 = new DaemonServer(session, { idleTimeout: 60, logger });
 			server2.onRequest(async () => ({ ok: true }));
 
 			expect(server2.start()).rejects.toThrow(/already running/);
@@ -228,7 +237,7 @@ describe("lock file", () => {
 		// Write a lock file with a non-existent PID
 		writeFileSync(lockPath, "999999");
 
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 		server.onRequest(async () => ({ ok: true }));
 
 		// Should not throw because the PID doesn't exist
@@ -273,7 +282,7 @@ describe("stale daemon detection (Docker-style PID check)", () => {
 
 	test("isRunning returns true when daemon is actually alive", async () => {
 		const session = testSession("alive");
-		const server = new DaemonServer(session, { idleTimeout: 60 });
+		const server = new DaemonServer(session, { idleTimeout: 60, logger });
 		server.onRequest(async () => ({ ok: true }));
 		await server.start();
 
@@ -315,11 +324,11 @@ describe("listSessions", () => {
 		const session1 = testSession("la");
 		const session2 = testSession("lb");
 
-		const server1 = new DaemonServer(session1, { idleTimeout: 60 });
+		const server1 = new DaemonServer(session1, { idleTimeout: 60, logger });
 		server1.onRequest(async () => ({ ok: true }));
 		await server1.start();
 
-		const server2 = new DaemonServer(session2, { idleTimeout: 60 });
+		const server2 = new DaemonServer(session2, { idleTimeout: 60, logger });
 		server2.onRequest(async () => ({ ok: true }));
 		await server2.start();
 
