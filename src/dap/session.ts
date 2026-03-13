@@ -192,6 +192,17 @@ export class DapSession extends BaseSession {
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
 			await this.waitForStop(5_000);
+			if (!this.isPaused()) {
+				const errors = this.consoleMessages
+					.filter((m) => m.level === "error")
+					.map((m) => m.text)
+					.join("\n");
+				const detail = errors || this.dap?.stderr?.trim();
+				const msg = detail
+					? `Target exited without stopping:\n${detail}`
+					: "Target exited without stopping (stopOnEntry had no effect)";
+				throw new Error(msg);
+			}
 		}
 
 		const result: LaunchResult = {
@@ -1138,7 +1149,8 @@ export class DapSession extends BaseSession {
 			this.pauseInfo = null;
 			this._stackFrames = [];
 
-			// Resolve any waiting promise
+			// Resolve any waiting promise — the caller checks isPaused() to
+			// distinguish normal completion from unexpected termination.
 			this.stoppedWaiter?.resolve();
 			this.stoppedWaiter = null;
 		});

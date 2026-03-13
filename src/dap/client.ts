@@ -1,7 +1,7 @@
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import type { Subprocess } from "bun";
 
-import { REQUEST_TIMEOUT_MS } from "../constants.ts";
+import { MAX_STDERR_BUFFER, REQUEST_TIMEOUT_MS } from "../constants.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Required for handler map that stores both typed and untyped handlers
 type AnyHandler = (...args: any[]) => void;
@@ -238,15 +238,27 @@ export class DapClient {
 		}
 	}
 
+	/** Recent stderr output from the adapter process (capped). */
+	get stderr(): string {
+		return this._stderr;
+	}
+
+	private _stderr = "";
+
 	private async drainStderr(): Promise<void> {
 		const reader = this.proc.stderr.getReader();
+		const decoder = new TextDecoder();
 		try {
 			while (true) {
-				const { done } = await reader.read();
+				const { done, value } = await reader.read();
 				if (done) break;
+				this._stderr += decoder.decode(value, { stream: true });
+				if (this._stderr.length > MAX_STDERR_BUFFER) {
+					this._stderr = this._stderr.slice(-MAX_STDERR_BUFFER);
+				}
 			}
 		} catch {
-			// Ignore
+			// Stream closed or errored
 		}
 	}
 }

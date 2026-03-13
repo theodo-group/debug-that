@@ -43,3 +43,6 @@ export const INITIALIZED_TIMEOUT_MS = 10_000;
 
 /** Max request payload size (bytes) accepted by the daemon IPC server. */
 export const MAX_REQUEST_SIZE = 1_048_576; // 1MB
+
+/** Max bytes of adapter stderr to retain for error reporting. */
+export const MAX_STDERR_BUFFER = 4_096;
