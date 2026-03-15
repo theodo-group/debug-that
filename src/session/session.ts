@@ -45,6 +45,7 @@ export interface SessionCapabilities {
 export interface BreakpointResult {
 	ref: string;
 	location: { url: string; line: number; column?: number };
+	pending?: boolean;
 }
 
 export interface BreakpointListItem {
@@ -57,6 +58,7 @@ export interface BreakpointListItem {
 	hitCount?: number;
 	template?: string;
 	disabled?: boolean;
+	pending?: boolean;
 	originalUrl?: string;
 	originalLine?: number;
 }

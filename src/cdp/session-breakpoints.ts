@@ -62,6 +62,7 @@ export async function setBreakpoint(
 
 	const breakpointId = r.breakpointId;
 	const loc = r.location;
+	const isPending = !loc;
 	if (!url) url = r.url ?? session.findScriptUrl(actualFile);
 
 	const resolvedUrl = originalFile ?? url ?? file;
@@ -72,6 +73,9 @@ export async function setBreakpoint(
 		url: resolvedUrl,
 		line: resolvedLine,
 	};
+	if (isPending) {
+		meta.pending = true;
+	}
 	if (originalFile) {
 		meta.originalUrl = originalFile;
 		meta.originalLine = originalLine;
@@ -101,7 +105,7 @@ export async function setBreakpoint(
 		location.column = resolvedColumn;
 	}
 
-	return { ref, location };
+	return { ref, location, pending: isPending || undefined };
 }
 
 export async function removeBreakpoint(session: CdpSession, ref: string): Promise<void> {
@@ -203,6 +207,9 @@ export function listBreakpoints(session: CdpSession): Array<{
 		}
 		if (meta.template !== undefined) {
 			item.template = meta.template as string;
+		}
+		if (meta.pending) {
+			item.pending = true;
 		}
 		if (meta.originalUrl !== undefined) {
 			item.originalUrl = meta.originalUrl as string;

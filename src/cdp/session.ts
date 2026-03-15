@@ -781,6 +781,28 @@ export class CdpSession extends BaseSession {
 			this.refs.clearVolatile();
 		});
 
+		cdp.on("Debugger.breakpointResolved", (p) => {
+			// Fired when a deferred breakpoint (set via setBreakpointByUrl before
+			// the script loaded) resolves to an actual location in a newly parsed script.
+			const entry = this.refs.findByRemoteId(p.breakpointId);
+			if (!entry?.meta?.pending) return;
+
+			// Update metadata — the actual re-binding by scriptId happens in
+			// scriptParsed (which fires before execution, giving us time to bind).
+			delete entry.meta.pending;
+			const scriptInfo = this.scripts.get(p.location.scriptId);
+			if (scriptInfo?.url) entry.meta.url = scriptInfo.url;
+			entry.meta.line = p.location.lineNumber + 1;
+			if (p.location.columnNumber !== undefined) {
+				entry.meta.column = p.location.columnNumber;
+			}
+
+			this.daemonLogger.info(
+				"breakpoint.resolved",
+				`${entry.ref} resolved at ${entry.meta.url}:${entry.meta.line}`,
+			);
+		});
+
 		cdp.on("Debugger.scriptParsed", (p) => {
 			const scriptId = p.scriptId;
 			if (scriptId) {

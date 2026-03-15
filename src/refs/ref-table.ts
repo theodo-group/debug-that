@@ -94,6 +94,13 @@ export class RefTable {
 		return result;
 	}
 
+	findByRemoteId(remoteId: string): RefEntry | undefined {
+		for (const entry of this.entries.values()) {
+			if (entry.remoteId === remoteId) return entry;
+		}
+		return undefined;
+	}
+
 	remove(ref: string): boolean {
 		return this.entries.delete(ref);
 	}
