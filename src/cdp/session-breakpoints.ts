@@ -12,31 +12,13 @@ export async function setBreakpoint(
 	}
 
 	const condition = session.buildBreakpointCondition(options?.condition, options?.hitCount);
+	const userColumn = options?.column !== undefined ? options.column - 1 : undefined;
 
-	// Try source map translation (.ts → .js) before setting breakpoint
-	let originalFile: string | null = null;
-	let originalLine: number | null = null;
-	let actualLine = line;
-	let actualColumn: number | undefined =
-		options?.column !== undefined ? options.column - 1 : undefined; // user column is 1-based
-	let actualFile = file;
-	let generatedScriptId: string | null = null;
-
-	if (!options?.urlRegex) {
-		const generated = session.sourceMapResolver.toGenerated(file, line, actualColumn ?? 0);
-		if (generated) {
-			originalFile = file;
-			originalLine = line;
-			actualLine = generated.line;
-			actualColumn = generated.column;
-			generatedScriptId = generated.scriptId;
-			// Find the URL of the generated script
-			const scriptInfo = session.scripts.get(generated.scriptId);
-			if (scriptInfo) {
-				actualFile = scriptInfo.url;
-			}
-		}
-	}
+	// Source map translation (source .ts → runtime .js)
+	const runtime = !options?.urlRegex ? session.resolveToRuntime(file, line, userColumn ?? 0) : null;
+	const actualFile = runtime?.file ?? file;
+	const actualLine = runtime?.line ?? line;
+	const actualColumn = runtime ? runtime.column : userColumn;
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;
@@ -44,19 +26,19 @@ export async function setBreakpoint(
 		urlRegex = options.urlRegex;
 	} else {
 		url = session.findScriptUrl(actualFile);
-		if (!url && !generatedScriptId) {
+		if (!url && !runtime?.scriptId) {
 			urlRegex = `${escapeRegex(actualFile)}$`;
 		}
 	}
 
 	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
-		file,
+		file: actualFile,
 		line: actualLine,
 		column: actualColumn,
 		condition,
 		url: url ?? undefined,
 		urlRegex,
-		scriptId: generatedScriptId ?? undefined,
+		scriptId: runtime?.scriptId,
 		scripts: session.scripts,
 	});
 
@@ -65,8 +47,8 @@ export async function setBreakpoint(
 	const isPending = !loc;
 	if (!url) url = r.url ?? session.findScriptUrl(actualFile);
 
-	const resolvedUrl = originalFile ?? url ?? file;
-	const resolvedLine = originalLine ?? (loc ? loc.lineNumber + 1 : line); // Convert back to 1-based
+	const resolvedUrl = runtime?.originalFile ?? url ?? file;
+	const resolvedLine = runtime?.originalLine ?? (loc ? loc.lineNumber + 1 : line);
 	const resolvedColumn = loc?.columnNumber;
 
 	const meta: Record<string, unknown> = {
@@ -76,9 +58,9 @@ export async function setBreakpoint(
 	if (isPending) {
 		meta.pending = true;
 	}
-	if (originalFile) {
-		meta.originalUrl = originalFile;
-		meta.originalLine = originalLine;
+	if (runtime) {
+		meta.originalUrl = runtime.originalFile;
+		meta.originalLine = runtime.originalLine;
 		meta.generatedUrl = url ?? actualFile;
 		meta.generatedLine = loc ? loc.lineNumber + 1 : actualLine;
 	}
@@ -426,29 +408,15 @@ export async function setLogpoint(
 		logExpr = `${logExpr}, false`;
 	}
 
-	// Source map translation (original .ts → generated .js)
-	let originalFile: string | null = null;
-	let originalLine: number | null = null;
-	let actualLine = line;
-	let actualFile = file;
-	let generatedScriptId: string | null = null;
-
-	const generated = session.sourceMapResolver.toGenerated(file, line, 0);
-	if (generated) {
-		originalFile = file;
-		originalLine = line;
-		actualLine = generated.line;
-		generatedScriptId = generated.scriptId;
-		const scriptInfo = session.scripts.get(generated.scriptId);
-		if (scriptInfo) {
-			actualFile = scriptInfo.url;
-		}
-	}
+	// Source map translation (source .ts → runtime .js)
+	const runtime = session.resolveToRuntime(file, line, 0);
+	const actualFile = runtime?.file ?? file;
+	const actualLine = runtime?.line ?? line;
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;
 	url = session.findScriptUrl(actualFile);
-	if (!url && !generatedScriptId) {
+	if (!url && !runtime?.scriptId) {
 		urlRegex = `${escapeRegex(actualFile)}$`;
 	}
 
@@ -469,13 +437,13 @@ export async function setLogpoint(
 		condition: logExpr,
 		url: url ?? undefined,
 		urlRegex,
-		scriptId: generatedScriptId ?? scriptId,
+		scriptId: runtime?.scriptId ?? scriptId,
 		scripts: session.scripts,
 	});
 
 	const loc = r.location;
-	const resolvedUrl = originalFile ?? url ?? file;
-	const resolvedLine = originalLine ?? (loc ? loc.lineNumber + 1 : line);
+	const resolvedUrl = runtime?.originalFile ?? url ?? file;
+	const resolvedLine = runtime?.originalLine ?? (loc ? loc.lineNumber + 1 : line);
 	const resolvedColumn = loc?.columnNumber;
 
 	const meta: Record<string, unknown> = {

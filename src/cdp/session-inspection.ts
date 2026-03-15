@@ -587,7 +587,7 @@ export function getStack(
 		let resolvedName: string | null = null;
 
 		if (!options.generated) {
-			const resolved = session.resolveOriginalLocation(sid, lineNum, colNum ?? 0);
+			const resolved = session.resolveToSource(sid, lineNum, colNum ?? 0);
 			if (resolved) {
 				url = resolved.url;
 				displayLine = resolved.line;

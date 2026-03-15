@@ -64,17 +64,10 @@ export async function runToLocation(
 		throw new Error("Cannot run-to: no CDP connection");
 	}
 
-	// Source map translation (original .ts → generated .js)
-	let actualLine = line;
-	let actualFile = file;
-	const generated = session.sourceMapResolver.toGenerated(file, line, 0);
-	if (generated) {
-		actualLine = generated.line;
-		const scriptInfo = session.scripts.get(generated.scriptId);
-		if (scriptInfo) {
-			actualFile = scriptInfo.url;
-		}
-	}
+	// Source map translation (source .ts → runtime .js)
+	const runtime = session.resolveToRuntime(file, line, 0);
+	const actualFile = runtime?.file ?? file;
+	const actualLine = runtime?.line ?? line;
 
 	// Find the script URL matching the given file (by suffix)
 	const scriptUrl = session.findScriptUrl(actualFile);

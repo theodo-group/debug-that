@@ -53,11 +53,7 @@ export async function buildState(
 
 	// Try source map translation for pause location (unless --generated)
 	if (frameScriptId && !options.generated) {
-		const resolved = session.resolveOriginalLocation(
-			frameScriptId,
-			frameLine + 1,
-			frameColumn ?? 0,
-		);
+		const resolved = session.resolveToSource(frameScriptId, frameLine + 1, frameColumn ?? 0);
 		if (resolved) {
 			frameUrl = resolved.url;
 			displayLine = resolved.line;

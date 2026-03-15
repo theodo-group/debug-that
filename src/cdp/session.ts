@@ -205,7 +205,7 @@ export class CdpSession extends BaseSession {
 			// Source-map translate for display
 			const translated = { ...this.pauseInfo };
 			if (translated.scriptId && translated.line !== undefined) {
-				const resolved = this.resolveOriginalLocation(
+				const resolved = this.resolveToSource(
 					translated.scriptId,
 					translated.line + 1, // pauseInfo.line is 0-based
 					translated.column ?? 0,
@@ -270,7 +270,7 @@ export class CdpSession extends BaseSession {
 			// Source-map translate pauseInfo for display
 			const translated = { ...this.pauseInfo };
 			if (translated.scriptId && translated.line !== undefined) {
-				const resolved = this.resolveOriginalLocation(
+				const resolved = this.resolveToSource(
 					translated.scriptId,
 					translated.line + 1, // pauseInfo.line is 0-based
 					translated.column ?? 0,
@@ -699,11 +699,41 @@ export class CdpSession extends BaseSession {
 	}
 
 	/**
-	 * Resolve a generated location to its original source-mapped location.
-	 * Option A: when toOriginal returns null but the script has a source map,
-	 * still return the original source URL (with the generated line number).
+	 * Translate source coordinates (user-facing, 1-based) to runtime coordinates.
+	 * Returns the generated file/line/column + scriptId if a source map mapping exists,
+	 * or null if no mapping is found (caller should use the original coordinates).
 	 */
-	resolveOriginalLocation(
+	resolveToRuntime(
+		file: string,
+		line: number,
+		column = 0,
+	): {
+		file: string;
+		line: number;
+		column: number;
+		scriptId: string;
+		originalFile: string;
+		originalLine: number;
+	} | null {
+		const generated = this.sourceMapResolver.toGenerated(file, line, column);
+		if (!generated) return null;
+		const scriptInfo = this.scripts.get(generated.scriptId);
+		return {
+			file: scriptInfo?.url ?? file,
+			line: generated.line,
+			column: generated.column,
+			scriptId: generated.scriptId,
+			originalFile: file,
+			originalLine: line,
+		};
+	}
+
+	/**
+	 * Translate runtime coordinates (generated, 1-based) to source coordinates.
+	 * Falls back to the primary source URL if the exact line has no mapping.
+	 * Returns null if the script has no source map.
+	 */
+	resolveToSource(
 		scriptId: string,
 		line1Based: number,
 		column: number,
