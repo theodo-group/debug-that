@@ -3,6 +3,7 @@ import { defineCommand } from "../cli/command.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
 import { shortPath } from "../formatter/path.ts";
+import { detectRuntime } from "../util/detect-runtime.ts";
 
 defineCommand({
 	name: "launch",
@@ -20,16 +21,25 @@ defineCommand({
 		const session = ctx.global.session;
 		const command = ctx.positional;
 
+		// Auto-detect runtime from command if --runtime not specified
+		const detection = detectRuntime({ command, explicitRuntime: ctx.flags.runtime });
+		const runtime = detection?.runtime;
+		const launchCommand = detection?.stripInterpreter ? command.slice(1) : command;
+
+		if (detection?.hint) {
+			console.error(detection.hint);
+		}
+
 		// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
 		await ensureDaemon(session, { timeout: ctx.flags.timeout });
 
 		// Send launch command to daemon
 		const client = new DaemonClient(session);
 		const response = await client.request("launch", {
-			command,
+			command: launchCommand,
 			brk: ctx.flags.brk || false,
 			port: ctx.flags.port,
-			runtime: ctx.flags.runtime,
+			runtime,
 		});
 
 		if (!response.ok) {
