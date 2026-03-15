@@ -2,6 +2,7 @@ import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import type { StateOptions, StateSnapshot } from "../session/types.ts";
 import type { CdpSession } from "./session.ts";
+import { getStack } from "./session-inspection.ts";
 
 export async function buildState(
 	session: CdpSession,
@@ -137,66 +138,9 @@ export async function buildState(
 		}
 	}
 
-	// Stack frames
+	// Stack frames (delegates to getStack to avoid duplication)
 	if (showAll || options.stack) {
-		const stackFrames: Array<{
-			ref: string;
-			functionName: string;
-			file: string;
-			line: number;
-			column?: number;
-			isAsync?: boolean;
-		}> = [];
-
-		for (let i = 0; i < callFrames.length; i++) {
-			const frame = callFrames[i];
-			if (!frame) continue;
-			const callFrameId = frame.callFrameId;
-			const funcName = frame.functionName || "(anonymous)";
-			const loc = frame.location;
-			const sid = loc.scriptId;
-			const lineNum = loc.lineNumber + 1; // 1-based
-			const colNum = loc.columnNumber;
-			let url = session.scripts.get(sid)?.url ?? "";
-			let stackLine = lineNum;
-			let stackCol = colNum !== undefined ? colNum + 1 : undefined;
-			let resolvedName: string | null = null;
-
-			if (!options.generated) {
-				const resolved = session.resolveOriginalLocation(sid, lineNum, colNum ?? 0);
-				if (resolved) {
-					url = resolved.url;
-					stackLine = resolved.line;
-					stackCol = resolved.column;
-				}
-				// Get original function name from exact mapping
-				const smOriginal = session.sourceMapResolver.toOriginal(sid, lineNum, colNum ?? 0);
-				resolvedName = smOriginal?.name ?? null;
-			}
-
-			const ref = session.refs.addFrame(callFrameId, funcName, { frameIndex: i });
-
-			const stackEntry: {
-				ref: string;
-				functionName: string;
-				file: string;
-				line: number;
-				column?: number;
-				isAsync?: boolean;
-			} = {
-				ref,
-				functionName: resolvedName ?? funcName,
-				file: url,
-				line: stackLine,
-			};
-			if (stackCol !== undefined) {
-				stackEntry.column = stackCol;
-			}
-
-			stackFrames.push(stackEntry);
-		}
-
-		snapshot.stack = stackFrames;
+		snapshot.stack = getStack(session, { generated: options.generated });
 	}
 
 	// Local variables
