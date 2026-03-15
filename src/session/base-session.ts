@@ -12,7 +12,7 @@ import type {
 	Session,
 	SessionCapabilities,
 	SetVarResult,
-	SourceMapAccess,
+	SourceMapInfo,
 	SourceResult,
 	StackFrameEntry,
 	ToggleResult,
@@ -45,7 +45,10 @@ export abstract class BaseSession implements Session {
 	startTime: number = Date.now();
 
 	abstract readonly capabilities: SessionCapabilities;
-	abstract readonly sourceMapResolver: SourceMapAccess;
+
+	// ── Source map diagnostics (overridden by subclasses) ──────────
+	abstract getSourceMapInfos(file?: string): SourceMapInfo[];
+	abstract disableSourceMaps(): void;
 
 	constructor(session: string) {
 		this.session = session;

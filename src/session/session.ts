@@ -145,13 +145,6 @@ export interface SourceMapInfo {
 	hasSourcesContent: boolean;
 }
 
-export interface SourceMapAccess {
-	findScriptForSource(file: string): { scriptId: string; url: string } | null;
-	getInfo(scriptId: string): SourceMapInfo | null;
-	getAllInfos(): SourceMapInfo[];
-	setDisabled(disabled: boolean): void;
-}
-
 // ── Pending config ──────────────────────────────────────────────────
 // Config accumulated before a session is connected (e.g. remaps set before launch).
 // Each session type picks what it understands and ignores the rest.
@@ -167,7 +160,10 @@ export type ExceptionPauseMode = "all" | "uncaught" | "caught" | "none";
 
 export interface Session {
 	readonly capabilities: SessionCapabilities;
-	readonly sourceMapResolver: SourceMapAccess;
+
+	// ── Source map diagnostics ─────────────────────────────────────
+	getSourceMapInfos(file?: string): SourceMapInfo[];
+	disableSourceMaps(): void;
 
 	// ── Lifecycle ──────────────────────────────────────────────────
 	launch(command: string[], options?: { brk?: boolean; port?: number }): Promise<LaunchResult>;

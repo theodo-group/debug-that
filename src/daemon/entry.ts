@@ -348,21 +348,13 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			const session = requireSession();
 			if (isError(session)) return session;
 			const { file: smFile } = req.args;
-			if (smFile) {
-				const match = session.sourceMapResolver.findScriptForSource(smFile);
-				if (match) {
-					const info = session.sourceMapResolver.getInfo(match.scriptId);
-					return { ok: true, data: info ? [info] : [] };
-				}
-				return { ok: true, data: [] };
-			}
-			return { ok: true, data: session.sourceMapResolver.getAllInfos() };
+			return { ok: true, data: session.getSourceMapInfos(smFile) };
 		}
 
 		case "sourcemap-disable": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			session.sourceMapResolver.setDisabled(true);
+			session.disableSourceMaps();
 			return { ok: true, data: "disabled" };
 		}
 

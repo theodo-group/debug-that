@@ -5,7 +5,7 @@ import { ensureSocketDir, getDaemonLogPath, getLogPath } from "../daemon/paths.t
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { BaseSession } from "../session/base-session.ts";
-import type { SessionCapabilities } from "../session/session.ts";
+import type { SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
 	AttachResult,
 	ConsoleMessage,
@@ -81,7 +81,7 @@ const ANSI_RE = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
 
 export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
-	sourceMapResolver: SourceMapResolver = new SourceMapResolver();
+	readonly sourceMapResolver: SourceMapResolver = new SourceMapResolver();
 	childProcess: Subprocess<"ignore", "ignore", "pipe"> | null = null;
 	pausedCallFrames: Protocol.Debugger.CallFrame[] = [];
 	scripts: Map<string, ScriptInfo> = new Map();
@@ -116,6 +116,22 @@ export class CdpSession extends BaseSession {
 		breakpointToggle: true,
 		restart: true,
 	};
+
+	getSourceMapInfos(file?: string): SourceMapInfo[] {
+		if (file) {
+			const match = this.sourceMapResolver.findScriptForSource(file);
+			if (match) {
+				const info = this.sourceMapResolver.getInfo(match.scriptId);
+				return info ? [info] : [];
+			}
+			return [];
+		}
+		return this.sourceMapResolver.getAllInfos();
+	}
+
+	disableSourceMaps(): void {
+		this.sourceMapResolver.setDisabled(true);
+	}
 
 	constructor(session: string, options?: { daemonLogger?: DaemonLogger }) {
 		super(session);

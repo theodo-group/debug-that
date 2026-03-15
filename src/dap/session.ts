@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
 import { BaseSession } from "../session/base-session.ts";
-import type { PendingConfig, SessionCapabilities, SourceMapAccess } from "../session/session.ts";
+import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
 
@@ -1055,14 +1055,12 @@ export class DapSession extends BaseSession {
 		throw new Error("Restart is not yet supported in DAP mode. Use stop + launch.");
 	}
 
-	// Expose a no-op sourceMapResolver-like object so entry.ts doesn't crash
-	get sourceMapResolver(): SourceMapAccess {
-		return {
-			findScriptForSource: () => null,
-			getInfo: () => null,
-			getAllInfos: () => [],
-			setDisabled: () => {},
-		};
+	getSourceMapInfos(): SourceMapInfo[] {
+		return []; // DAP adapters handle source maps internally
+	}
+
+	disableSourceMaps(): void {
+		// No-op for DAP — adapters handle source maps internally
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────
