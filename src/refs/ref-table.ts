@@ -1,12 +1,28 @@
 export type RefType = "v" | "f" | "o" | "BP" | "LP" | "HS";
 
-export interface RefEntry {
+export type RefEntry = BoundRefEntry | PendingRefEntry;
+
+export interface BoundRefEntry {
 	ref: string;
 	type: RefType;
+	pending?: false;
 	remoteId: string;
 	name?: string;
 	meta?: Record<string, unknown>;
 }
+
+export interface PendingRefEntry {
+	ref: string;
+	type: RefType;
+	pending: true;
+	remoteId?: undefined;
+	name?: string;
+	meta?: Record<string, unknown>;
+}
+
+// TODO: discriminate meta by RefType so breakpoint meta fields (url, line,
+// condition, etc.) are typed instead of Record<string, unknown>. This would
+// eliminate all the `as string` / `as number` casts in session-breakpoints.ts.
 
 const PREFIXES: Record<RefType, string> = {
 	v: "@v",
@@ -44,6 +60,10 @@ export class RefTable {
 		return this.add("BP", remoteId, undefined, meta);
 	}
 
+	addPendingBreakpoint(meta?: Record<string, unknown>): string {
+		return this.addPending("BP", meta);
+	}
+
 	addLogpoint(remoteId: string, meta?: Record<string, unknown>): string {
 		return this.add("LP", remoteId, undefined, meta);
 	}
@@ -57,7 +77,26 @@ export class RefTable {
 	}
 
 	resolveId(ref: string): string | undefined {
-		return this.entries.get(ref)?.remoteId;
+		const entry = this.entries.get(ref);
+		return entry?.pending ? undefined : entry?.remoteId;
+	}
+
+	/**
+	 * List breakpoints and/or logpoints with typed filtering.
+	 * Overloads narrow the return type when pending is specified.
+	 */
+	listBreakpoints(options: { pending: true; logpoints?: boolean }): PendingRefEntry[];
+	listBreakpoints(options: { pending: false; logpoints?: boolean }): BoundRefEntry[];
+	listBreakpoints(options?: { pending?: boolean; logpoints?: boolean }): RefEntry[];
+	listBreakpoints(options?: { pending?: boolean; logpoints?: boolean }): RefEntry[] {
+		const includeLP = options?.logpoints !== false;
+		const result: RefEntry[] = [];
+		for (const entry of this.entries.values()) {
+			if (entry.type !== "BP" && !(includeLP && entry.type === "LP")) continue;
+			if (options?.pending !== undefined && !!entry.pending !== options.pending) continue;
+			result.push(entry);
+		}
+		return result;
 	}
 
 	clearVolatile(): void {
@@ -94,11 +133,25 @@ export class RefTable {
 		return result;
 	}
 
-	findByRemoteId(remoteId: string): RefEntry | undefined {
+	findByRemoteId(remoteId: string): BoundRefEntry | undefined {
 		for (const entry of this.entries.values()) {
-			if (entry.remoteId === remoteId) return entry;
+			if (!entry.pending && entry.remoteId === remoteId) return entry;
 		}
 		return undefined;
+	}
+
+	/** Bind a pending entry: set remoteId and clear pending flag. */
+	bind(ref: string, remoteId: string): void {
+		const entry = this.entries.get(ref);
+		if (!entry) return;
+		const bound: BoundRefEntry = {
+			ref: entry.ref,
+			type: entry.type,
+			remoteId,
+			name: entry.name,
+			meta: entry.meta,
+		};
+		this.entries.set(ref, bound);
 	}
 
 	remove(ref: string): boolean {
@@ -114,10 +167,22 @@ export class RefTable {
 		const num = this.counters[type];
 		this.counters[type] = num + 1;
 		const ref = `${PREFIXES[type]}${num}`;
-		const entry: RefEntry = { ref, type, remoteId };
+		const entry: BoundRefEntry = { ref, type, remoteId };
 		if (name !== undefined) {
 			entry.name = name;
 		}
+		if (meta !== undefined) {
+			entry.meta = meta;
+		}
+		this.entries.set(ref, entry);
+		return ref;
+	}
+
+	private addPending(type: RefType, meta?: Record<string, unknown>): string {
+		const num = this.counters[type];
+		this.counters[type] = num + 1;
+		const ref = `${PREFIXES[type]}${num}`;
+		const entry: PendingRefEntry = { ref, type, pending: true };
 		if (meta !== undefined) {
 			entry.meta = meta;
 		}

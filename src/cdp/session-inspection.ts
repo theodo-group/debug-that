@@ -260,15 +260,17 @@ export async function getProps(
 		throw new Error(`Unknown ref: ${ref}`);
 	}
 
-	const objectId = entry.remoteId;
+	if (entry.pending || !entry.remoteId) {
+		throw new Error(`Ref ${ref} is not bound to a remote object`);
+	}
 
 	// Verify it's a valid object ID (not a primitive placeholder)
-	if (objectId.startsWith("primitive:") || objectId.startsWith("eval:")) {
+	if (entry.remoteId.startsWith("primitive:") || entry.remoteId.startsWith("eval:")) {
 		throw new Error(`Ref ${ref} is a primitive and has no properties`);
 	}
 
 	const depth = Math.min(options.depth ?? 1, MAX_DEPTH);
-	return fetchPropsRecursive(session, objectId, options, depth);
+	return fetchPropsRecursive(session, entry.remoteId, options, depth);
 }
 
 async function fetchPropsRecursive(

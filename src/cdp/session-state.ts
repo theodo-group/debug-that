@@ -197,7 +197,7 @@ export async function buildState(
 
 	// Breakpoint count
 	if (showAll || options.breakpoints) {
-		const bpEntries = session.refs.list("BP");
+		const bpEntries = session.refs.listBreakpoints({ logpoints: false });
 		snapshot.breakpointCount = bpEntries.length;
 	}
 

@@ -196,7 +196,7 @@ export interface Session {
 	): Promise<BreakpointResult>;
 	removeBreakpoint(ref: string): Promise<void>;
 	removeAllBreakpoints(): Promise<void>;
-	listBreakpoints(): BreakpointListItem[];
+	listBreakpoints(options?: { pending?: boolean }): BreakpointListItem[];
 	toggleBreakpoint(ref: string): Promise<ToggleResult>;
 	getBreakableLocations(
 		file: string,

@@ -5,7 +5,7 @@ import { ensureSocketDir, getDaemonLogPath, getLogPath } from "../daemon/paths.t
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { BaseSession } from "../session/base-session.ts";
-import type { SessionCapabilities, SourceMapInfo } from "../session/session.ts";
+import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
 	AttachResult,
 	ConsoleMessage,
@@ -416,20 +416,8 @@ export class CdpSession extends BaseSession {
 		return removeAllBreakpointsImpl(this);
 	}
 
-	listBreakpoints(): Array<{
-		ref: string;
-		type: "BP" | "LP";
-		url: string;
-		line: number;
-		column?: number;
-		condition?: string;
-		hitCount?: number;
-		template?: string;
-		disabled?: boolean;
-		originalUrl?: string;
-		originalLine?: number;
-	}> {
-		return listBreakpointsImpl(this);
+	listBreakpoints(options?: { pending?: boolean }): BreakpointListItem[] {
+		return listBreakpointsImpl(this, options);
 	}
 
 	async toggleBreakpoint(ref: string): Promise<{ ref: string; state: "enabled" | "disabled" }> {
@@ -754,6 +742,47 @@ export class CdpSession extends BaseSession {
 		return null;
 	}
 
+	/**
+	 * Re-bind pending breakpoints by scriptId for a newly parsed script.
+	 * Uses resolveToRuntime() to translate source line → compiled line,
+	 * which requires the source map to be loaded first.
+	 */
+	private async rebindPendingBreakpoints(scriptId: string, scriptUrl: string): Promise<void> {
+		if (!this.cdp) return;
+
+		const stripped = scriptUrl.startsWith("file://") ? scriptUrl.slice(7) : scriptUrl;
+
+		for (const bp of this.listBreakpoints({ pending: true })) {
+			if (!stripped.endsWith(bp.url) && !scriptUrl.endsWith(bp.url)) continue;
+
+			const resolved = this.resolveToRuntime(bp.url, bp.line, 0);
+			const compiledLine = resolved?.runtime.line ?? bp.line;
+
+			const condition = bp.condition
+				? this.buildBreakpointCondition(bp.condition, bp.hitCount)
+				: undefined;
+
+			try {
+				const r = await this.cdp.send("Debugger.setBreakpoint", {
+					location: { scriptId, lineNumber: compiledLine - 1 },
+					condition,
+				});
+
+				this.refs.bind(bp.ref, r.breakpointId);
+
+				this.daemonLogger.info(
+					"breakpoint.rebound",
+					`${bp.ref} bound by scriptId at ${scriptUrl}:${compiledLine}`,
+				);
+			} catch (err) {
+				this.daemonLogger.debug(
+					"breakpoint.rebind.failed",
+					`Failed to rebind ${bp.ref}: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		}
+	}
+
 	// ── Private helpers ───────────────────────────────────────────────
 
 	private async waitForBrkPause(): Promise<void> {
@@ -815,28 +844,6 @@ export class CdpSession extends BaseSession {
 			this.refs.clearVolatile();
 		});
 
-		cdp.on("Debugger.breakpointResolved", (p) => {
-			// Fired when a deferred breakpoint (set via setBreakpointByUrl before
-			// the script loaded) resolves to an actual location in a newly parsed script.
-			const entry = this.refs.findByRemoteId(p.breakpointId);
-			if (!entry?.meta?.pending) return;
-
-			// Update metadata — the actual re-binding by scriptId happens in
-			// scriptParsed (which fires before execution, giving us time to bind).
-			delete entry.meta.pending;
-			const scriptInfo = this.scripts.get(p.location.scriptId);
-			if (scriptInfo?.url) entry.meta.url = scriptInfo.url;
-			entry.meta.line = p.location.lineNumber + 1;
-			if (p.location.columnNumber !== undefined) {
-				entry.meta.column = p.location.columnNumber;
-			}
-
-			this.daemonLogger.info(
-				"breakpoint.resolved",
-				`${entry.ref} resolved at ${entry.meta.url}:${entry.meta.line}`,
-			);
-		});
-
 		cdp.on("Debugger.scriptParsed", (p) => {
 			const scriptId = p.scriptId;
 			if (scriptId) {
@@ -847,13 +854,22 @@ export class CdpSession extends BaseSession {
 				const sourceMapURL = p.sourceMapURL;
 				if (sourceMapURL) {
 					info.sourceMapURL = sourceMapURL;
-					// Load source map asynchronously (fire-and-forget)
-					this.sourceMapResolver.loadSourceMap(scriptId, info.url, sourceMapURL).catch((err) => {
-						this.daemonLogger.debug(
-							"sourcemap.load.failed",
-							`Failed to load source map for ${info.url}: ${err instanceof Error ? err.message : String(err)}`,
-						);
-					});
+					// Load source map, then rebind pending breakpoints (fire-and-forget).
+					// Chaining ensures toGenerated() works when rebinding.
+					this.sourceMapResolver
+						.loadSourceMap(scriptId, info.url, sourceMapURL)
+						.then(() => {
+							if (p.url) this.rebindPendingBreakpoints(scriptId, p.url);
+						})
+						.catch((err) => {
+							this.daemonLogger.debug(
+								"sourcemap.load.failed",
+								`Failed to load source map for ${info.url}: ${err instanceof Error ? err.message : String(err)}`,
+							);
+						});
+				} else if (p.url) {
+					// No source map — rebind immediately
+					this.rebindPendingBreakpoints(scriptId, p.url);
 				}
 				this.scripts.set(scriptId, info);
 			}

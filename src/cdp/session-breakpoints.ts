@@ -33,9 +33,26 @@ export async function setBreakpoint(
 		urlRegex = options.urlRegex;
 	} else {
 		url = session.findScriptUrl(actualFile);
-		if (!url && !resolved?.runtime.scriptId) {
-			urlRegex = `${escapeRegex(actualFile)}$`;
-		}
+	}
+
+	// If the script is not loaded yet and no explicit urlRegex was given,
+	// store as a local pending breakpoint instead of sending a URL-regex
+	// breakpoint to V8. V8 resolves URL-regex breakpoints using raw compiled
+	// line numbers (ignoring source maps), which causes breakpoints to snap
+	// to wrong lines in vm.compileFunction() contexts (Jest/Vitest).
+	// rebindPendingBreakpoints() will set it by scriptId with the correct
+	// source-map-translated line when the script loads.
+	if (!url && !resolved?.runtime.scriptId && !urlRegex) {
+		const meta: Record<string, unknown> = {
+			url: file,
+			line,
+			pending: true,
+		};
+		if (options?.condition) meta.condition = options.condition;
+		if (options?.hitCount) meta.hitCount = options.hitCount;
+
+		const ref = session.refs.addPendingBreakpoint(meta);
+		return { ref, location: { url: file, line }, pending: true };
 	}
 
 	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
@@ -49,9 +66,7 @@ export async function setBreakpoint(
 		scripts: session.scripts,
 	});
 
-	const breakpointId = r.breakpointId;
 	const loc = r.location;
-	const isPending = !loc;
 	if (!url) url = r.url ?? session.findScriptUrl(actualFile);
 
 	const sourceUrl = resolved?.source.file ?? url ?? file;
@@ -62,9 +77,6 @@ export async function setBreakpoint(
 		url: sourceUrl,
 		line: sourceLine,
 	};
-	if (isPending) {
-		meta.pending = true;
-	}
 	if (resolved) {
 		meta.originalUrl = resolved.source.file;
 		meta.originalLine = resolved.source.line;
@@ -84,7 +96,7 @@ export async function setBreakpoint(
 		meta.urlRegex = options.urlRegex;
 	}
 
-	const ref = session.refs.addBreakpoint(breakpointId, meta);
+	const ref = session.refs.addBreakpoint(r.breakpointId, meta);
 
 	const location: { url: string; line: number; column?: number } = {
 		url: sourceUrl,
@@ -94,7 +106,7 @@ export async function setBreakpoint(
 		location.column = resolvedColumn;
 	}
 
-	return { ref, location, pending: isPending || undefined };
+	return { ref, location };
 }
 
 export async function removeBreakpoint(session: CdpSession, ref: string): Promise<void> {
@@ -111,6 +123,11 @@ export async function removeBreakpoint(session: CdpSession, ref: string): Promis
 		throw new Error(`Ref ${ref} is not a breakpoint or logpoint`);
 	}
 
+	if (entry.pending) {
+		session.refs.remove(ref);
+		return;
+	}
+
 	await session.cdp.send("Debugger.removeBreakpoint", {
 		breakpointId: entry.remoteId,
 	});
@@ -123,22 +140,24 @@ export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 		throw new Error("No active debug session");
 	}
 
-	const bps = session.refs.list("BP");
-	const lps = session.refs.list("LP");
-	const all = [...bps, ...lps];
-
-	for (const entry of all) {
+	// Remove bound breakpoints from V8
+	for (const entry of session.refs.listBreakpoints({ pending: false })) {
 		await session.cdp.send("Debugger.removeBreakpoint", {
 			breakpointId: entry.remoteId,
 		});
 		session.refs.remove(entry.ref);
 	}
+	// Remove pending breakpoints (local only)
+	for (const entry of session.refs.listBreakpoints({ pending: true })) {
+		session.refs.remove(entry.ref);
+	}
 }
 
-export function listBreakpoints(session: CdpSession): BreakpointListItem[] {
-	const bps = session.refs.list("BP");
-	const lps = session.refs.list("LP");
-	const all = [...bps, ...lps];
+export function listBreakpoints(
+	session: CdpSession,
+	options?: { pending?: boolean },
+): BreakpointListItem[] {
+	const all = session.refs.listBreakpoints({ pending: options?.pending });
 
 	const results: BreakpointListItem[] = all.map((entry) => {
 		const meta = entry.meta ?? {};
@@ -161,7 +180,7 @@ export function listBreakpoints(session: CdpSession): BreakpointListItem[] {
 		if (meta.template !== undefined) {
 			item.template = meta.template as string;
 		}
-		if (meta.pending) {
+		if (entry.pending) {
 			item.pending = true;
 		}
 		if (meta.originalUrl !== undefined) {
@@ -212,13 +231,11 @@ export async function toggleBreakpoint(
 
 	if (ref === "all") {
 		// Toggle all: if any are enabled, disable all; otherwise enable all
-		const activeBps = session.refs.list("BP");
-		const activeLps = session.refs.list("LP");
-		const allActive = [...activeBps, ...activeLps];
+		const allActive = session.refs.listBreakpoints();
 
 		if (allActive.length > 0) {
 			// Disable all active breakpoints
-			for (const entry of allActive) {
+			for (const entry of session.refs.listBreakpoints({ pending: false })) {
 				await session.cdp.send("Debugger.removeBreakpoint", {
 					breakpointId: entry.remoteId,
 				});
@@ -227,6 +244,12 @@ export async function toggleBreakpoint(
 					breakpointId: entry.remoteId,
 					meta,
 				});
+				session.refs.remove(entry.ref);
+			}
+			// Also disable pending breakpoints (just move to disabled map)
+			for (const entry of session.refs.listBreakpoints({ pending: true })) {
+				const meta = { ...(entry.meta ?? {}), type: entry.type, pending: true };
+				session.disabledBreakpoints.set(entry.ref, { breakpointId: "", meta });
 				session.refs.remove(entry.ref);
 			}
 			return { ref: "all", state: "disabled" };
@@ -246,12 +269,14 @@ export async function toggleBreakpoint(
 	const activeEntry = session.refs.resolve(ref);
 	if (activeEntry && (activeEntry.type === "BP" || activeEntry.type === "LP")) {
 		// Disable it
-		await session.cdp.send("Debugger.removeBreakpoint", {
-			breakpointId: activeEntry.remoteId,
-		});
+		if (!activeEntry.pending) {
+			await session.cdp.send("Debugger.removeBreakpoint", {
+				breakpointId: activeEntry.remoteId,
+			});
+		}
 		const meta = { ...(activeEntry.meta ?? {}), type: activeEntry.type };
 		session.disabledBreakpoints.set(ref, {
-			breakpointId: activeEntry.remoteId,
+			breakpointId: activeEntry.pending ? "" : activeEntry.remoteId,
 			meta,
 		});
 		session.refs.remove(ref);

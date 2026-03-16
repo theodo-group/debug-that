@@ -115,6 +115,9 @@ export async function restartFrameExecution(
 		if (!entry) {
 			throw new Error(`Unknown frame ref: ${frameRef}`);
 		}
+		if (entry.pending || !entry.remoteId) {
+			throw new Error(`Frame ref ${frameRef} is not bound`);
+		}
 		callFrameId = entry.remoteId;
 	} else {
 		const topFrame = session.pausedCallFrames[0];
