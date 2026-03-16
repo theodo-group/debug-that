@@ -158,7 +158,7 @@ export abstract class BaseSession implements Session {
 	): Promise<BreakpointResult>;
 	abstract removeBreakpoint(ref: string): Promise<void>;
 	abstract removeAllBreakpoints(): Promise<void>;
-	abstract listBreakpoints(): BreakpointListItem[];
+	abstract listBreakpoints(options?: { pending?: boolean }): BreakpointListItem[];
 	abstract toggleBreakpoint(ref: string): Promise<ToggleResult>;
 	abstract getBreakableLocations(
 		file: string,

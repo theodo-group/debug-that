@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { CdpSession } from "../../../src/cdp/session.ts";
 
-const JEST_BIN = resolve("tests/fixtures/jest/node_modules/.bin/jest");
-const JEST_ROOT = resolve("tests/fixtures/jest");
+const JEST_BIN = resolve("node_modules/.bin/jest");
+const JEST_ROOT = resolve("tests/fixtures/js/jest");
 
 async function withJestSession(
 	name: string,
@@ -23,7 +23,7 @@ describe("Jest pre-load breakpoints", () => {
 	test("pre-load breakpoint fires inside it() callback", () =>
 		withJestSession("test-jest-preload", async (session) => {
 			// Set breakpoint BEFORE Jest loads the test file
-			const bp = await session.setBreakpoint("tests/fixtures/jest/math.test.js", 5);
+			const bp = await session.setBreakpoint("tests/fixtures/js/jest/math.test.js", 5);
 			expect(bp.pending).toBe(true);
 
 			// Continue — Jest loads and runs the test file

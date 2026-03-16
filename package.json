@@ -43,7 +43,8 @@
     "@biomejs/biome": "^2.3.14",
     "@types/bun": "latest",
     "@vscode/debugprotocol": "^1.68.0",
-    "devtools-protocol": "^0.0.1581282"
+    "devtools-protocol": "^0.0.1581282",
+    "jest": "^30.3.0"
   },
   "peerDependencies": {
     "typescript": "^5"

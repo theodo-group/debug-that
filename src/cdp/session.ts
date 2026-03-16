@@ -28,6 +28,8 @@ import {
 	removeBlackbox as removeBlackboxImpl,
 } from "./session-blackbox.ts";
 import {
+	buildEntryCondition,
+	type DisabledBreakpoint,
 	getBreakableLocations as getBreakableLocationsImpl,
 	listBreakpoints as listBreakpointsImpl,
 	removeAllBreakpoints as removeAllBreakpointsImpl,
@@ -88,12 +90,12 @@ export class CdpSession extends BaseSession {
 	wsUrl: string | null = null;
 	onProcessExit: Set<() => void> = new Set();
 	blackboxPatterns: string[] = [];
-	disabledBreakpoints: Map<string, { breakpointId: string; meta: Record<string, unknown> }> =
-		new Map();
+	disabledBreakpoints: Map<string, DisabledBreakpoint> = new Map();
 	private _stateWaiters: Array<{
 		target: "idle" | "running" | "paused";
 		resolve: () => void;
 	}> = [];
+	private _pendingRebinds = new Set<Promise<void>>();
 	launchCommand: string[] | null = null;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
 	adapter: CdpDialect;
@@ -332,6 +334,7 @@ export class CdpSession extends BaseSession {
 		this.wsUrl = null;
 		this.scripts.clear();
 		this.disabledBreakpoints.clear();
+		this._pendingRebinds.clear();
 		this.sourceMapResolver.clear();
 	}
 
@@ -357,7 +360,7 @@ export class CdpSession extends BaseSession {
 		target: "idle" | "running" | "paused",
 		timeoutMs = STATE_WAIT_TIMEOUT_MS,
 	): Promise<void> {
-		if (this.state === target) return Promise.resolve();
+		if (this.state === target) return this.drainPendingRebinds();
 		return new Promise<void>((resolve, reject) => {
 			const waiter = { target, resolve };
 			this._stateWaiters.push(waiter);
@@ -371,9 +374,17 @@ export class CdpSession extends BaseSession {
 			const origResolve = waiter.resolve;
 			waiter.resolve = () => {
 				clearTimeout(timer);
-				origResolve();
+				// Drain pending rebinds before resolving — ensures breakpoints
+				// triggered by scriptParsed are fully bound before the caller
+				// inspects them (eliminates Bun.sleep race in tests).
+				this.drainPendingRebinds().then(origResolve);
 			};
 		});
+	}
+
+	private drainPendingRebinds(): Promise<void> {
+		if (this._pendingRebinds.size === 0) return Promise.resolve();
+		return Promise.all(this._pendingRebinds).then(() => {});
 	}
 
 	private _notifyStateWaiters(): void {
@@ -653,6 +664,14 @@ export class CdpSession extends BaseSession {
 		return null;
 	}
 
+	/** Find the scriptId for a given URL (exact match). */
+	findScriptIdByUrl(url: string): string | undefined {
+		for (const [sid, info] of this.scripts) {
+			if (info.url === url) return sid;
+		}
+		return undefined;
+	}
+
 	/**
 	 * Creates a promise that resolves when the next `Debugger.paused` event
 	 * fires, the process exits, or the timeout expires. Must be created
@@ -690,18 +709,6 @@ export class CdpSession extends BaseSession {
 			// Also resolve if the process exits during execution
 			this.onProcessExit.add(settle);
 		});
-	}
-
-	buildBreakpointCondition(condition?: string, hitCount?: number): string | undefined {
-		if (hitCount && hitCount > 0) {
-			const countVar = `__adbg_bp_count_${Date.now()}`;
-			const hitExpr = `(typeof ${countVar} === "undefined" ? (${countVar} = 1) : ++${countVar}) >= ${hitCount}`;
-			if (condition) {
-				return `(${hitExpr}) && (${condition})`;
-			}
-			return hitExpr;
-		}
-		return condition;
 	}
 
 	/**
@@ -743,24 +750,23 @@ export class CdpSession extends BaseSession {
 	}
 
 	/**
-	 * Re-bind pending breakpoints by scriptId for a newly parsed script.
+	 * Re-bind pending breakpoints/logpoints by scriptId for a newly parsed script.
 	 * Uses resolveToRuntime() to translate source line → compiled line,
 	 * which requires the source map to be loaded first.
 	 */
 	private async rebindPendingBreakpoints(scriptId: string, scriptUrl: string): Promise<void> {
 		if (!this.cdp) return;
 
-		const stripped = scriptUrl.startsWith("file://") ? scriptUrl.slice(7) : scriptUrl;
+		for (const entry of this.refs.listBreakpoints({ pending: true })) {
+			const meta = entry.meta;
+			// Use findScriptUrl for consistent URL matching (suffix + basename)
+			const matchedUrl = this.findScriptUrl(meta.url);
+			if (matchedUrl !== scriptUrl) continue;
 
-		for (const bp of this.listBreakpoints({ pending: true })) {
-			if (!stripped.endsWith(bp.url) && !scriptUrl.endsWith(bp.url)) continue;
+			const resolved = this.resolveToRuntime(meta.url, meta.line, 0);
+			const compiledLine = resolved?.runtime.line ?? meta.line;
 
-			const resolved = this.resolveToRuntime(bp.url, bp.line, 0);
-			const compiledLine = resolved?.runtime.line ?? bp.line;
-
-			const condition = bp.condition
-				? this.buildBreakpointCondition(bp.condition, bp.hitCount)
-				: undefined;
+			const condition = buildEntryCondition(entry);
 
 			try {
 				const r = await this.cdp.send("Debugger.setBreakpoint", {
@@ -768,16 +774,16 @@ export class CdpSession extends BaseSession {
 					condition,
 				});
 
-				this.refs.bind(bp.ref, r.breakpointId);
+				this.refs.bind(entry.ref, r.breakpointId);
 
 				this.daemonLogger.info(
 					"breakpoint.rebound",
-					`${bp.ref} bound by scriptId at ${scriptUrl}:${compiledLine}`,
+					`${entry.ref} bound by scriptId at ${scriptUrl}:${compiledLine}`,
 				);
 			} catch (err) {
 				this.daemonLogger.debug(
 					"breakpoint.rebind.failed",
-					`Failed to rebind ${bp.ref}: ${err instanceof Error ? err.message : String(err)}`,
+					`Failed to rebind ${entry.ref}: ${err instanceof Error ? err.message : String(err)}`,
 				);
 			}
 		}
@@ -854,12 +860,17 @@ export class CdpSession extends BaseSession {
 				const sourceMapURL = p.sourceMapURL;
 				if (sourceMapURL) {
 					info.sourceMapURL = sourceMapURL;
-					// Load source map, then rebind pending breakpoints (fire-and-forget).
-					// Chaining ensures toGenerated() works when rebinding.
-					this.sourceMapResolver
+				}
+				// Register the script BEFORE rebinding so findScriptUrl() works
+				this.scripts.set(scriptId, info);
+
+				if (sourceMapURL) {
+					// Load source map, then rebind pending breakpoints.
+					// Tracked in _pendingRebinds so waitForState() can drain them.
+					const rebindPromise = this.sourceMapResolver
 						.loadSourceMap(scriptId, info.url, sourceMapURL)
 						.then(() => {
-							if (p.url) this.rebindPendingBreakpoints(scriptId, p.url);
+							if (p.url) return this.rebindPendingBreakpoints(scriptId, p.url);
 						})
 						.catch((err) => {
 							this.daemonLogger.debug(
@@ -867,11 +878,14 @@ export class CdpSession extends BaseSession {
 								`Failed to load source map for ${info.url}: ${err instanceof Error ? err.message : String(err)}`,
 							);
 						});
+					this._pendingRebinds.add(rebindPromise);
+					rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
 				} else if (p.url) {
 					// No source map — rebind immediately
-					this.rebindPendingBreakpoints(scriptId, p.url);
+					const rebindPromise = this.rebindPendingBreakpoints(scriptId, p.url);
+					this._pendingRebinds.add(rebindPromise);
+					rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
 				}
-				this.scripts.set(scriptId, info);
 			}
 		});
 

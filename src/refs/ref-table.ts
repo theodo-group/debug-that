@@ -1,28 +1,87 @@
 export type RefType = "v" | "f" | "o" | "BP" | "LP" | "HS";
 
-export type RefEntry = BoundRefEntry | PendingRefEntry;
+// ── Typed meta for breakpoints and logpoints ──────────────────────
 
-export interface BoundRefEntry {
+export interface BreakpointMeta {
+	url: string;
+	line: number;
+	condition?: string;
+	hitCount?: number;
+	column?: number;
+	originalUrl?: string;
+	originalLine?: number;
+	generatedUrl?: string;
+	generatedLine?: number;
+	urlRegex?: string;
+}
+
+export interface LogpointMeta {
+	url: string;
+	line: number;
+	template: string;
+	condition?: string;
+	maxEmissions?: number;
+	column?: number;
+	originalUrl?: string;
+	originalLine?: number;
+}
+
+// ── Entry types ───────────────────────────────────────────────────
+
+export interface BoundBreakpointEntry {
 	ref: string;
-	type: RefType;
+	type: "BP";
+	pending?: false;
+	remoteId: string;
+	name?: string;
+	meta: BreakpointMeta;
+}
+
+export interface PendingBreakpointEntry {
+	ref: string;
+	type: "BP";
+	pending: true;
+	remoteId?: undefined;
+	name?: string;
+	meta: BreakpointMeta;
+}
+
+export type BreakpointEntry = BoundBreakpointEntry | PendingBreakpointEntry;
+
+export interface BoundLogpointEntry {
+	ref: string;
+	type: "LP";
+	pending?: false;
+	remoteId: string;
+	name?: string;
+	meta: LogpointMeta;
+}
+
+export interface PendingLogpointEntry {
+	ref: string;
+	type: "LP";
+	pending: true;
+	remoteId?: undefined;
+	name?: string;
+	meta: LogpointMeta;
+}
+
+export type LogpointEntry = BoundLogpointEntry | PendingLogpointEntry;
+
+/** Entries that are always bound (v, f, o, HS). No typed meta. */
+export interface SimpleEntry {
+	ref: string;
+	type: "v" | "f" | "o" | "HS";
 	pending?: false;
 	remoteId: string;
 	name?: string;
 	meta?: Record<string, unknown>;
 }
 
-export interface PendingRefEntry {
-	ref: string;
-	type: RefType;
-	pending: true;
-	remoteId?: undefined;
-	name?: string;
-	meta?: Record<string, unknown>;
-}
+export type RefEntry = BreakpointEntry | LogpointEntry | SimpleEntry;
+export type BoundEntry = BoundBreakpointEntry | BoundLogpointEntry | SimpleEntry;
 
-// TODO: discriminate meta by RefType so breakpoint meta fields (url, line,
-// condition, etc.) are typed instead of Record<string, unknown>. This would
-// eliminate all the `as string` / `as number` casts in session-breakpoints.ts.
+// ── Prefix map ────────────────────────────────────────────────────
 
 const PREFIXES: Record<RefType, string> = {
 	v: "@v",
@@ -32,6 +91,8 @@ const PREFIXES: Record<RefType, string> = {
 	LP: "LP#",
 	HS: "HS#",
 };
+
+// ── RefTable ──────────────────────────────────────────────────────
 
 export class RefTable {
 	private entries = new Map<string, RefEntry>();
@@ -44,33 +105,53 @@ export class RefTable {
 		HS: 1,
 	};
 
+	// ── Typed add methods ─────────────────────────────────────────
+
+	addBreakpoint(remoteId: string, meta: BreakpointMeta): string {
+		const ref = this.nextRef("BP");
+		const entry: BoundBreakpointEntry = { ref, type: "BP", remoteId, meta };
+		this.entries.set(ref, entry);
+		return ref;
+	}
+
+	addPendingBreakpoint(meta: BreakpointMeta): string {
+		const ref = this.nextRef("BP");
+		const entry: PendingBreakpointEntry = { ref, type: "BP", pending: true, meta };
+		this.entries.set(ref, entry);
+		return ref;
+	}
+
+	addLogpoint(remoteId: string, meta: LogpointMeta): string {
+		const ref = this.nextRef("LP");
+		const entry: BoundLogpointEntry = { ref, type: "LP", remoteId, meta };
+		this.entries.set(ref, entry);
+		return ref;
+	}
+
+	addPendingLogpoint(meta: LogpointMeta): string {
+		const ref = this.nextRef("LP");
+		const entry: PendingLogpointEntry = { ref, type: "LP", pending: true, meta };
+		this.entries.set(ref, entry);
+		return ref;
+	}
+
 	addVar(remoteId: string, name?: string, meta?: Record<string, unknown>): string {
-		return this.add("v", remoteId, name, meta);
+		return this.addSimple("v", remoteId, name, meta);
 	}
 
 	addFrame(remoteId: string, name?: string, meta?: Record<string, unknown>): string {
-		return this.add("f", remoteId, name, meta);
+		return this.addSimple("f", remoteId, name, meta);
 	}
 
 	addObject(remoteId: string, name?: string, meta?: Record<string, unknown>): string {
-		return this.add("o", remoteId, name, meta);
-	}
-
-	addBreakpoint(remoteId: string, meta?: Record<string, unknown>): string {
-		return this.add("BP", remoteId, undefined, meta);
-	}
-
-	addPendingBreakpoint(meta?: Record<string, unknown>): string {
-		return this.addPending("BP", meta);
-	}
-
-	addLogpoint(remoteId: string, meta?: Record<string, unknown>): string {
-		return this.add("LP", remoteId, undefined, meta);
+		return this.addSimple("o", remoteId, name, meta);
 	}
 
 	addHeapSnapshot(remoteId: string, meta?: Record<string, unknown>): string {
-		return this.add("HS", remoteId, undefined, meta);
+		return this.addSimple("HS", remoteId, undefined, meta);
 	}
+
+	// ── Lookup ────────────────────────────────────────────────────
 
 	resolve(ref: string): RefEntry | undefined {
 		return this.entries.get(ref);
@@ -81,22 +162,73 @@ export class RefTable {
 		return entry?.pending ? undefined : entry?.remoteId;
 	}
 
-	/**
-	 * List breakpoints and/or logpoints with typed filtering.
-	 * Overloads narrow the return type when pending is specified.
-	 */
-	listBreakpoints(options: { pending: true; logpoints?: boolean }): PendingRefEntry[];
-	listBreakpoints(options: { pending: false; logpoints?: boolean }): BoundRefEntry[];
-	listBreakpoints(options?: { pending?: boolean; logpoints?: boolean }): RefEntry[];
-	listBreakpoints(options?: { pending?: boolean; logpoints?: boolean }): RefEntry[] {
+	findByRemoteId(remoteId: string): BoundEntry | undefined {
+		for (const entry of this.entries.values()) {
+			if (!entry.pending && entry.remoteId === remoteId) return entry;
+		}
+		return undefined;
+	}
+
+	// ── Breakpoint/logpoint queries ───────────────────────────────
+
+	listBreakpoints(options: {
+		pending: true;
+		logpoints?: boolean;
+	}): (PendingBreakpointEntry | PendingLogpointEntry)[];
+	listBreakpoints(options: {
+		pending: false;
+		logpoints?: boolean;
+	}): (BoundBreakpointEntry | BoundLogpointEntry)[];
+	listBreakpoints(options?: {
+		pending?: boolean;
+		logpoints?: boolean;
+	}): (BreakpointEntry | LogpointEntry)[];
+	listBreakpoints(options?: {
+		pending?: boolean;
+		logpoints?: boolean;
+	}): (BreakpointEntry | LogpointEntry)[] {
 		const includeLP = options?.logpoints !== false;
-		const result: RefEntry[] = [];
+		const result: (BreakpointEntry | LogpointEntry)[] = [];
 		for (const entry of this.entries.values()) {
 			if (entry.type !== "BP" && !(includeLP && entry.type === "LP")) continue;
 			if (options?.pending !== undefined && !!entry.pending !== options.pending) continue;
-			result.push(entry);
+			result.push(entry as BreakpointEntry | LogpointEntry);
 		}
 		return result;
+	}
+
+	// ── Bind a pending entry ──────────────────────────────────────
+
+	bind(ref: string, remoteId: string): void {
+		const entry = this.entries.get(ref);
+		if (!entry) throw new Error(`Cannot bind unknown ref: ${ref}`);
+		if (entry.type === "BP") {
+			const bound: BoundBreakpointEntry = {
+				ref: entry.ref,
+				type: "BP",
+				remoteId,
+				name: entry.name,
+				meta: entry.meta,
+			};
+			this.entries.set(ref, bound);
+		} else if (entry.type === "LP") {
+			const bound: BoundLogpointEntry = {
+				ref: entry.ref,
+				type: "LP",
+				remoteId,
+				name: entry.name,
+				meta: entry.meta,
+			};
+			this.entries.set(ref, bound);
+		} else {
+			throw new Error(`Cannot bind non-breakpoint ref: ${ref}`);
+		}
+	}
+
+	// ── Cleanup ───────────────────────────────────────────────────
+
+	remove(ref: string): boolean {
+		return this.entries.delete(ref);
 	}
 
 	clearVolatile(): void {
@@ -123,6 +255,7 @@ export class RefTable {
 		this.counters = { v: 1, f: 0, o: 1, BP: 1, LP: 1, HS: 1 };
 	}
 
+	/** Raw list by type. Prefer listBreakpoints() for BP/LP. */
 	list(type: RefType): RefEntry[] {
 		const result: RefEntry[] = [];
 		for (const entry of this.entries.values()) {
@@ -133,59 +266,24 @@ export class RefTable {
 		return result;
 	}
 
-	findByRemoteId(remoteId: string): BoundRefEntry | undefined {
-		for (const entry of this.entries.values()) {
-			if (!entry.pending && entry.remoteId === remoteId) return entry;
-		}
-		return undefined;
+	// ── Private ───────────────────────────────────────────────────
+
+	private nextRef(type: RefType): string {
+		const num = this.counters[type];
+		this.counters[type] = num + 1;
+		return `${PREFIXES[type]}${num}`;
 	}
 
-	/** Bind a pending entry: set remoteId and clear pending flag. */
-	bind(ref: string, remoteId: string): void {
-		const entry = this.entries.get(ref);
-		if (!entry) return;
-		const bound: BoundRefEntry = {
-			ref: entry.ref,
-			type: entry.type,
-			remoteId,
-			name: entry.name,
-			meta: entry.meta,
-		};
-		this.entries.set(ref, bound);
-	}
-
-	remove(ref: string): boolean {
-		return this.entries.delete(ref);
-	}
-
-	private add(
-		type: RefType,
+	private addSimple(
+		type: "v" | "f" | "o" | "HS",
 		remoteId: string,
 		name?: string,
 		meta?: Record<string, unknown>,
 	): string {
-		const num = this.counters[type];
-		this.counters[type] = num + 1;
-		const ref = `${PREFIXES[type]}${num}`;
-		const entry: BoundRefEntry = { ref, type, remoteId };
-		if (name !== undefined) {
-			entry.name = name;
-		}
-		if (meta !== undefined) {
-			entry.meta = meta;
-		}
-		this.entries.set(ref, entry);
-		return ref;
-	}
-
-	private addPending(type: RefType, meta?: Record<string, unknown>): string {
-		const num = this.counters[type];
-		this.counters[type] = num + 1;
-		const ref = `${PREFIXES[type]}${num}`;
-		const entry: PendingRefEntry = { ref, type, pending: true };
-		if (meta !== undefined) {
-			entry.meta = meta;
-		}
+		const ref = this.nextRef(type);
+		const entry: SimpleEntry = { ref, type, remoteId };
+		if (name !== undefined) entry.name = name;
+		if (meta !== undefined) entry.meta = meta;
 		this.entries.set(ref, entry);
 		return ref;
 	}

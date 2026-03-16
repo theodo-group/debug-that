@@ -115,8 +115,8 @@ export async function restartFrameExecution(
 		if (!entry) {
 			throw new Error(`Unknown frame ref: ${frameRef}`);
 		}
-		if (entry.pending || !entry.remoteId) {
-			throw new Error(`Frame ref ${frameRef} is not bound`);
+		if (entry.pending) {
+			throw new Error(`Frame ref ${frameRef} is a pending breakpoint, not a frame`);
 		}
 		callFrameId = entry.remoteId;
 	} else {

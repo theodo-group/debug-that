@@ -31,7 +31,7 @@ export async function buildState(
 	let frameIndex = 0;
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
-		if (entry?.meta?.frameIndex !== undefined) {
+		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
 			frameIndex = entry.meta.frameIndex as number;
 		}
 	}

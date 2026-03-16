@@ -356,7 +356,7 @@ export class DapSession extends BaseSession {
 
 		// Register ref
 		const ref = this.refs.addBreakpoint(`dap-bp:${file}:${line}`, {
-			file,
+			url: file,
 			line,
 		});
 		entry.ref = ref;
@@ -425,7 +425,8 @@ export class DapSession extends BaseSession {
 		await this.getDap().send("setFunctionBreakpoints", { breakpoints: [] });
 	}
 
-	listBreakpoints(): Array<{
+	/** DAP breakpoints are always bound — the pending filter is ignored. */
+	listBreakpoints(_options?: { pending?: boolean }): Array<{
 		ref: string;
 		type: "BP" | "LP";
 		url: string;
@@ -470,7 +471,7 @@ export class DapSession extends BaseSession {
 		this.functionBreakpoints.push(entry);
 
 		const ref = this.refs.addBreakpoint(`dap-fn:${name}`, {
-			file: name,
+			url: name,
 			line: 0,
 		});
 		entry.ref = ref;

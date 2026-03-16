@@ -52,8 +52,7 @@ describe("Deferred breakpoint binding", () => {
 				const stack = session.getStack();
 				expect(stack[0]?.file).toContain("deferred-target.js");
 
-				// Breakpoint should no longer be pending (rebind is async, wait briefly)
-				await Bun.sleep(100);
+				// Breakpoint should no longer be pending (waitForState drains pending rebinds)
 				const list = session.listBreakpoints();
 				expect(list[0]?.pending).toBeFalsy();
 			},

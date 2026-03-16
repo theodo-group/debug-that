@@ -29,7 +29,7 @@ export async function evalExpression(
 	let frameIndex = 0;
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
-		if (entry?.meta?.frameIndex !== undefined) {
+		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
 			frameIndex = entry.meta.frameIndex as number;
 		}
 	}
@@ -154,7 +154,7 @@ export async function getVars(
 	let frameIndex = 0;
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
-		if (entry?.meta?.frameIndex !== undefined) {
+		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
 			frameIndex = entry.meta.frameIndex as number;
 		}
 	}
@@ -260,8 +260,8 @@ export async function getProps(
 		throw new Error(`Unknown ref: ${ref}`);
 	}
 
-	if (entry.pending || !entry.remoteId) {
-		throw new Error(`Ref ${ref} is not bound to a remote object`);
+	if (entry.pending) {
+		throw new Error(`Ref ${ref} is a pending breakpoint and has no properties`);
 	}
 
 	// Verify it's a valid object ID (not a primitive placeholder)
