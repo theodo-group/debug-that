@@ -76,8 +76,20 @@ const javaConfig: DapRuntimeConfig = {
 			mainClass = programArgs[1] ?? "";
 			remainingArgs = programArgs.slice(2);
 			classPaths = cpStr.split(delimiter);
-			// Derive source paths: for directories, use them directly; for JARs, skip
-			sourcePaths = classPaths.filter((p) => !p.endsWith(".jar"));
+			// Derive source paths: for directories, use them; for JARs, skip.
+			// Also detect Maven/Gradle layout: target/classes → src/main/java, src/test/java
+			sourcePaths = [];
+			for (const cp of classPaths) {
+				if (cp.endsWith(".jar")) continue;
+				sourcePaths.push(cp);
+				if (cp.endsWith("/target/classes") || cp.endsWith("/target/test-classes")) {
+					const projectRoot = cp.replace(/\/target\/(?:test-)?classes$/, "");
+					const mainSrc = join(projectRoot, "src", "main", "java");
+					const testSrc = join(projectRoot, "src", "test", "java");
+					if (existsSync(mainSrc)) sourcePaths.push(mainSrc);
+					if (existsSync(testSrc)) sourcePaths.push(testSrc);
+				}
+			}
 		} else {
 			const basename = program.split("/").pop() ?? program;
 			mainClass = basename.replace(/\.(java|class)$/, "");
@@ -181,6 +193,7 @@ export class DapSession extends BaseSession {
 	// Stored config (applied on launch/restart, and immediately if connected+paused)
 	private _remaps: [string, string][] = [];
 	private _symbolPaths: string[] = [];
+	private _sourcePaths: string[] = [];
 
 	// Promise that resolves when the adapter stops (for step/continue/pause)
 	private stoppedWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
@@ -237,10 +250,16 @@ export class DapSession extends BaseSession {
 
 		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
+		const builtArgs = config.buildLaunchArgs(program, programArgs, process.cwd());
 		const launchArgs: Record<string, unknown> = {
 			stopOnEntry: options.brk ?? true,
-			...config.buildLaunchArgs(program, programArgs, process.cwd()),
+			...builtArgs,
 		};
+
+		// Store source paths for short filename resolution in breakpoints
+		if (Array.isArray(builtArgs.sourcePaths)) {
+			this._sourcePaths = builtArgs.sourcePaths as string[];
+		}
 
 		// Apply stored source-map remappings
 		if (this._remaps.length > 0) {
@@ -371,7 +390,7 @@ export class DapSession extends BaseSession {
 		this._stackFrames = [];
 		this.refs.clearVolatile();
 
-		const waiter = this.createStoppedWaiter(30_000);
+		const waiter = this.createStoppedWaiter(500);
 		await this.getDap().send("continue", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
@@ -412,6 +431,9 @@ export class DapSession extends BaseSession {
 		options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
 	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
 		this.requireConnected();
+
+		// Resolve short filenames (e.g. "User.java") to full paths via sourcePaths
+		file = this.resolveSourceFile(file);
 
 		const entry: DapBreakpointEntry = {
 			ref: "", // will be set by RefTable
@@ -1373,6 +1395,32 @@ export class DapSession extends BaseSession {
 				entry.actualLine = bp.line ?? entry.line;
 			}
 		}
+	}
+
+	/**
+	 * Resolve a short filename (e.g. "User.java") to its full path by searching sourcePaths.
+	 * If already absolute, returns as-is. If ambiguous, throws with candidate list.
+	 */
+	private resolveSourceFile(file: string): string {
+		// Already a full path — use as-is
+		if (file.startsWith("/") || file.includes("/")) return file;
+		if (this._sourcePaths.length === 0) return file;
+
+		const matches: string[] = [];
+		for (const root of this._sourcePaths) {
+			for (const path of new Bun.Glob(`**/${file}`).scanSync(root)) {
+				matches.push(join(root, path));
+			}
+		}
+
+		if (matches.length === 0) return file; // not found — pass through, adapter may resolve
+		if (matches.length === 1) return matches[0] ?? file;
+
+		// Ambiguous — show candidates
+		const candidates = matches.map((m) => `  ${m}`).join("\n");
+		throw new Error(
+			`Ambiguous filename "${file}" — ${matches.length} matches found:\n${candidates}\nUse a full path instead.`,
+		);
 	}
 
 	private createStoppedWaiter(timeoutMs: number): Promise<void> {
