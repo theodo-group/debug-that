@@ -174,7 +174,9 @@ export interface Session {
 	restart(): Promise<LaunchResult>;
 
 	// ── Execution control ─────────────────────────────────────────
-	continue(): Promise<void>;
+	continue(
+		options?: { waitForStop: true; timeoutMs?: number } | { waitForStop?: false },
+	): Promise<void>;
 	step(mode: "over" | "into" | "out"): Promise<void>;
 	pause(): Promise<void>;
 	runTo(file: string, line: number): Promise<void>;

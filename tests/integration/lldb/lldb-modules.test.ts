@@ -27,6 +27,7 @@ describe.skipIf(!HAS_LLDB)("LLDB modules", () => {
 			await session.launch([HELLO_BINARY], { brk: true });
 			await session.setBreakpoint(HELLO_SOURCE, 4);
 			await session.continue();
+			await session.waitForStop(500, { rejectOnTimeout: true });
 
 			const modules = await session.getModules();
 			expect(modules.length).toBeGreaterThan(0);
@@ -56,6 +57,7 @@ describe.skipIf(!HAS_LLDB)("LLDB modules", () => {
 			await session.launch([HELLO_BINARY], { brk: true });
 			await session.setBreakpoint(HELLO_SOURCE, 4);
 			await session.continue();
+			await session.waitForStop(500, { rejectOnTimeout: true });
 
 			const modules = await session.getModules();
 			const first = modules[0]!;

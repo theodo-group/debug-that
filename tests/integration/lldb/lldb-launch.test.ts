@@ -8,6 +8,7 @@ const HAS_LLDB =
 
 const HELLO_BINARY = "tests/fixtures/c/hello";
 const HELLO_SOURCE = resolve("tests/fixtures/c/hello.c");
+const WAIT_FOR_STOP_TIMEOUT = 500;
 
 async function withDapSession(
 	name: string,
@@ -26,6 +27,7 @@ async function launchAtMain(session: DapSession): Promise<void> {
 	await session.launch([HELLO_BINARY], { brk: true });
 	await session.setBreakpoint(HELLO_SOURCE, 4); // int x = 42;
 	await session.continue();
+	await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 }
 
 describe.skipIf(!HAS_LLDB)("LLDB debugging", () => {
@@ -50,6 +52,7 @@ describe.skipIf(!HAS_LLDB)("LLDB debugging", () => {
 			const bp = await session.setBreakpoint(HELLO_SOURCE, 6);
 			expect(bp.ref).toMatch(/^BP#/);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const stack = session.getStack();
 			expect(stack[0]?.file).toContain("hello.c");
@@ -106,6 +109,7 @@ describe.skipIf(!HAS_LLDB)("LLDB debugging", () => {
 		withDapSession("lldb-test-continue", async (session) => {
 			await launchAtMain(session);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT);
 			expect(session.getStatus().state).toBe("idle");
 		}));
 

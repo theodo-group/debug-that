@@ -13,6 +13,7 @@ async function launchAtPause(session: DapSession): Promise<void> {
 	await session.launch([EXPR_JAVA], { brk: true });
 	await session.setBreakpoint(EXPR_JAVA, BP_LINE);
 	await session.continue();
+	await session.waitForStop(500, { rejectOnTimeout: true });
 }
 
 describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => {

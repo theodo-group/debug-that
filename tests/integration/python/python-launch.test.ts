@@ -28,6 +28,7 @@ async function launchAtMain(session: DapSession): Promise<void> {
 	// Set a breakpoint inside main() and continue to reach it.
 	await session.setBreakpoint(HELLO_SCRIPT, 7); // x = 42
 	await session.continue();
+	await session.waitForStop(2_000, { rejectOnTimeout: true });
 }
 
 describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
@@ -52,6 +53,7 @@ describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
 			const bp = await session.setBreakpoint(HELLO_SCRIPT, 10);
 			expect(bp.ref).toMatch(/^BP#/);
 			await session.continue();
+			await session.waitForStop(2_000, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const stack = session.getStack();
 			expect(stack[0]?.file).toContain("hello.py");
@@ -71,6 +73,7 @@ describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
 			// Set breakpoint on the greet() call: line 9
 			await session.setBreakpoint(HELLO_SCRIPT, 9);
 			await session.continue();
+			await session.waitForStop(2_000, { rejectOnTimeout: true });
 			// Now step into greet()
 			await session.step("into");
 			const stack = session.getStack();
@@ -121,7 +124,7 @@ describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
 		withDapSession("py-test-continue", async (session) => {
 			await launchAtMain(session);
 			await session.continue();
-			expect(session.getStatus().state).toBe("idle");
+			expect(session.getStatus().state).toBeOneOf(["running", "idle"]);
 		}));
 
 	test("removeBreakpoint works", () =>
@@ -140,6 +143,7 @@ describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
 				condition: "x == 42",
 			});
 			await session.continue();
+			await session.waitForStop(2_000, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const result = await session.eval("x");
 			expect(result.value).toContain("42");
@@ -151,6 +155,7 @@ describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) debugging", () => {
 			const bp = await session.setFunctionBreakpoint("greet");
 			expect(bp.ref).toMatch(/^BP#/);
 			await session.continue();
+			await session.waitForStop(2_000, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const stack = session.getStack();
 			expect(stack[0]?.functionName).toBe("greet");

@@ -13,12 +13,14 @@ async function launchAtStaticPause(session: DapSession): Promise<void> {
 	await session.launch([EDGE_JAVA], { brk: true });
 	await session.setBreakpoint(EDGE_JAVA, STATIC_BP);
 	await session.continue();
+	await session.waitForStop(500, { rejectOnTimeout: true });
 }
 
 async function launchAtInstancePause(session: DapSession): Promise<void> {
 	await session.launch([EDGE_JAVA], { brk: true });
 	await session.setBreakpoint(EDGE_JAVA, INSTANCE_BP);
 	await session.continue();
+	await session.waitForStop(500, { rejectOnTimeout: true });
 }
 
 describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {

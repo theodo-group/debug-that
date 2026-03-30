@@ -552,7 +552,9 @@ export class CdpSession extends BaseSession {
 	}
 
 	// Execution control
-	async continue(): Promise<void> {
+	async continue(
+		_options?: { waitForStop: true; timeoutMs?: number } | { waitForStop?: false },
+	): Promise<void> {
 		return continueExecution(this);
 	}
 

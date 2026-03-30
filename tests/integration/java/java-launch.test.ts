@@ -7,6 +7,7 @@ import { HAS_JAVA, withJavaSession } from "./helpers.ts";
 const FIXTURES_DIR = resolve("tests/fixtures/java");
 const HELLO_JAVA = resolve(FIXTURES_DIR, "Hello.java");
 const EXCEPTION_JAVA = resolve(FIXTURES_DIR, "ExceptionApp.java");
+const WAIT_FOR_STOP_TIMEOUT = 500;
 
 /** Launch and pause at the first executable line of main() (line 8: int x = 42). */
 async function launchAtMain(session: DapSession): Promise<void> {
@@ -47,6 +48,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 		withJavaSession("java-test-continue", async (session) => {
 			await launchAtMain(session);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT);
 			expect(session.getStatus().state).toBe("idle");
 		}));
 
@@ -65,6 +67,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 			const bp = await session.setBreakpoint(HELLO_JAVA, 10);
 			expect(bp.ref).toMatch(/^BP#/);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const stack = session.getStack();
 			expect(stack[0]?.file).toContain("Hello.java");
@@ -94,6 +97,8 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 			await session.launch([HELLO_JAVA], { brk: true });
 			await session.setBreakpoint(HELLO_JAVA, 9, { condition: "x == 42" });
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
+
 			expect(session.getStatus().state).toBe("paused");
 			const result = await session.eval("x");
 			expect(result.value).toContain("42");
@@ -121,6 +126,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 			await session.launch([HELLO_JAVA], { brk: true });
 			await session.setBreakpoint(HELLO_JAVA, 10);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 			await session.step("into");
 			const stack = session.getStack();
 			expect(stack[0]?.functionName).toContain("greet");
@@ -131,6 +137,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 			await session.launch([HELLO_JAVA], { brk: true });
 			await session.setBreakpoint(HELLO_JAVA, 3);
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 			await session.step("out");
 			const stack = session.getStack();
 			expect(stack[0]?.functionName).toContain("main");
@@ -202,6 +209,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging (launch)", () => {
 			await session.launch([EXCEPTION_JAVA], { brk: true });
 			await session.setExceptionPause("all");
 			await session.continue();
+			await session.waitForStop(WAIT_FOR_STOP_TIMEOUT, { rejectOnTimeout: true });
 			expect(session.getStatus().state).toBe("paused");
 			const stack = session.getStack();
 			expect(stack[0]?.file).toContain("ExceptionApp.java");
