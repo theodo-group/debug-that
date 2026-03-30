@@ -12,6 +12,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.*;
 
@@ -173,11 +174,29 @@ public class CompilingEvaluationProvider implements IEvaluationProvider {
         // Compile — try as return expression first, then as void statement
         Map<String, byte[]> compiled = compileSource(source, className, classpath);
         if (compiled == null) {
-            // Retry as void statement (expression; return null;)
-            String voidSource = generateVoidSource(processedExpr, className, locals, thisObj);
-            compiled = compileSource(voidSource, className, classpath);
-            if (compiled == null) {
-                throw new RuntimeException(getCompileError(source, className, classpath));
+            // Check if failure is due to private field access — rewrite with reflection
+            String compileErr = getCompileError(source, className, classpath);
+            if (compileErr.contains("not visible")) {
+                String reflExpr = rewritePrivateFieldAccess(processedExpr, locals, localValues, thisObj);
+                if (reflExpr != null && !reflExpr.equals(processedExpr)) {
+                    String reflSource = generateSourceWithReflectionHelper(reflExpr, className, locals, thisObj);
+                    compiled = compileSource(reflSource, className, classpath);
+                    if (compiled == null) {
+                        // __dbg_get returns Object — void fallback unlikely, but try
+                        String reflVoidSource = generateVoidSource(reflExpr, className, locals, thisObj);
+                        compiled = compileSource(reflVoidSource, className, classpath);
+                    }
+                }
+                if (compiled == null) {
+                    throw new RuntimeException(compileErr);
+                }
+            } else {
+                // Not a visibility issue — try void statement
+                String voidSource = generateVoidSource(processedExpr, className, locals, thisObj);
+                compiled = compileSource(voidSource, className, classpath);
+                if (compiled == null) {
+                    throw new RuntimeException(compileErr);
+                }
             }
         }
 
@@ -217,6 +236,102 @@ public class CompilingEvaluationProvider implements IEvaluationProvider {
     /** Check if expression references a variable name (word boundary match). */
     private boolean expressionReferencesVariable(String expression, String varName) {
         return Pattern.compile("\\b" + Pattern.quote(varName) + "\\b").matcher(expression).find();
+    }
+
+    // ── Private field access rewriting ──
+
+    /**
+     * When compilation fails with "not visible", rewrite obj.field accesses
+     * to use reflection: __dbg_get(obj, "field").
+     * Works for both this-context (__dbg_this.field) and local variables (obj.field).
+     */
+    /** Map of primitive type → boxed wrapper for casts in reflection results. */
+    private static final Map<String, String> PRIMITIVE_TO_BOXED = Map.of(
+            "boolean", "Boolean", "byte", "Byte", "char", "Character",
+            "short", "Short", "int", "Integer", "long", "Long",
+            "float", "Float", "double", "Double");
+
+    private String rewritePrivateFieldAccess(String expression, List<LocalVariable> locals,
+            List<Value> localValues, ObjectReference thisObj) {
+        // Build a map of parameter name → (field name → field type name)
+        Map<String, Map<String, String>> paramFields = new HashMap<>();
+
+        // Add locals that are object references
+        for (int i = 0; i < locals.size(); i++) {
+            Value val = localValues.get(i);
+            if (val instanceof ObjectReference) {
+                Map<String, String> fieldTypes = new HashMap<>();
+                for (Field f : ((ObjectReference) val).referenceType().allFields()) {
+                    fieldTypes.put(f.name(), f.typeName());
+                }
+                paramFields.put(locals.get(i).name(), fieldTypes);
+            }
+        }
+
+        // Add this-context
+        if (thisObj != null) {
+            Map<String, String> fieldTypes = new HashMap<>();
+            for (Field f : thisObj.referenceType().allFields()) {
+                fieldTypes.put(f.name(), f.typeName());
+            }
+            paramFields.put(THIS_PARAM, fieldTypes);
+        }
+
+        if (paramFields.isEmpty()) return null;
+
+        // Build pattern: (paramName1|paramName2|...).identifier (not followed by '(')
+        String paramAlternation = paramFields.keySet().stream()
+                .map(Pattern::quote)
+                .collect(Collectors.joining("|"));
+        Pattern fieldAccessPattern = Pattern.compile(
+                "\\b(" + paramAlternation + ")\\.([a-zA-Z_$][a-zA-Z0-9_$]*)(?!\\s*\\()");
+
+        Matcher m = fieldAccessPattern.matcher(expression);
+        StringBuilder sb = new StringBuilder();
+        boolean changed = false;
+        while (m.find()) {
+            String paramName = m.group(1);
+            String fieldName = m.group(2);
+            Map<String, String> fields = paramFields.get(paramName);
+            if (fields != null && fields.containsKey(fieldName)) {
+                String typeName = fields.get(fieldName);
+                String castType = PRIMITIVE_TO_BOXED.getOrDefault(typeName, typeName);
+                String replacement = "((" + castType + ")__dbg_get("
+                        + Matcher.quoteReplacement(paramName) + ", \"" + fieldName + "\"))";
+                m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+                changed = true;
+            }
+        }
+        if (!changed) return null;
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /** Generate source with the __dbg_get reflection helper included. */
+    private String generateSourceWithReflectionHelper(String expression, String className,
+            List<LocalVariable> locals, ObjectReference thisObj) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("public class ").append(className).append(" {\n");
+        sb.append("    public static Object __eval(");
+        sb.append(buildParamList(locals, thisObj));
+        sb.append(") throws Throwable {\n");
+        sb.append("        return (").append(expression).append(");\n");
+        sb.append("    }\n");
+        sb.append("    private static Object __dbg_get(Object obj, String fieldName) throws Throwable {\n");
+        sb.append("        Class<?> cls = obj.getClass();\n");
+        sb.append("        while (cls != null) {\n");
+        sb.append("            try {\n");
+        sb.append("                java.lang.reflect.Field f = cls.getDeclaredField(fieldName);\n");
+        sb.append("                f.setAccessible(true);\n");
+        sb.append("                return f.get(obj);\n");
+        sb.append("            } catch (NoSuchFieldException e) {\n");
+        sb.append("                cls = cls.getSuperclass();\n");
+        sb.append("            }\n");
+        sb.append("        }\n");
+        sb.append("        throw new NoSuchFieldException(fieldName);\n");
+        sb.append("    }\n");
+        sb.append("}\n");
+        return sb.toString();
     }
 
     private String buildParamList(List<LocalVariable> locals, ObjectReference thisObj) {

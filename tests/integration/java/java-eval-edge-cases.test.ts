@@ -178,36 +178,25 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 
 	// ── 'this' context in instance method ──
 
-	// KNOWN LIMITATION: private fields not accessible from eval class
-	test("this.secret fails — private field not visible from eval class", () =>
+	test("this.secret — private field via reflection fallback", () =>
 		withJavaSession("edge-this-field", async (session) => {
 			await launchAtInstancePause(session);
-			try {
-				await session.eval("this.secret");
-				expect(true).toBe(false); // should not reach
-			} catch (e: any) {
-				expect(e.message).toContain("not visible");
-			}
+			const result = await session.eval("this.secret");
+			expect(result.value).toContain("hidden");
 		}));
 
-	// Workaround: use getter method instead of private field
-	test("this.getSecret() works as workaround for private fields", () =>
+	test("this.getSecret() — public getter", () =>
 		withJavaSession("edge-this-method", async (session) => {
 			await launchAtInstancePause(session);
 			const result = await session.eval("this.getSecret()");
 			expect(result.value).toContain("hidden");
 		}));
 
-	// KNOWN LIMITATION: private field access blocks the whole expression
-	test("this.count + local fails — private field", () =>
+	test("this.count + local — private field + local via reflection fallback", () =>
 		withJavaSession("edge-this-plus-local", async (session) => {
 			await launchAtInstancePause(session);
-			try {
-				await session.eval("this.count + local");
-				expect(true).toBe(false);
-			} catch (e: any) {
-				expect(e.message).toContain("not visible");
-			}
+			const result = await session.eval("this.count + local");
+			expect(result.value).toContain("104");
 		}));
 
 	// ── Variable name that contains 'this' ──
@@ -277,18 +266,12 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 			expect(result.value).toContain("42");
 		}));
 
-	// ── Private field access from outside ──
+	// ── Private field access from outside via reflection fallback ──
 
-	test("private field: obj.secret (should fail — not accessible)", () =>
+	test("private field on local: obj.secret via reflection", () =>
 		withJavaSession("edge-private", async (session) => {
 			await launchAtStaticPause(session);
-			try {
-				await session.eval("obj.secret");
-				// If ECJ compiles this, it means the eval class has access (unlikely)
-				expect(true).toBe(true);
-			} catch (e: any) {
-				// Expected: compilation error about private access
-				expect(e.message).toContain("evaluate");
-			}
+			const result = await session.eval("obj.secret");
+			expect(result.value).toContain("hidden");
 		}));
 });
