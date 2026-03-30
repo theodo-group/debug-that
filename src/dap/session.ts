@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
-import { BaseSession } from "../session/base-session.ts";
+import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
@@ -149,7 +149,8 @@ export class DapSession extends BaseSession {
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
-			await this.waitForStop(5_000);
+			await this.waitUntilStopped({ timeoutMs: 5_000 });
+			if (this.isPaused()) await this.fetchStackTrace();
 			if (!this.isPaused()) {
 				const errors = this.consoleMessages
 					.filter((m) => m.level === "error")
@@ -203,7 +204,7 @@ export class DapSession extends BaseSession {
 		await attachPromise;
 
 		// Wait briefly for initial stop
-		await this.waitForStop(5_000).catch(() => {
+		await this.waitUntilStopped({ timeoutMs: 5_000 }).catch(() => {
 			// Some adapters don't stop immediately on attach
 		});
 
@@ -249,9 +250,7 @@ export class DapSession extends BaseSession {
 
 	// ── Execution control ─────────────────────────────────────────────
 
-	async continue(
-		options?: { waitForStop: true; timeoutMs?: number } | { waitForStop?: false },
-	): Promise<void> {
+	async continue(options?: WaitForStopOptions): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -260,15 +259,14 @@ export class DapSession extends BaseSession {
 		this._stackFrames = [];
 		this.refs.clearVolatile();
 
-		const wait = options?.waitForStop === true;
-		const timeoutMs = (options as { timeoutMs?: number })?.timeoutMs ?? 30_000;
-		const waiter = wait ? this.createStoppedWaiter(timeoutMs) : undefined;
+		const waiter =
+			options?.waitForStop === true ? this.waitUntilStopped(options) : Promise.resolve();
 		await this.getDap().send("continue", { threadId: this._threadId });
-		if (waiter) await waiter;
+		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
 
-	async step(mode: "over" | "into" | "out"): Promise<void> {
+	async step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -276,7 +274,8 @@ export class DapSession extends BaseSession {
 		this.pauseInfo = null;
 		this.refs.clearVolatile();
 
-		const waiter = this.createStoppedWaiter(30_000);
+		const waiter =
+			options?.waitForStop !== false ? this.waitUntilStopped(options) : Promise.resolve();
 		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
 		await this.getDap().send(command, { threadId: this._threadId });
 		await waiter;
@@ -289,7 +288,7 @@ export class DapSession extends BaseSession {
 			throw new Error("Cannot pause: target is not running");
 		}
 
-		const waiter = this.createStoppedWaiter(5_000);
+		const waiter = this.waitUntilStopped({ timeoutMs: 5_000 });
 		await this.getDap().send("pause", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
@@ -951,8 +950,7 @@ export class DapSession extends BaseSession {
 		const tempBp = await this.setBreakpoint(file, line);
 
 		try {
-			await this.continue();
-			await this.waitForStop(30_000, { rejectOnTimeout: true });
+			await this.continue({ waitForStop: true, throwOnTimeout: true });
 		} finally {
 			// Remove the temporary breakpoint regardless of outcome
 			try {
@@ -1295,15 +1293,20 @@ export class DapSession extends BaseSession {
 		);
 	}
 
-	private createStoppedWaiter(
-		timeoutMs: number,
-		{ rejectOnTimeout = false }: { rejectOnTimeout?: boolean } = {},
-	): Promise<void> {
+	/**
+	 * Create a promise that resolves when the debuggee stops (breakpoint, step complete,
+	 * exception, or program exit). Used by continue/step/pause/launch/attach.
+	 */
+	public waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
+		if (this.isPaused()) return Promise.resolve();
+
+		const timeoutMs = options?.timeoutMs ?? 30_000;
+		const throwOnTimeout = options?.throwOnTimeout ?? false;
+
 		return new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.stoppedWaiter = null;
-				// Don't reject — the process is still running, just resolve
-				if (rejectOnTimeout) {
+				if (throwOnTimeout) {
 					reject(new Error(`Timed out waiting for stopped event (after ${timeoutMs}ms)`));
 				} else {
 					resolve();
@@ -1343,18 +1346,5 @@ export class DapSession extends BaseSession {
 			};
 			dap.on("initialized", handler);
 		});
-	}
-
-	public async waitForStop(
-		timeoutMs: number,
-		{ rejectOnTimeout = false }: { rejectOnTimeout?: boolean } = {},
-	): Promise<void> {
-		if (!this.isPaused()) {
-			await this.createStoppedWaiter(timeoutMs, { rejectOnTimeout });
-		}
-		// Fetch the stack trace if paused and not yet loaded
-		if (this.isPaused() && this._stackFrames.length === 0) {
-			await this.fetchStackTrace();
-		}
 	}
 }

@@ -12,8 +12,7 @@ const BP_LINE = 26; // System.out.println("pause here")
 async function launchAtPause(session: DapSession): Promise<void> {
 	await session.launch([EXPR_JAVA], { brk: true });
 	await session.setBreakpoint(EXPR_JAVA, BP_LINE);
-	await session.continue();
-	await session.waitForStop(500, { rejectOnTimeout: true });
+	await session.continue({ waitForStop: true, timeoutMs: 500, throwOnTimeout: true });
 }
 
 describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => {

@@ -24,8 +24,7 @@ async function withDapSession(
 async function launchAtMain(session: DapSession): Promise<void> {
 	await session.launch([HELLO_SCRIPT], { brk: true });
 	await session.setBreakpoint(HELLO_SCRIPT, 7); // x = 42
-	await session.continue();
-	await session.waitForStop(2_000, { rejectOnTimeout: true });
+	await session.continue({ waitForStop: true, timeoutMs: 2_000, throwOnTimeout: true });
 }
 
 describe.skipIf(!HAS_DEBUGPY)("Python run-to", () => {

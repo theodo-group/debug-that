@@ -4,7 +4,7 @@ import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { createLogger, type Logger } from "../logger/index.ts";
-import { BaseSession } from "../session/base-session.ts";
+import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
 	AttachResult,
@@ -552,13 +552,11 @@ export class CdpSession extends BaseSession {
 	}
 
 	// Execution control
-	async continue(
-		_options?: { waitForStop: true; timeoutMs?: number } | { waitForStop?: false },
-	): Promise<void> {
+	async continue(_options?: WaitForStopOptions): Promise<void> {
 		return continueExecution(this);
 	}
 
-	async step(mode: "over" | "into" | "out"): Promise<void> {
+	async step(mode: "over" | "into" | "out", _options?: WaitForStopOptions): Promise<void> {
 		return stepExecution(this, mode);
 	}
 
