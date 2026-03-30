@@ -15,6 +15,7 @@ const JAVA_DEPS: Record<string, string> = {
 	"reactive-streams-1.0.4.jar":
 		"org/reactivestreams/reactive-streams/1.0.4/reactive-streams-1.0.4.jar",
 	"commons-io-2.15.1.jar": "commons-io/commons-io/2.15.1/commons-io-2.15.1.jar",
+	"ecj-3.40.0.jar": "org/eclipse/jdt/ecj/3.40.0/ecj-3.40.0.jar",
 };
 
 const JAVA_DEP_NAMES = Object.keys(JAVA_DEPS);
@@ -75,8 +76,8 @@ export const javaInstaller: AdapterInstaller = {
 		const stderr = javaVersionResult.stderr.toString().trim();
 		const versionMatch = stderr.match(/version "(\d+)/);
 		const version = versionMatch?.[1] ? parseInt(versionMatch[1], 10) : 0;
-		if (version < 11) {
-			throw new Error(`Java 11+ required (found: ${stderr.split("\n")[0]?.trim() ?? "none"})`);
+		if (version < 17) {
+			throw new Error(`Java 17+ required (found: ${stderr.split("\n")[0]?.trim() ?? "none"})`);
 		}
 
 		const dir = getJavaAdapterDir();
@@ -103,7 +104,7 @@ export const javaInstaller: AdapterInstaller = {
 		mkdirSync(classesDir, { recursive: true });
 
 		const sourceFiles = await extractAdapterSources(dir);
-		await $`javac -d ${classesDir} -cp ${cp} -source 11 -target 11 ${sourceFiles}`;
+		await $`javac -d ${classesDir} -cp ${cp} -source 17 -target 17 ${sourceFiles}`;
 
 		log("  Adapter compiled.");
 	},
