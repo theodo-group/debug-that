@@ -121,7 +121,7 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 	// ── Nested map access ──
 	// KNOWN LIMITATION: generics are erased by JDI — nested.get() returns Object, not List<Integer>
 
-	test("nested map with cast: ((java.util.List) nested.get(\"key\")).get(0)", () =>
+	test('nested map with cast: ((java.util.List) nested.get("key")).get(0)', () =>
 		withJavaSession("edge-nested", async (session) => {
 			await launchAtStaticPause(session);
 			const result = await session.eval('((java.util.List) nested.get("key")).get(0)');
@@ -152,7 +152,7 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 
 	// ── String operations ──
 
-	test("string format: String.format(\"%s=%d\", \"x\", x)", () =>
+	test('string format: String.format("%s=%d", "x", x)', () =>
 		withJavaSession("edge-format", async (session) => {
 			await launchAtStaticPause(session);
 			const result = await session.eval('String.format("%s=%d", "x", x)');
@@ -216,8 +216,8 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 			try {
 				await session.eval("x +");
 				expect(true).toBe(false); // should not reach
-			} catch (e: any) {
-				expect(e.message).toContain("evaluate");
+			} catch (e) {
+				expect((e as Error).message).toContain("evaluate");
 			}
 		}));
 
@@ -227,8 +227,8 @@ describe.skipIf(!HAS_JAVA)("Java eval edge cases", () => {
 			try {
 				await session.eval("nonExistentVar");
 				expect(true).toBe(false);
-			} catch (e: any) {
-				expect(e.message).toContain("evaluate");
+			} catch (e) {
+				expect((e as Error).message).toContain("evaluate");
 			}
 		}));
 

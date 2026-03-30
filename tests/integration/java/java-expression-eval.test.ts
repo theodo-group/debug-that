@@ -50,7 +50,7 @@ describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => 
 			expect(result.value).toContain("el");
 		}));
 
-	test("method call on object: obj.greet(\"hi\")", () =>
+	test('method call on object: obj.greet("hi")', () =>
 		withJavaSession("java-expr-greet", async (session) => {
 			await launchAtPause(session);
 			const result = await session.eval('obj.greet("hi")');
@@ -68,7 +68,7 @@ describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => 
 
 	// ── Ternary ──
 
-	test("ternary: a > b ? \"yes\" : \"no\"", () =>
+	test('ternary: a > b ? "yes" : "no"', () =>
 		withJavaSession("java-expr-ternary", async (session) => {
 			await launchAtPause(session);
 			const result = await session.eval('a > b ? "yes" : "no"');
@@ -77,7 +77,7 @@ describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => 
 
 	// ── Constructor ──
 
-	test("new object: new String(\"hi\")", () =>
+	test('new object: new String("hi")', () =>
 		withJavaSession("java-expr-new", async (session) => {
 			await launchAtPause(session);
 			const result = await session.eval('new String("hi")');
@@ -102,7 +102,7 @@ describe.skipIf(!HAS_JAVA)("Java expression evaluation (compile+inject)", () => 
 
 	// ── String concatenation ──
 
-	test("string concat: greeting + \" \" + obj.getName()", () =>
+	test('string concat: greeting + " " + obj.getName()', () =>
 		withJavaSession("java-expr-concat", async (session) => {
 			await launchAtPause(session);
 			const result = await session.eval('greeting + " " + obj.getName()');
