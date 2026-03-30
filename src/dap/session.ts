@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
 import { BaseSession } from "../session/base-session.ts";
@@ -63,19 +63,40 @@ const javaConfig: DapRuntimeConfig = {
 		return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
 	},
 	buildLaunchArgs(program, programArgs, _cwd) {
-		const basename = program.split("/").pop() ?? program;
-		const mainClass = basename.replace(/\.(java|class)$/, "");
-		// classPaths must point to where .class files live (typically same dir as .java)
-		const programDir = program.includes("/")
-			? program.substring(0, program.lastIndexOf("/"))
-			: _cwd;
+		// Support: dbg launch --runtime java -cp <classpath> <mainClass> [args...]
+		// The -cp flag mirrors the JDK `java -cp` convention.
+		let mainClass: string;
+		let classPaths: string[];
+		let sourcePaths: string[];
+		let remainingArgs: string[];
+
+		if (program === "-cp" || program === "-classpath") {
+			// -cp <classpath> <mainClass> [args...]
+			const cpStr = programArgs[0] ?? "";
+			mainClass = programArgs[1] ?? "";
+			remainingArgs = programArgs.slice(2);
+			classPaths = cpStr.split(delimiter);
+			// Derive source paths: for directories, use them directly; for JARs, skip
+			sourcePaths = classPaths.filter((p) => !p.endsWith(".jar"));
+		} else {
+			const basename = program.split("/").pop() ?? program;
+			mainClass = basename.replace(/\.(java|class)$/, "");
+			// classPaths must point to where .class files live (typically same dir as .java)
+			const programDir = program.includes("/")
+				? program.substring(0, program.lastIndexOf("/"))
+				: _cwd;
+			classPaths = [programDir];
+			sourcePaths = [programDir];
+			remainingArgs = programArgs;
+		}
+
 		return {
 			mainClass,
-			classPaths: [programDir],
-			cwd: programDir,
-			sourcePaths: [programDir],
+			classPaths,
+			cwd: _cwd,
+			sourcePaths,
 			stopOnEntry: true,
-			...(programArgs.length > 0 ? { args: programArgs.join(" ") } : {}),
+			...(remainingArgs.length > 0 ? { args: remainingArgs.join(" ") } : {}),
 		};
 	},
 	parseAttachTarget(target) {
