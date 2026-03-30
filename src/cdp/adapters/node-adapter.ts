@@ -114,7 +114,7 @@ export class NodeAdapter implements CdpDialect {
 			skips < MAX_INTERNAL_PAUSE_SKIPS
 		) {
 			skips++;
-			const waiter = session.createPauseWaiter(5_000);
+			const waiter = session.waitUntilStopped();
 			await session.cdp.send("Debugger.resume");
 			await waiter;
 		}

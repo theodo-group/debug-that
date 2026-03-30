@@ -1,10 +1,11 @@
+import type { WaitForStopOptions } from "@/session/base-session.ts";
 import { escapeRegex } from "../util/escape-regex.ts";
 import type { CdpSession } from "./session.ts";
 
-/** Grace period to wait for an immediate re-pause (e.g. breakpoint on next line). */
-const CONTINUE_GRACE_MS = 500;
-
-export async function continueExecution(session: CdpSession): Promise<void> {
+export async function continueExecution(
+	session: CdpSession,
+	options?: WaitForStopOptions,
+): Promise<void> {
 	if (!session.isPaused()) {
 		throw new Error("Cannot continue: process is not paused");
 	}
@@ -13,7 +14,8 @@ export async function continueExecution(session: CdpSession): Promise<void> {
 	}
 	// Wait briefly for an immediate re-pause (breakpoint hit right away),
 	// but don't block for 30s waiting for the next pause like step does.
-	const waiter = session.createPauseWaiter(CONTINUE_GRACE_MS);
+	const waiter =
+		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
 	await session.cdp.send("Debugger.resume");
 	await waiter;
 }
@@ -21,6 +23,7 @@ export async function continueExecution(session: CdpSession): Promise<void> {
 export async function stepExecution(
 	session: CdpSession,
 	mode: "over" | "into" | "out",
+	options?: WaitForStopOptions,
 ): Promise<void> {
 	if (!session.isPaused()) {
 		throw new Error("Cannot step: process is not paused");
@@ -35,7 +38,8 @@ export async function stepExecution(
 		out: "Debugger.stepOut",
 	} as const;
 
-	const waiter = session.createPauseWaiter();
+	const waiter =
+		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
 	await session.cdp.send(methodMap[mode]);
 	await waiter;
 }
@@ -47,7 +51,7 @@ export async function pauseExecution(session: CdpSession): Promise<void> {
 	if (!session.cdp) {
 		throw new Error("Cannot pause: no CDP connection");
 	}
-	const waiter = session.createPauseWaiter();
+	const waiter = session.waitUntilStopped({ throwOnTimeout: true });
 	await session.cdp.send("Debugger.pause");
 	await waiter;
 }
@@ -84,7 +88,7 @@ export async function runToLocation(
 	const breakpointId = bpResult.breakpointId;
 
 	// Resume execution — set up waiter before sending resume
-	const waiter = session.createPauseWaiter();
+	const waiter = session.waitUntilStopped();
 	await session.cdp.send("Debugger.resume");
 	await waiter;
 
@@ -127,7 +131,7 @@ export async function restartFrameExecution(
 		callFrameId = topFrame.callFrameId;
 	}
 
-	const waiter = session.createPauseWaiter();
+	const waiter = session.waitUntilStopped();
 	await session.cdp.send("Debugger.restartFrame", { callFrameId, mode: "StepInto" });
 	await waiter;
 

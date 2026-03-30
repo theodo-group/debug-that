@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
-import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
+import {
+	INITIALIZED_TIMEOUT_MS,
+	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+	WAIT_PAUSE_TIMEOUT_MS,
+} from "../constants.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
@@ -149,7 +153,7 @@ export class DapSession extends BaseSession {
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
-			await this.waitUntilStopped({ timeoutMs: 5_000 });
+			await this.waitUntilStopped();
 			if (this.isPaused()) await this.fetchStackTrace();
 			if (!this.isPaused()) {
 				const errors = this.consoleMessages
@@ -204,9 +208,7 @@ export class DapSession extends BaseSession {
 		await attachPromise;
 
 		// Wait briefly for initial stop
-		await this.waitUntilStopped({ timeoutMs: 5_000 }).catch(() => {
-			// Some adapters don't stop immediately on attach
-		});
+		await this.waitUntilStopped({ timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS, throwOnTimeout: false });
 
 		// If we're not paused after waiting, the target is running
 		if (this.state === "idle") {
@@ -250,7 +252,13 @@ export class DapSession extends BaseSession {
 
 	// ── Execution control ─────────────────────────────────────────────
 
-	async continue(options?: WaitForStopOptions): Promise<void> {
+	async continue(
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: false,
+		},
+	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -266,7 +274,14 @@ export class DapSession extends BaseSession {
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
 
-	async step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void> {
+	async step(
+		mode: "over" | "into" | "out",
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: true,
+		},
+	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -288,7 +303,7 @@ export class DapSession extends BaseSession {
 			throw new Error("Cannot pause: target is not running");
 		}
 
-		const waiter = this.waitUntilStopped({ timeoutMs: 5_000 });
+		const waiter = this.waitUntilStopped();
 		await this.getDap().send("pause", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
@@ -1300,7 +1315,7 @@ export class DapSession extends BaseSession {
 	public waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
 		if (this.isPaused()) return Promise.resolve();
 
-		const timeoutMs = options?.timeoutMs ?? 30_000;
+		const timeoutMs = options?.timeoutMs ?? WAIT_PAUSE_TIMEOUT_MS;
 		const throwOnTimeout = options?.throwOnTimeout ?? false;
 
 		return new Promise<void>((resolve, reject) => {
