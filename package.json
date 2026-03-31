@@ -37,6 +37,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "build:java": "bun run src/main.ts install java",
     "update-jsc-protocol": "curl -sL https://raw.githubusercontent.com/oven-sh/bun/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts -o src/cdp/jsc-protocol.d.ts"
   },
   "devDependencies": {
