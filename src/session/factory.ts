@@ -1,6 +1,6 @@
 import { CdpSession } from "../cdp/session.ts";
-import type { DaemonLogger } from "../daemon/logger.ts";
 import { DapSession } from "../dap/session.ts";
+import type { Logger } from "../logger/index.ts";
 import type { Session } from "./session.ts";
 
 const DAP_RUNTIMES = new Set(["lldb", "lldb-dap", "codelldb", "python", "debugpy", "java"]);
@@ -20,7 +20,7 @@ export function isDapRuntime(runtime: string | undefined): runtime is string {
 export function createSession(
 	sessionName: string,
 	runtime: string | undefined,
-	options?: { daemonLogger?: DaemonLogger },
+	options?: { logger?: Logger<"daemon"> },
 ): Session {
 	if (isDapRuntime(runtime)) {
 		return new DapSession(sessionName, runtime);

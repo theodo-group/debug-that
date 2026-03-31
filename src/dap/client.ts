@@ -2,6 +2,7 @@ import type { DebugProtocol } from "@vscode/debugprotocol";
 import type { Subprocess } from "bun";
 
 import { MAX_STDERR_BUFFER, REQUEST_TIMEOUT_MS } from "../constants.ts";
+import type { Logger } from "../logger/index.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Required for handler map that stores both typed and untyped handlers
 type AnyHandler = (...args: any[]) => void;
@@ -24,9 +25,11 @@ export class DapClient {
 	private listeners = new Map<string, Set<AnyHandler>>();
 	private isConnected = false;
 	private buffer = "";
+	private logger: Logger<"dap"> | null = null;
 
-	private constructor(proc: Subprocess<"pipe", "pipe", "pipe">) {
+	private constructor(proc: Subprocess<"pipe", "pipe", "pipe">, logger?: Logger<"dap">) {
 		this.proc = proc;
+		this.logger = logger ?? null;
 		this.isConnected = true;
 		this.readLoop();
 		this.drainStderr();
@@ -36,7 +39,7 @@ export class DapClient {
 	 * Spawn a debug adapter process and return a connected DapClient.
 	 * @param command - The command + args to spawn (e.g. ["lldb-dap"])
 	 */
-	static spawn(command: string[]): DapClient {
+	static spawn(command: string[], logger?: Logger<"dap">): DapClient {
 		const [cmd, ...args] = command;
 		if (!cmd) {
 			throw new Error("DapClient.spawn: command array must not be empty");
@@ -46,7 +49,7 @@ export class DapClient {
 			stdout: "pipe",
 			stderr: "pipe",
 		});
-		return new DapClient(proc);
+		return new DapClient(proc, logger);
 	}
 
 	/**
@@ -66,6 +69,8 @@ export class DapClient {
 		if (args !== undefined) {
 			request.arguments = args;
 		}
+
+		this.logger?.trace("send", { command, seq, args });
 
 		return new Promise<DebugProtocol.Response>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -215,6 +220,12 @@ export class DapClient {
 
 		if (parsed.type === "response") {
 			const response = parsed as DebugProtocol.Response;
+			this.logger?.trace("recv", {
+				command: response.command,
+				seq: response.request_seq,
+				success: response.success,
+			});
+
 			const pending = this.pending.get(response.request_seq);
 			if (!pending) return;
 			this.pending.delete(response.request_seq);
@@ -229,6 +240,8 @@ export class DapClient {
 			}
 		} else if (parsed.type === "event") {
 			const event = parsed as DebugProtocol.Event;
+			this.logger?.trace("event", { event: event.event });
+
 			const handlers = this.listeners.get(event.event);
 			if (handlers) {
 				for (const handler of handlers) {

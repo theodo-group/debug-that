@@ -1,3 +1,4 @@
+import { createLogger } from "../logger/index.ts";
 import {
 	type DaemonRequest,
 	type DaemonResponse,
@@ -7,8 +8,7 @@ import {
 import { createSession } from "../session/factory.ts";
 import type { PendingConfig, Session } from "../session/session.ts";
 import { suggestEvalFix } from "./eval-suggestions.ts";
-import { DaemonLogger } from "./logger.ts";
-import { ensureSocketDir, getDaemonLogPath } from "./paths.ts";
+import { ensureSocketDir, getLogPath } from "./paths.ts";
 import { DaemonServer } from "./server.ts";
 
 // Session name follows --daemon in argv
@@ -33,14 +33,11 @@ if (timeoutIdx !== -1) {
 }
 
 ensureSocketDir();
-const daemonLogger = new DaemonLogger(getDaemonLogPath(session));
-daemonLogger.info("daemon.start", `Daemon starting for session "${session}"`, {
-	pid: process.pid,
-	session,
-	timeout,
-});
+const rootLogger = createLogger(getLogPath(session));
+const logger = rootLogger.child("daemon");
+logger.info("daemon.start", { pid: process.pid, session, timeout });
 
-const server = new DaemonServer(session, { idleTimeout: timeout, logger: daemonLogger });
+const server = new DaemonServer(session, { idleTimeout: timeout, logger: logger });
 
 // Session is created lazily on launch/attach. Null until then.
 let activeSession: Session | null = null;
@@ -73,7 +70,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 
 		case "launch": {
 			const { command, brk = true, port, runtime } = req.args;
-			activeSession = createSession(session, runtime, { daemonLogger });
+			activeSession = createSession(session, runtime, { logger: rootLogger });
 			activeSession.applyPendingConfig(pendingConfig);
 			resetConfig();
 			const result = await activeSession.launch(command, { brk, port });
@@ -82,7 +79,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 
 		case "attach": {
 			const { target, runtime } = req.args;
-			activeSession = createSession(session, runtime, { daemonLogger });
+			activeSession = createSession(session, runtime, { logger: rootLogger });
 			activeSession.applyPendingConfig(pendingConfig);
 			resetConfig();
 			const result = await activeSession.attach(target);
