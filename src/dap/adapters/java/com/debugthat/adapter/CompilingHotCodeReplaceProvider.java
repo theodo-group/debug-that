@@ -114,7 +114,19 @@ public class CompilingHotCodeReplaceProvider implements IHotCodeReplaceProvider 
                     + "Ensure the class is loaded in the JVM.");
         }
 
-        // Redefine classes
+        // Disable breakpoints before redefine (IntelliJ approach) to prevent
+        // the JDWP agent from firing events during the class redefinition safepoint.
+        var bpManager = context.getBreakpointManager();
+        var enabledRequests = new ArrayList<com.sun.jdi.request.EventRequest>();
+        for (var bp : bpManager.getBreakpoints()) {
+            for (var req : bp.requests()) {
+                if (req.isEnabled()) {
+                    enabledRequests.add(req);
+                    req.disable();
+                }
+            }
+        }
+
         try {
             vm.redefineClasses(redefineMap);
         } catch (UnsupportedOperationException e) {
@@ -133,6 +145,12 @@ public class CompilingHotCodeReplaceProvider implements IHotCodeReplaceProvider 
                                 + "Restart the application to apply changes. " + msg);
             }
             throw new RuntimeException("Hot code replace failed: " + msg);
+        } finally {
+            // Re-enable breakpoints. Some may have been invalidated by redefineClasses
+            // (JDI spec: breakpoints in redefined classes are cleared).
+            for (var req : enabledRequests) {
+                try { req.enable(); } catch (Exception ignored) {}
+            }
         }
 
         // Notify callback

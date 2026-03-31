@@ -1,5 +1,6 @@
 package com.debugthat.adapter;
 
+import com.microsoft.java.debug.core.DebugSettings;
 import com.microsoft.java.debug.core.adapter.ICompletionsProvider;
 import com.microsoft.java.debug.core.adapter.IEvaluationProvider;
 import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
@@ -24,6 +25,11 @@ public class Main {
         // Redirect System.out to System.err so adapter output doesn't corrupt DAP
         PrintStream stderr = System.err;
         System.setOut(new PrintStream(stderr));
+
+        // Suspend all threads on breakpoint hit (matches IntelliJ behavior).
+        // Prevents JVM freeze when redefineClasses is called while only one
+        // thread is paused — with SUSPEND_ALL, the safepoint is a no-op.
+        DebugSettings.getCurrent().suspendAllThreads = true;
 
         ProviderContext context = new ProviderContext();
         context.registerProvider(ISourceLookUpProvider.class, new SimpleSourceLookUpProvider());
