@@ -5,6 +5,7 @@ import {
 	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
 	WAIT_PAUSE_TIMEOUT_MS,
 } from "../constants.ts";
+import type { Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
@@ -72,26 +73,35 @@ export class DapSession extends BaseSession {
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
-	readonly capabilities: SessionCapabilities = {
-		functionBreakpoints: true,
-		logpoints: false,
-		hotpatch: false,
-		blackboxing: false,
-		modules: true,
-		restartFrame: false,
-		scriptSearch: false,
-		sourceMapResolution: false,
-		breakableLocations: false,
-		setReturnValue: false,
-		pathMapping: true,
-		symbolLoading: true,
-		breakpointToggle: false,
-		restart: false,
-	};
+	readonly capabilities: SessionCapabilities;
 
-	constructor(session: string, runtime: string) {
+	private static buildCapabilities(runtime: string): SessionCapabilities {
+		const isJava = runtime === "java";
+		return {
+			functionBreakpoints: true,
+			logpoints: false,
+			hotpatch: isJava,
+			blackboxing: false,
+			modules: true,
+			restartFrame: isJava,
+			scriptSearch: false,
+			sourceMapResolution: false,
+			breakableLocations: false,
+			setReturnValue: false,
+			pathMapping: true,
+			symbolLoading: true,
+			breakpointToggle: false,
+			restart: false,
+		};
+	}
+
+	private dapLog: Logger<"dap"> | undefined;
+
+	constructor(session: string, runtime: string, options?: { logger?: Logger<"daemon"> }) {
 		super(session);
 		this._runtime = runtime;
+		this.capabilities = DapSession.buildCapabilities(runtime);
+		this.dapLog = options?.logger?.child("dap");
 	}
 
 	override applyPendingConfig(config: PendingConfig): void {
@@ -115,7 +125,7 @@ export class DapSession extends BaseSession {
 
 		const config = getRuntimeConfig(this._runtime);
 		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd);
+		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
@@ -189,7 +199,7 @@ export class DapSession extends BaseSession {
 
 		const config = getRuntimeConfig(this._runtime);
 		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd);
+		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
@@ -834,11 +844,54 @@ export class DapSession extends BaseSession {
 	}
 
 	async hotpatch(
-		_file: string,
-		_source: string,
+		file: string,
+		source: string,
 		_options?: { dryRun?: boolean },
 	): Promise<{ status: string; callFrames?: unknown[]; exceptionDetails?: unknown }> {
-		throw new Error("Hot-patching is not supported in DAP mode.");
+		if (this._runtime !== "java") {
+			throw new Error("Hot-patching is only supported for Java in DAP mode.");
+		}
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		// Step 1: Prepare — compile .java or stage .class, cache classpath.
+		// Done via evaluate to access the debuggee thread for classpath resolution.
+		const payload = `__HOTPATCH_PREPARE__${file}\n${source}`;
+		const frameId = this.resolveFrameId();
+		await this.getDap().send("evaluate", {
+			expression: payload,
+			frameId,
+			context: "repl",
+		});
+
+		// Step 2: Redefine — triggers IHotCodeReplaceProvider.redefineClasses()
+		// on the proper framework path (avoids evaluate/redefine deadlock).
+		const response = await this.getDap().send("redefineClasses", {});
+		const body = response.body as { changedClasses?: string[]; errorMessage?: string };
+
+		if (body.errorMessage) {
+			throw new Error(body.errorMessage);
+		}
+
+		const classes = body.changedClasses ?? [];
+		if (classes.length === 0) {
+			throw new Error("No classes were redefined.");
+		}
+
+		// Refresh stack and check for obsolete frames (frames in redefined classes)
+		this._stackFetchPromise = null; // force refresh
+		await this.ensureStack();
+		const obsoleteFrames = this._stackFrames.filter((f) =>
+			classes.some((cls) => f.name.startsWith(`${cls}.`)),
+		);
+
+		let status = `replaced ${classes.length} class(es): ${classes.join(", ")}`;
+		if (obsoleteFrames.length > 0) {
+			status += `. ${obsoleteFrames.length} obsolete frame(s) — use restart-frame to re-enter with new code`;
+		}
+
+		return { status };
 	}
 
 	async searchInScripts(
@@ -887,8 +940,21 @@ export class DapSession extends BaseSession {
 		throw new Error("Setting return values is not supported in DAP mode.");
 	}
 
-	async restartFrame(_frameRef?: string): Promise<{ status: string }> {
-		throw new Error("Frame restart is not supported in DAP mode.");
+	async restartFrame(frameRef?: string): Promise<{ status: string }> {
+		if (this._runtime !== "java") {
+			throw new Error("Frame restart is not supported for this runtime.");
+		}
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		const frameId = this.resolveFrameId(frameRef);
+
+		const waiter = this.waitUntilStopped({ throwOnTimeout: true });
+		await this.getDap().send("restartFrame", { frameId });
+		await waiter;
+
+		return { status: "restarted" };
 	}
 
 	// ── Path remapping & symbol loading (LLDB commands via DAP evaluate) ──

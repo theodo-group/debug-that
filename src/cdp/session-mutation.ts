@@ -150,7 +150,7 @@ export async function hotpatch(
 	file: string,
 	newSource: string,
 	options: { dryRun?: boolean } = {},
-): Promise<{ status: string; callFrames?: unknown[]; exceptionDetails?: unknown }> {
+): Promise<Protocol.Debugger.SetScriptSourceResponse> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -177,22 +177,8 @@ export async function hotpatch(
 		scriptId,
 		scriptSource: newSource,
 		allowTopFrameEditing: true,
+		dryRun: options.dryRun,
 	};
-	if (options.dryRun) {
-		setSourceParams.dryRun = true;
-	}
 
-	const r = await session.cdp.send("Debugger.setScriptSource", setSourceParams);
-
-	const response: { status: string; callFrames?: unknown[]; exceptionDetails?: unknown } = {
-		status: r.status ?? "Ok",
-	};
-	if (r.callFrames) {
-		response.callFrames = r.callFrames;
-	}
-	if (r.exceptionDetails) {
-		response.exceptionDetails = r.exceptionDetails;
-	}
-
-	return response;
+	return await session.cdp.send("Debugger.setScriptSource", setSourceParams);
 }

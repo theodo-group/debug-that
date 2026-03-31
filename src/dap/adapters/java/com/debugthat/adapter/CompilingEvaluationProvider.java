@@ -3,6 +3,7 @@ package com.debugthat.adapter;
 import com.microsoft.java.debug.core.IEvaluatableBreakpoint;
 import com.microsoft.java.debug.core.adapter.IDebugAdapterContext;
 import com.microsoft.java.debug.core.adapter.IEvaluationProvider;
+import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
 
 import com.sun.jdi.*;
 
@@ -27,9 +28,12 @@ public class CompilingEvaluationProvider implements IEvaluationProvider {
     private static final String THIS_PARAM = "__dbg_this";
     private static final Pattern THIS_PATTERN = Pattern.compile("\\bthis\\b");
     private static final String EVAL_CLASS_PREFIX = "__DbgEval_";
+    private static final String HOTPATCH_PREPARE_PREFIX = "__HOTPATCH_PREPARE__";
+    private CompilingHotCodeReplaceProvider hcrProvider;
 
     private final AtomicInteger evalCounter = new AtomicInteger(0);
     private final Set<Long> activeEvals = ConcurrentHashMap.newKeySet();
+    private volatile String cachedClasspath = null;
     private final ExecutorService evalExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "debug-that-eval");
         t.setDaemon(true);
@@ -38,11 +42,29 @@ public class CompilingEvaluationProvider implements IEvaluationProvider {
 
     @Override
     public void initialize(IDebugAdapterContext context, Map<String, Object> options) {
-        // No initialization needed
+        // Get reference to the HCR provider for hotpatch preparation
+        IHotCodeReplaceProvider provider = context.getProvider(IHotCodeReplaceProvider.class);
+        if (provider instanceof CompilingHotCodeReplaceProvider compilingProvider) {
+            this.hcrProvider = compilingProvider;
+        }
     }
 
     @Override
     public CompletableFuture<Value> evaluate(String expression, ThreadReference thread, int depth) {
+        // Hot code replace preparation — stores file/source/classpath on HCR provider.
+        // Actual redefine happens via the redefineClasses DAP request (separate round trip).
+        if (expression.startsWith(HOTPATCH_PREPARE_PREFIX)) {
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    return prepareHotpatch(expression.substring(HOTPATCH_PREPARE_PREFIX.length()), thread);
+                } catch (RuntimeException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new RuntimeException(e.getMessage(), e);
+                }
+            }, evalExecutor);
+        }
+
         return CompletableFuture.supplyAsync(() -> {
             long threadId = thread.uniqueID();
             activeEvals.add(threadId);
@@ -456,22 +478,57 @@ public class CompilingEvaluationProvider implements IEvaluationProvider {
 
     // ── Debuggee classpath resolution ──
 
-    private String getDebuggeeClasspath(ThreadReference thread) throws Exception {
-        VirtualMachine vm = thread.virtualMachine();
-        ClassType systemClass = (ClassType) vm.classesByName("java.lang.System").get(0);
-        Method getProperty = systemClass.methodsByName("getProperty").stream()
-                .filter(m -> m.argumentTypeNames().size() == 1)
-                .findFirst()
-                .orElseThrow(() -> new RuntimeException("System.getProperty not found"));
-
-        StringReference key = vm.mirrorOf("java.class.path");
-        Value result = systemClass.invokeMethod(thread, getProperty,
-                List.of(key), ObjectReference.INVOKE_SINGLE_THREADED);
-
-        if (result instanceof StringReference) {
-            return ((StringReference) result).value();
+    /**
+     * Get the debuggee's classpath via JDWP query (no thread resumption, safe at breakpoints).
+     * All HotSpot-based JVMs (OpenJDK, Oracle, Corretto, Zulu, GraalVM) implement
+     * PathSearchingVirtualMachine. Cached after first retrieval.
+     */
+    private String getDebuggeeClasspath(ThreadReference thread) {
+        if (cachedClasspath != null) {
+            return cachedClasspath;
         }
-        return "";
+
+        VirtualMachine vm = thread.virtualMachine();
+        if (vm instanceof com.sun.jdi.PathSearchingVirtualMachine psvm) {
+            List<String> cp = psvm.classPath();
+            if (cp != null && !cp.isEmpty()) {
+                cachedClasspath = String.join(File.pathSeparator, cp);
+                return cachedClasspath;
+            }
+        }
+
+        throw new RuntimeException(
+                "Cannot retrieve debuggee classpath: VM does not implement PathSearchingVirtualMachine. "
+                        + "Only HotSpot-based JVMs (OpenJDK, Oracle, Corretto, Zulu) are supported.");
+    }
+
+    // ── Hot code replace preparation ──
+
+    /**
+     * Prepare a hotpatch by storing the file/source and classpath on the HCR provider.
+     * The actual redefineClasses() call happens via the redefineClasses DAP request,
+     * which avoids the deadlock that occurs when calling vm.redefineClasses() inside
+     * the evaluate CompletableFuture (java-debug framework event dispatch conflict).
+     *
+     * Payload format: file_path\nsource_content (source empty for .class input).
+     */
+    private Value prepareHotpatch(String payload, ThreadReference thread) throws Exception {
+        if (hcrProvider == null) {
+            throw new RuntimeException("Hot code replace provider not available.");
+        }
+
+        int nl = payload.indexOf('\n');
+        String file = nl >= 0 ? payload.substring(0, nl) : payload;
+        String source = nl >= 0 && nl < payload.length() - 1 ? payload.substring(nl + 1) : "";
+
+        // Get classpath via JDWP query (no thread resumption — safe at breakpoints).
+        // Falls back to invokeMethod only if PathSearchingVirtualMachine is unavailable.
+        String classpath = getDebuggeeClasspath(thread);
+
+        hcrProvider.prepareHotpatch(file, source, classpath);
+
+        VirtualMachine vm = thread.virtualMachine();
+        return vm.mirrorOf("prepared");
     }
 
     // ── Bytecode injection via JDI ──

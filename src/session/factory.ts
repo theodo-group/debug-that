@@ -23,7 +23,7 @@ export function createSession(
 	options?: { logger?: Logger<"daemon"> },
 ): Session {
 	if (isDapRuntime(runtime)) {
-		return new DapSession(sessionName, runtime);
+		return new DapSession(sessionName, runtime, options);
 	}
 	return new CdpSession(sessionName, options);
 }

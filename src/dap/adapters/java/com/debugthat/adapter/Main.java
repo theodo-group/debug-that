@@ -28,7 +28,7 @@ public class Main {
         ProviderContext context = new ProviderContext();
         context.registerProvider(ISourceLookUpProvider.class, new SimpleSourceLookUpProvider());
         context.registerProvider(IEvaluationProvider.class, new CompilingEvaluationProvider());
-        context.registerProvider(IHotCodeReplaceProvider.class, new NoOpHotCodeReplaceProvider());
+        context.registerProvider(IHotCodeReplaceProvider.class, new CompilingHotCodeReplaceProvider());
         context.registerProvider(IVirtualMachineManagerProvider.class, new DefaultVirtualMachineManagerProvider());
         context.registerProvider(ICompletionsProvider.class, new NoOpCompletionsProvider());
 
