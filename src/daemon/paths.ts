@@ -19,11 +19,7 @@ export function getLockPath(session: string): string {
 }
 
 export function getLogPath(session: string): string {
-	return join(getSocketDir(), `${session}.cdp.log`);
-}
-
-export function getDaemonLogPath(session: string): string {
-	return join(getSocketDir(), `${session}.daemon.log`);
+	return join(getSocketDir(), `${session}.log`);
 }
 
 export function ensureSocketDir(): void {

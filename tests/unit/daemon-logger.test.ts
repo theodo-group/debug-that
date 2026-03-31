@@ -2,24 +2,23 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DaemonLogEntry } from "../../src/daemon/logger.ts";
-import { DaemonLogger } from "../../src/daemon/logger.ts";
+import { createLogger, type LogEntry, LogLevel } from "../../src/logger/index.ts";
 
 const testDir = tmpdir();
 
 function tempLogPath(): string {
-	return join(testDir, `test-daemon-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
+	return join(testDir, `test-logger-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 }
 
-function readEntries(logPath: string): DaemonLogEntry[] {
+function readEntries(logPath: string): LogEntry[] {
 	const content = readFileSync(logPath, "utf-8");
 	return content
 		.split("\n")
 		.filter((l) => l.trim())
-		.map((l) => JSON.parse(l) as DaemonLogEntry);
+		.map((l) => JSON.parse(l) as LogEntry);
 }
 
-describe("DaemonLogger", () => {
+describe("Unified Logger", () => {
 	const paths: string[] = [];
 
 	afterEach(() => {
@@ -34,7 +33,7 @@ describe("DaemonLogger", () => {
 		paths.push(logPath);
 		writeFileSync(logPath, "pre-existing content\n");
 
-		new DaemonLogger(logPath);
+		createLogger(logPath);
 
 		const content = readFileSync(logPath, "utf-8");
 		expect(content).toBe("");
@@ -43,75 +42,83 @@ describe("DaemonLogger", () => {
 	test("appends JSON lines", () => {
 		const logPath = tempLogPath();
 		paths.push(logPath);
-		const logger = new DaemonLogger(logPath);
+		const logger = createLogger(logPath);
 
-		logger.info("event.one", "first message");
-		logger.warn("event.two", "second message");
-		logger.error("event.three", "third message");
+		logger.info("event.one");
+		logger.warn("event.two");
+		logger.error("event.three");
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(3);
-		expect(entries[0]?.event).toBe("event.one");
-		expect(entries[1]?.event).toBe("event.two");
-		expect(entries[2]?.event).toBe("event.three");
+		expect(entries[0]?.msg).toBe("event.one");
+		expect(entries[1]?.msg).toBe("event.two");
+		expect(entries[2]?.msg).toBe("event.three");
 	});
 
-	test("clear() truncates", () => {
+	test("child loggers share the same file", () => {
 		const logPath = tempLogPath();
 		paths.push(logPath);
-		const logger = new DaemonLogger(logPath);
+		const root = createLogger(logPath);
+		const cdp = root.child("cdp");
+		const session = root.child("session");
 
-		logger.info("test", "message");
-		logger.info("test", "another");
-		expect(readEntries(logPath)).toHaveLength(2);
+		root.info("root-event");
+		cdp.debug("send", { method: "Debugger.pause", id: 1 });
+		session.info("child.spawn", { pid: 1234 });
 
-		logger.clear();
-
-		const content = readFileSync(logPath, "utf-8");
-		expect(content).toBe("");
+		const entries = readEntries(logPath);
+		expect(entries).toHaveLength(3);
+		expect(entries[0]?.name).toBe("daemon");
+		expect(entries[1]?.name).toBe("cdp");
+		expect(entries[2]?.name).toBe("session");
 	});
 
 	test("entries have correct structure", () => {
 		const logPath = tempLogPath();
 		paths.push(logPath);
-		const logger = new DaemonLogger(logPath);
+		const logger = createLogger(logPath);
 		const before = Date.now();
 
-		logger.info("child.spawn", "Process spawned", { pid: 1234 });
+		logger.child("session").info("child.spawn", { pid: 1234 });
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(1);
 		const entry = entries[0]!;
 
-		expect(entry.ts).toBeGreaterThanOrEqual(before);
-		expect(entry.ts).toBeLessThanOrEqual(Date.now());
-		expect(entry.level).toBe("info");
-		expect(entry.event).toBe("child.spawn");
-		expect(entry.message).toBe("Process spawned");
-		expect(entry.data).toEqual({ pid: 1234 });
+		expect(entry.time).toBeGreaterThanOrEqual(before);
+		expect(entry.time).toBeLessThanOrEqual(Date.now());
+		expect(entry.level).toBe(LogLevel.info);
+		expect(entry.name).toBe("session");
+		expect(entry.msg).toBe("child.spawn");
+		expect(entry.pid).toBe(1234);
 	});
 
-	test("debug level works", () => {
+	test("data fields are flat in the entry", () => {
 		const logPath = tempLogPath();
 		paths.push(logPath);
-		const logger = new DaemonLogger(logPath);
+		const logger = createLogger(logPath);
 
-		logger.debug("test.debug", "debug message");
+		logger.child("cdp").trace("send", { method: "Debugger.pause", id: 5 });
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(1);
-		expect(entries[0]?.level).toBe("debug");
+		const entry = entries[0]!;
+		// Data is flat, not nested under a "data" key
+		expect(entry.method).toBe("Debugger.pause");
+		expect(entry.id).toBe(5);
+		expect(entry.data).toBeUndefined();
 	});
 
-	test("entries without data omit data field", () => {
+	test("entries without data only have standard fields", () => {
 		const logPath = tempLogPath();
 		paths.push(logPath);
-		const logger = new DaemonLogger(logPath);
+		const logger = createLogger(logPath);
 
-		logger.info("test", "no data");
+		logger.info("started");
 
 		const entries = readEntries(logPath);
 		expect(entries).toHaveLength(1);
-		expect(entries[0]?.data).toBeUndefined();
+		const keys = Object.keys(entries[0]!);
+		expect(keys.sort()).toEqual(["level", "msg", "name", "time"]);
 	});
 });

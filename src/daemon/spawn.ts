@@ -1,7 +1,7 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { SPAWN_POLL_INTERVAL_MS, SPAWN_TIMEOUT_MS } from "../constants.ts";
 import { DaemonClient } from "./client.ts";
-import { ensureSocketDir, getDaemonLogPath, getSocketPath } from "./paths.ts";
+import { ensureSocketDir, getLogPath, getSocketPath } from "./paths.ts";
 
 export async function spawnDaemon(
 	session: string,
@@ -32,7 +32,7 @@ export async function spawnDaemon(
 	// Redirect daemon stdout/stderr to daemon log file so crashes are captured
 	// even before the DaemonLogger initializes inside the child process.
 	ensureSocketDir();
-	const logFd = openSync(getDaemonLogPath(session), "a");
+	const logFd = openSync(getLogPath(session), "a");
 
 	const proc = Bun.spawn(spawnArgs, {
 		detached: true,
@@ -57,7 +57,7 @@ export async function spawnDaemon(
 	}
 
 	// Read daemon log to surface the actual error
-	const logPath = getDaemonLogPath(session);
+	const logPath = getLogPath(session);
 	let logTail = "";
 	try {
 		const log = readFileSync(logPath, "utf-8");

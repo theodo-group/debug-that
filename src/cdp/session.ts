@@ -1,9 +1,9 @@
 import type { Subprocess } from "bun";
 import type Protocol from "devtools-protocol/types/protocol.js";
-import { DaemonLogger } from "../daemon/logger.ts";
-import { ensureSocketDir, getDaemonLogPath, getLogPath } from "../daemon/paths.ts";
+import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
+import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession } from "../session/base-session.ts";
 import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
@@ -21,7 +21,6 @@ import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { createAdapter } from "./adapters/index.ts";
 import { CdpClient } from "./client.ts";
 import type { CdpDialect } from "./dialect.ts";
-import { CdpLogger } from "./logger.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -99,8 +98,8 @@ export class CdpSession extends BaseSession {
 	launchCommand: string[] | null = null;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
 	adapter: CdpDialect;
-	cdpLogger: CdpLogger;
-	daemonLogger: DaemonLogger;
+	private log: Logger<"session">;
+	private cdpLog: Logger<"cdp">;
 
 	readonly capabilities: SessionCapabilities = {
 		functionBreakpoints: false,
@@ -135,11 +134,12 @@ export class CdpSession extends BaseSession {
 		this.sourceMapResolver.setDisabled(true);
 	}
 
-	constructor(session: string, options?: { daemonLogger?: DaemonLogger }) {
+	constructor(session: string, options?: { logger?: Logger<"daemon"> }) {
 		super(session);
 		ensureSocketDir();
-		this.cdpLogger = new CdpLogger(getLogPath(session));
-		this.daemonLogger = options?.daemonLogger ?? new DaemonLogger(getDaemonLogPath(session));
+		const rootLogger = options?.logger ?? createLogger(getLogPath(session));
+		this.log = rootLogger.child("session");
+		this.cdpLog = rootLogger.child("cdp");
 		// Default to NodeAdapter; overridden in launch() when command is known
 		this.adapter = createAdapter(["node"]);
 	}
@@ -186,10 +186,7 @@ export class CdpSession extends BaseSession {
 		});
 		this.childProcess = proc;
 
-		this.daemonLogger.info("child.spawn", `Spawned process pid=${proc.pid}`, {
-			pid: proc.pid,
-			command: spawnArgs,
-		});
+		this.log.info("child.spawn", { pid: proc.pid ?? 0, command: spawnArgs });
 
 		// Monitor child process exit in the background
 		this.monitorProcessExit(proc);
@@ -198,9 +195,7 @@ export class CdpSession extends BaseSession {
 		const wsUrl = await this.readInspectorUrl(proc.stderr);
 		this.wsUrl = wsUrl;
 
-		this.daemonLogger.info("inspector.detected", `Inspector URL: ${wsUrl}`, {
-			wsUrl,
-		});
+		this.log.info("cdp.connected", { url: wsUrl });
 
 		// Connect CDP
 		await this.connectCdp(wsUrl);
@@ -776,15 +771,12 @@ export class CdpSession extends BaseSession {
 
 				this.refs.bind(entry.ref, r.breakpointId);
 
-				this.daemonLogger.info(
-					"breakpoint.rebound",
-					`${entry.ref} bound by scriptId at ${scriptUrl}:${compiledLine}`,
-				);
+				this.log.info("breakpoint.rebound", { file: scriptUrl, line: compiledLine });
 			} catch (err) {
-				this.daemonLogger.debug(
-					"breakpoint.rebind.failed",
-					`Failed to rebind ${entry.ref}: ${err instanceof Error ? err.message : String(err)}`,
-				);
+				this.log.debug("breakpoint.rebind.failed", {
+					ref: entry.ref,
+					error: err instanceof Error ? err.message : String(err),
+				});
 			}
 		}
 	}
@@ -796,10 +788,10 @@ export class CdpSession extends BaseSession {
 	}
 
 	private async connectCdp(wsUrl: string): Promise<void> {
-		this.daemonLogger.debug("cdp.connecting", `Connecting to ${wsUrl}`);
-		const cdp = await CdpClient.connect(wsUrl, this.cdpLogger);
+		this.log.debug("cdp.connecting", { url: wsUrl });
+		const cdp = await CdpClient.connect(wsUrl, this.cdpLog);
 		this.cdp = cdp;
-		this.daemonLogger.info("cdp.connected", `CDP connected to ${wsUrl}`);
+		this.log.info("cdp.connected", { url: wsUrl });
 
 		// Set up event handlers before enabling domains so we don't miss any events
 		this.setupCdpEventHandlers(cdp);
@@ -873,10 +865,10 @@ export class CdpSession extends BaseSession {
 							if (p.url) return this.rebindPendingBreakpoints(scriptId, p.url);
 						})
 						.catch((err) => {
-							this.daemonLogger.debug(
-								"sourcemap.load.failed",
-								`Failed to load source map for ${info.url}: ${err instanceof Error ? err.message : String(err)}`,
-							);
+							this.log.debug("sourcemap.load.failed", {
+								file: info.url,
+								reason: err instanceof Error ? err.message : String(err),
+							});
 						});
 					this._pendingRebinds.add(rebindPromise);
 					rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
@@ -953,10 +945,7 @@ export class CdpSession extends BaseSession {
 	private monitorProcessExit(proc: Subprocess<"ignore", "ignore", "pipe">): void {
 		proc.exited
 			.then((exitCode) => {
-				this.daemonLogger.info("child.exit", `Process exited with code ${exitCode ?? "unknown"}`, {
-					pid: proc.pid,
-					exitCode: exitCode ?? null,
-				});
+				this.log.info("child.exit", { code: exitCode ?? null });
 				// Child process has exited
 				this.childProcess = null;
 				if (this.cdp) {
@@ -970,9 +959,7 @@ export class CdpSession extends BaseSession {
 				this.onProcessExit.clear();
 			})
 			.catch((err) => {
-				this.daemonLogger.error("child.exit.error", `Error waiting for process exit: ${err}`, {
-					pid: proc.pid,
-				});
+				this.log.error("child.exit.error", { error: String(err) });
 				// Error waiting for exit, treat as exited
 				this.childProcess = null;
 				this.state = "idle";
@@ -1000,7 +987,7 @@ export class CdpSession extends BaseSession {
 				}
 				const chunk = decoder.decode(value, { stream: true });
 				accumulated += chunk;
-				this.daemonLogger.debug("child.stderr", chunk.trimEnd());
+				this.log.debug("child.stderr", { text: chunk.trimEnd() });
 
 				const match = INSPECTOR_URL_REGEX.exec(accumulated);
 				if (match?.[1]) {
@@ -1016,7 +1003,7 @@ export class CdpSession extends BaseSession {
 		}
 
 		clearTimeout(timeout);
-		this.daemonLogger.error("inspector.failed", "Failed to detect inspector URL", {
+		this.log.error("inspector.failed", {
 			stderr: accumulated.slice(0, 2000),
 			timeoutMs: INSPECTOR_TIMEOUT_MS,
 		});

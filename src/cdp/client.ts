@@ -1,6 +1,6 @@
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.js";
 import { REQUEST_TIMEOUT_MS } from "../constants.ts";
-import type { CdpLogger } from "./logger.ts";
+import type { Logger } from "../logger/index.ts";
 import type { CdpEvent, CdpRequest, CdpResponse } from "./types.ts";
 
 type CdpCommand = keyof ProtocolMapping.Commands;
@@ -21,18 +21,20 @@ export class CdpClient {
 	private pending = new Map<number, PendingRequest>();
 	private listeners = new Map<string, Set<AnyHandler>>();
 	private isConnected = false;
-	private logger: CdpLogger | null;
+	private logger: Logger<"cdp"> | null;
 	/** Map request id → method name for response logging */
 	private sentMethods = new Map<number, string>();
+	/** Map request id → send timestamp for latency tracking */
+	private sendTimestamps = new Map<number, number>();
 
-	private constructor(ws: WebSocket, logger?: CdpLogger) {
+	private constructor(ws: WebSocket, logger?: Logger<"cdp">) {
 		this.ws = ws;
 		this.logger = logger ?? null;
 		this.isConnected = true;
 		this.setupHandlers();
 	}
 
-	static async connect(wsUrl: string, logger?: CdpLogger): Promise<CdpClient> {
+	static async connect(wsUrl: string, logger?: Logger<"cdp">): Promise<CdpClient> {
 		return new Promise<CdpClient>((resolve, reject) => {
 			const ws = new WebSocket(wsUrl);
 
@@ -78,7 +80,8 @@ export class CdpClient {
 		}
 
 		this.sentMethods.set(id, method);
-		this.logger?.logSend(id, method, params as Record<string, unknown> | undefined);
+		this.sendTimestamps.set(id, Date.now());
+		this.logger?.trace("send", { id, method, params: params as Record<string, unknown> });
 
 		return new Promise<unknown>((resolve, reject) => {
 			const timer = setTimeout(() => {
@@ -246,8 +249,17 @@ export class CdpClient {
 			const response = parsed as CdpResponse;
 			const method = this.sentMethods.get(response.id) ?? "unknown";
 			this.sentMethods.delete(response.id);
+			const sendTime = this.sendTimestamps.get(response.id);
+			this.sendTimestamps.delete(response.id);
+			const ms = sendTime != null ? Date.now() - sendTime : 0;
 
-			this.logger?.logResponse(response.id, method, response.result, response.error);
+			this.logger?.trace("recv", {
+				id: response.id,
+				method,
+				ms,
+				result: response.result,
+				error: response.error,
+			});
 
 			const pending = this.pending.get(response.id);
 			if (!pending) {
@@ -263,7 +275,10 @@ export class CdpClient {
 			}
 		} else if ("method" in parsed) {
 			const event = parsed as CdpEvent;
-			this.logger?.logEvent(event.method, event.params);
+			this.logger?.trace("event", {
+				method: event.method,
+				params: event.params as Record<string, unknown>,
+			});
 
 			const handlers = this.listeners.get(event.method);
 			if (handlers) {

@@ -1,13 +1,13 @@
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import type { Socket } from "bun";
 import { MAX_REQUEST_SIZE } from "../constants.ts";
+import type { Logger } from "../logger/index.ts";
 import {
 	type DaemonRequest,
 	DaemonRequestSchema,
 	type DaemonResponse,
 } from "../protocol/messages.ts";
 import { extractLines } from "../util/line-buffer.ts";
-import type { Logger } from "./logger.ts";
 import { ensureSocketDir, getLockPath, getSocketPath } from "./paths.ts";
 
 type RequestHandler = (req: DaemonRequest) => Promise<DaemonResponse>;
@@ -26,9 +26,9 @@ export class DaemonServer {
 	private listener: ReturnType<typeof Bun.listen> | null = null;
 	private socketPath: string;
 	private lockPath: string;
-	private logger: Logger;
+	private logger: Logger<"daemon">;
 
-	constructor(session: string, options: { idleTimeout: number; logger: Logger }) {
+	constructor(session: string, options: { idleTimeout: number; logger: Logger<"daemon"> }) {
 		this.session = session;
 		this.idleTimeout = options.idleTimeout;
 		this.socketPath = getSocketPath(session);
@@ -97,7 +97,7 @@ export class DaemonServer {
 				},
 				close() {},
 				error(_socket, error) {
-					server.logger.error("socket.error", error.message);
+					server.logger.error("socket.error", { message: error.message });
 					console.error(`[daemon] socket error: ${error.message}`);
 				},
 			},
@@ -142,7 +142,7 @@ export class DaemonServer {
 		try {
 			json = JSON.parse(line);
 		} catch {
-			this.logger.info("socket.invalid-json", "Daemon received invalid JSON", { line });
+			this.logger.info("socket.invalid-json", { line });
 			this.sendResponse(socket, { ok: false, error: "Invalid JSON" });
 			return;
 		}
@@ -169,10 +169,7 @@ export class DaemonServer {
 		const request: DaemonRequest = parsed.data;
 
 		if (!this.handler) {
-			this.logger.error(
-				"socket.no-handler",
-				"No request handler registered. Did you call `server.onRequest`?",
-			);
+			this.logger.error("socket.no-handler", { message: "No request handler registered" });
 			this.sendResponse(socket, { ok: false, error: "No request handler registered" });
 			return;
 		}
@@ -181,7 +178,7 @@ export class DaemonServer {
 			const response = await this.handler(request);
 			this.sendResponse(socket, response);
 		} catch (err) {
-			this.logger.error("socket.handler-error", "Error in request handler", { error: err });
+			this.logger.error("socket.handler-error", { error: String(err) });
 			this.sendResponse(socket, {
 				ok: false,
 				error: err instanceof Error ? err.message : String(err),
@@ -195,10 +192,7 @@ export class DaemonServer {
 		}
 		if (this.idleTimeout > 0) {
 			this.idleTimer = setTimeout(() => {
-				this.logger.info(
-					"daemon.idle",
-					`Idle timeout reached (${this.idleTimeout}s), shutting down`,
-				);
+				this.logger.info("daemon.idle", { timeoutSec: this.idleTimeout });
 				this.stop();
 			}, this.idleTimeout * 1000);
 		}

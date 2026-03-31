@@ -9,127 +9,79 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { z } from "zod";
-import type { CdpLogEntry } from "../cdp/logger.ts";
 import { defineCommand } from "../cli/command.ts";
-import type { DaemonLogEntry } from "../daemon/logger.ts";
-import { getDaemonLogPath, getLogPath } from "../daemon/paths.ts";
-import { formatDaemonLogEntry, formatLogEntry } from "../formatter/logs.ts";
+import { getLogPath } from "../daemon/paths.ts";
+import { shouldEnableColor } from "../formatter/color.ts";
+import {
+	formatLogEntry,
+	type LogEntry,
+	LogLevel,
+	type LogLevelName,
+	parseLogEntries,
+} from "../logger/index.ts";
 
-function parseCdpEntries(text: string): CdpLogEntry[] {
-	const entries: CdpLogEntry[] = [];
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			entries.push(JSON.parse(line) as CdpLogEntry);
-		} catch {
-			// skip malformed lines
-		}
-	}
-	return entries;
-}
-
-function parseDaemonEntries(text: string): DaemonLogEntry[] {
-	const entries: DaemonLogEntry[] = [];
-	for (const line of text.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			entries.push(JSON.parse(line) as DaemonLogEntry);
-		} catch {
-			// skip malformed lines
-		}
-	}
-	return entries;
-}
-
-function filterByDomain(entries: CdpLogEntry[], domain: string): CdpLogEntry[] {
-	return entries.filter((e) => e.method.startsWith(`${domain}.`));
-}
-
-function filterByLevel(entries: DaemonLogEntry[], level: string): DaemonLogEntry[] {
-	return entries.filter((e) => e.level === level);
-}
-
-function printCdpEntries(entries: CdpLogEntry[], json: boolean): void {
+function printEntries(entries: LogEntry[], json: boolean, colors: boolean): void {
 	for (const entry of entries) {
-		if (json) {
-			console.log(JSON.stringify(entry));
-		} else {
-			console.log(formatLogEntry(entry));
-		}
-	}
-}
-
-function printDaemonEntries(entries: DaemonLogEntry[], json: boolean): void {
-	for (const entry of entries) {
-		if (json) {
-			console.log(JSON.stringify(entry));
-		} else {
-			console.log(formatDaemonLogEntry(entry));
-		}
+		console.log(json ? JSON.stringify(entry) : formatLogEntry(entry, colors));
 	}
 }
 
 defineCommand({
 	name: "logs",
-	description: "Show CDP protocol log",
-	usage: "logs [-f|--follow]",
+	description: "Show session log",
+	usage: "logs [-f|--follow] [--src cdp|dap|session|daemon] [--level debug]",
 	category: "diagnostics",
 	noDaemon: true,
 	positional: { kind: "none" },
 	flags: z.object({
 		follow: z.boolean().optional().meta({ description: "Watch for new entries", short: "f" }),
 		limit: z.coerce.number().optional().meta({ description: "Show last N entries" }),
-		domain: z.string().optional().meta({ description: "Filter by CDP domain" }),
+		src: z
+			.string()
+			.optional()
+			.meta({ description: "Filter by source (cdp, dap, session, daemon)" }),
+		level: z
+			.string()
+			.optional()
+			.meta({ description: "Minimum log level (trace, debug, info, warn, error)" }),
 		clear: z.boolean().optional().meta({ description: "Clear the log file" }),
-		daemon: z.boolean().optional().meta({ description: "Show daemon log" }),
-		level: z.string().optional().meta({ description: "Filter by log level" }),
 	}),
 	handler: async (ctx) => {
 		const session = ctx.global.session;
-		const isDaemon = ctx.flags.daemon || false;
-		const logPath = isDaemon ? getDaemonLogPath(session) : getLogPath(session);
+		const logPath = getLogPath(session);
 
-		// --clear: truncate log file
 		if (ctx.flags.clear) {
 			if (existsSync(logPath)) {
 				writeFileSync(logPath, "");
-				console.log(`${isDaemon ? "Daemon log" : "Log"} cleared`);
+				console.log("Log cleared");
 			} else {
-				console.log(`No ${isDaemon ? "daemon " : ""}log file to clear`);
+				console.log("No log file to clear");
 			}
 			return 0;
 		}
 
 		if (!existsSync(logPath)) {
-			console.error(`No ${isDaemon ? "daemon " : ""}log file for session "${session}"`);
+			console.error(`No log file for session "${session}"`);
 			console.error("  -> Try: dbg launch --brk node app.js");
 			return 1;
 		}
 
 		const isJson = ctx.global.json;
-		const domain = ctx.flags.domain;
-		const level = ctx.flags.level;
+		const colors = shouldEnableColor(ctx.global.color);
+		const src = ctx.flags.src;
+		const levelName = ctx.flags.level?.toLowerCase() as LogLevelName | undefined;
+		const minLevel = levelName && levelName in LogLevel ? LogLevel[levelName] : undefined;
 		const limit = ctx.flags.limit ?? 50;
 		const follow = ctx.flags.follow || false;
 
-		// Read existing entries
 		const content = readFileSync(logPath, "utf-8");
-
-		if (isDaemon) {
-			let entries = parseDaemonEntries(content);
-			if (level) entries = filterByLevel(entries, level);
-			const sliced = follow ? entries : entries.slice(-limit);
-			printDaemonEntries(sliced, isJson);
-		} else {
-			let entries = parseCdpEntries(content);
-			if (domain) entries = filterByDomain(entries, domain);
-			const sliced = follow ? entries : entries.slice(-limit);
-			printCdpEntries(sliced, isJson);
-		}
+		const entries = parseLogEntries(content, { src, minLevel });
+		const sliced = follow ? entries : entries.slice(-limit);
+		printEntries(sliced, isJson, colors);
 
 		if (!follow) return 0;
 
-		// Follow mode: watch for new lines appended to the file
+		// Follow mode: watch for new lines
 		let offset = Buffer.byteLength(content, "utf-8");
 		let watcher: FSWatcher | undefined;
 
@@ -144,25 +96,15 @@ defineCommand({
 				closeSync(fd);
 				offset = size;
 
-				if (isDaemon) {
-					let newEntries = parseDaemonEntries(buf.toString("utf-8"));
-					if (level) newEntries = filterByLevel(newEntries, level);
-					printDaemonEntries(newEntries, isJson);
-				} else {
-					let newEntries = parseCdpEntries(buf.toString("utf-8"));
-					if (domain) newEntries = filterByDomain(newEntries, domain);
-					printCdpEntries(newEntries, isJson);
-				}
+				const newEntries = parseLogEntries(buf.toString("utf-8"), { src, minLevel });
+				printEntries(newEntries, isJson, colors);
 			} catch {
 				// File may have been truncated or removed
 			}
 		};
 
-		watcher = watch(logPath, () => {
-			readNew();
-		});
+		watcher = watch(logPath, () => readNew());
 
-		// Keep alive until Ctrl+C
 		await new Promise<void>((resolve) => {
 			process.on("SIGINT", () => {
 				watcher?.close();
