@@ -40,6 +40,12 @@ tests/fixtures/c/*.dSYM
 # Java build artifacts
 *.class
 tests/fixtures/java/multi-package/out/
+src/dap/adapters/java/target/
 
 # Generated at build time
 src/dap/adapters/java/adapter-sources.tar.gz
+
+# Demo recordings & generated assets
+demo/**/recording.cast
+demo/**/__hotpatch_tmp/
+docs/java-hotpatch.gif

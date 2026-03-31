@@ -17,10 +17,7 @@ describe.skipIf(!HAS_JAVA)("Java debugging — known limitations (lightweight ad
 		}
 	});
 
-	test("hotpatch throws not supported error", () =>
-		withJavaSession("java-lim-hotpatch", async (session) => {
-			await expect(session.hotpatch("Hello.java", "// new code")).rejects.toThrow(/not supported/i);
-		}));
+	// hotpatch is now supported for Java — see java-hotpatch.test.ts
 
 	test("setLogpoint throws not supported error", () =>
 		withJavaSession("java-lim-logpoint", async (session) => {
@@ -47,11 +44,11 @@ describe.skipIf(!HAS_JAVA)("Java debugging — known limitations (lightweight ad
 
 	test("capabilities reflect lightweight adapter limits", () => {
 		const session = new DapSession("java-lim-caps", "java");
-		expect(session.capabilities.hotpatch).toBe(false);
+		expect(session.capabilities.hotpatch).toBe(true);
 		expect(session.capabilities.blackboxing).toBe(false);
 		expect(session.capabilities.logpoints).toBe(false);
 		expect(session.capabilities.scriptSearch).toBe(false);
-		expect(session.capabilities.restartFrame).toBe(false);
+		expect(session.capabilities.restartFrame).toBe(true);
 		expect(session.capabilities.setReturnValue).toBe(false);
 		expect(session.capabilities.functionBreakpoints).toBe(true);
 	});

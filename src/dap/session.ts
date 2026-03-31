@@ -1,115 +1,21 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DebugProtocol } from "@vscode/debugprotocol";
-import { INITIALIZED_TIMEOUT_MS } from "../constants.ts";
-import { BaseSession } from "../session/base-session.ts";
+import {
+	INITIALIZED_TIMEOUT_MS,
+	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+	WAIT_PAUSE_TIMEOUT_MS,
+} from "../constants.ts";
+import type { Logger } from "../logger/index.ts";
+import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
-import { getJavaAdapterClasspath, isJavaAdapterInstalled } from "./adapters/index.ts";
 import { DapClient } from "./client.ts";
+import { getRuntimeConfig } from "./runtimes/index.ts";
 
 /** Directory where managed adapter binaries are stored. */
 export function getManagedAdaptersDir(): string {
 	const home = process.env.HOME ?? process.env.USERPROFILE ?? "/tmp";
 	return join(home, ".debug-that", "adapters");
-}
-
-// ── Runtime-specific configuration ───────────────────────────────
-
-interface DapRuntimeConfig {
-	resolveCommand(): string[];
-	buildLaunchArgs(program: string, programArgs: string[], cwd: string): Record<string, unknown>;
-	parseAttachTarget?(target: string): Record<string, unknown>;
-}
-
-const DEFAULT_LAUNCH: DapRuntimeConfig["buildLaunchArgs"] = (program, programArgs, cwd) => ({
-	program,
-	args: programArgs,
-	cwd,
-});
-
-const lldbConfig: DapRuntimeConfig = {
-	resolveCommand() {
-		const managedPath = join(getManagedAdaptersDir(), "lldb-dap");
-		if (existsSync(managedPath)) return [managedPath];
-		if (Bun.which("lldb-dap")) return ["lldb-dap"];
-		const brewPath = "/opt/homebrew/opt/llvm/bin/lldb-dap";
-		if (existsSync(brewPath)) return [brewPath];
-		return ["lldb-dap"];
-	},
-	buildLaunchArgs: DEFAULT_LAUNCH,
-};
-
-const debugpyConfig: DapRuntimeConfig = {
-	resolveCommand() {
-		const pyBin = Bun.which("python3") ? "python3" : "python";
-		return [pyBin, "-m", "debugpy.adapter"];
-	},
-	buildLaunchArgs: (program, programArgs, cwd) => ({
-		program,
-		args: programArgs,
-		cwd,
-		console: "internalConsole",
-		justMyCode: false,
-	}),
-};
-
-const javaConfig: DapRuntimeConfig = {
-	resolveCommand() {
-		if (!isJavaAdapterInstalled()) {
-			throw new Error("Java debug adapter not installed. Run `dbg install java` first.");
-		}
-		const cp = getJavaAdapterClasspath();
-		return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
-	},
-	buildLaunchArgs(program, programArgs, _cwd) {
-		const basename = program.split("/").pop() ?? program;
-		const mainClass = basename.replace(/\.(java|class)$/, "");
-		// classPaths must point to where .class files live (typically same dir as .java)
-		const programDir = program.includes("/")
-			? program.substring(0, program.lastIndexOf("/"))
-			: _cwd;
-		return {
-			mainClass,
-			classPaths: [programDir],
-			cwd: programDir,
-			sourcePaths: [programDir],
-			stopOnEntry: true,
-			...(programArgs.length > 0 ? { args: programArgs.join(" ") } : {}),
-		};
-	},
-	parseAttachTarget(target) {
-		const colonIdx = target.lastIndexOf(":");
-		if (colonIdx > 0) {
-			return {
-				hostName: target.substring(0, colonIdx),
-				port: parseInt(target.substring(colonIdx + 1), 10),
-			};
-		}
-		const port = parseInt(target, 10);
-		return { hostName: "localhost", port: Number.isNaN(port) ? 5005 : port };
-	},
-};
-
-const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
-	lldb: lldbConfig,
-	"lldb-dap": lldbConfig,
-	codelldb: {
-		resolveCommand: () => ["codelldb", "--port", "0"],
-		buildLaunchArgs: DEFAULT_LAUNCH,
-	},
-	python: debugpyConfig,
-	debugpy: debugpyConfig,
-	java: javaConfig,
-};
-
-function getRuntimeConfig(runtime: string): DapRuntimeConfig {
-	return (
-		RUNTIME_CONFIGS[runtime] ?? {
-			resolveCommand: () => [runtime],
-			buildLaunchArgs: DEFAULT_LAUNCH,
-		}
-	);
 }
 
 interface DapBreakpointEntry {
@@ -160,32 +66,42 @@ export class DapSession extends BaseSession {
 	// Stored config (applied on launch/restart, and immediately if connected+paused)
 	private _remaps: [string, string][] = [];
 	private _symbolPaths: string[] = [];
+	private _sourcePaths: string[] = [];
 
 	// Promise that resolves when the adapter stops (for step/continue/pause)
 	private stoppedWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
-	readonly capabilities: SessionCapabilities = {
-		functionBreakpoints: true,
-		logpoints: false,
-		hotpatch: false,
-		blackboxing: false,
-		modules: true,
-		restartFrame: false,
-		scriptSearch: false,
-		sourceMapResolution: false,
-		breakableLocations: false,
-		setReturnValue: false,
-		pathMapping: true,
-		symbolLoading: true,
-		breakpointToggle: false,
-		restart: false,
-	};
+	readonly capabilities: SessionCapabilities;
 
-	constructor(session: string, runtime: string) {
+	private static buildCapabilities(runtime: string): SessionCapabilities {
+		const isJava = runtime === "java";
+		return {
+			functionBreakpoints: true,
+			logpoints: false,
+			hotpatch: isJava,
+			blackboxing: false,
+			modules: true,
+			restartFrame: isJava,
+			scriptSearch: false,
+			sourceMapResolution: false,
+			breakableLocations: false,
+			setReturnValue: false,
+			pathMapping: true,
+			symbolLoading: true,
+			breakpointToggle: false,
+			restart: false,
+		};
+	}
+
+	private dapLog: Logger<"dap"> | undefined;
+
+	constructor(session: string, runtime: string, options?: { logger?: Logger<"daemon"> }) {
 		super(session);
 		this._runtime = runtime;
+		this.capabilities = DapSession.buildCapabilities(runtime);
+		this.dapLog = options?.logger?.child("dap");
 	}
 
 	override applyPendingConfig(config: PendingConfig): void {
@@ -208,18 +124,24 @@ export class DapSession extends BaseSession {
 		}
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.resolveCommand();
-		this.dap = DapClient.spawn(adapterCmd);
+		const adapterCmd = config.getAdapterCommand();
+		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
 
 		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
+		const builtArgs = config.buildLaunchArgs({ program, args: programArgs, cwd: process.cwd() });
 		const launchArgs: Record<string, unknown> = {
 			stopOnEntry: options.brk ?? true,
-			...config.buildLaunchArgs(program, programArgs, process.cwd()),
+			...builtArgs,
 		};
+
+		// Store source paths for short filename resolution in breakpoints
+		if (builtArgs.sourcePaths) {
+			this._sourcePaths = builtArgs.sourcePaths;
+		}
 
 		// Apply stored source-map remappings
 		if (this._remaps.length > 0) {
@@ -241,7 +163,8 @@ export class DapSession extends BaseSession {
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
-			await this.waitForStop(5_000);
+			await this.waitUntilStopped();
+			if (this.isPaused()) await this.fetchStackTrace();
 			if (!this.isPaused()) {
 				const errors = this.consoleMessages
 					.filter((m) => m.level === "error")
@@ -275,8 +198,8 @@ export class DapSession extends BaseSession {
 		this._isAttached = true;
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.resolveCommand();
-		this.dap = DapClient.spawn(adapterCmd);
+		const adapterCmd = config.getAdapterCommand();
+		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
 		this.setupEventHandlers();
 		await this.initializeAdapter();
@@ -285,7 +208,7 @@ export class DapSession extends BaseSession {
 		if (config.parseAttachTarget) {
 			attachArgs = config.parseAttachTarget(target);
 		} else {
-			const pid = parseInt(target, 10);
+			const pid = Number.parseInt(target, 10);
 			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
 		}
 
@@ -295,9 +218,7 @@ export class DapSession extends BaseSession {
 		await attachPromise;
 
 		// Wait briefly for initial stop
-		await this.waitForStop(5_000).catch(() => {
-			// Some adapters don't stop immediately on attach
-		});
+		await this.waitUntilStopped({ timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS, throwOnTimeout: false });
 
 		// If we're not paused after waiting, the target is running
 		if (this.state === "idle") {
@@ -341,7 +262,13 @@ export class DapSession extends BaseSession {
 
 	// ── Execution control ─────────────────────────────────────────────
 
-	async continue(): Promise<void> {
+	async continue(
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: false,
+		},
+	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -350,13 +277,21 @@ export class DapSession extends BaseSession {
 		this._stackFrames = [];
 		this.refs.clearVolatile();
 
-		const waiter = this.createStoppedWaiter(30_000);
+		const waiter =
+			options?.waitForStop === true ? this.waitUntilStopped(options) : Promise.resolve();
 		await this.getDap().send("continue", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
 
-	async step(mode: "over" | "into" | "out"): Promise<void> {
+	async step(
+		mode: "over" | "into" | "out",
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: true,
+		},
+	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
 
@@ -364,7 +299,8 @@ export class DapSession extends BaseSession {
 		this.pauseInfo = null;
 		this.refs.clearVolatile();
 
-		const waiter = this.createStoppedWaiter(30_000);
+		const waiter =
+			options?.waitForStop !== false ? this.waitUntilStopped(options) : Promise.resolve();
 		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
 		await this.getDap().send(command, { threadId: this._threadId });
 		await waiter;
@@ -377,7 +313,7 @@ export class DapSession extends BaseSession {
 			throw new Error("Cannot pause: target is not running");
 		}
 
-		const waiter = this.createStoppedWaiter(5_000);
+		const waiter = this.waitUntilStopped();
 		await this.getDap().send("pause", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
@@ -391,6 +327,9 @@ export class DapSession extends BaseSession {
 		options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
 	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
 		this.requireConnected();
+
+		// Resolve short filenames (e.g. "User.java") to full paths via sourcePaths
+		file = this.resolveSourceFile(file);
 
 		const entry: DapBreakpointEntry = {
 			ref: "", // will be set by RefTable
@@ -905,11 +844,54 @@ export class DapSession extends BaseSession {
 	}
 
 	async hotpatch(
-		_file: string,
-		_source: string,
+		file: string,
+		source: string,
 		_options?: { dryRun?: boolean },
 	): Promise<{ status: string; callFrames?: unknown[]; exceptionDetails?: unknown }> {
-		throw new Error("Hot-patching is not supported in DAP mode.");
+		if (this._runtime !== "java") {
+			throw new Error("Hot-patching is only supported for Java in DAP mode.");
+		}
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		// Step 1: Prepare — compile .java or stage .class, cache classpath.
+		// Done via evaluate to access the debuggee thread for classpath resolution.
+		const payload = `__HOTPATCH_PREPARE__${file}\n${source}`;
+		const frameId = this.resolveFrameId();
+		await this.getDap().send("evaluate", {
+			expression: payload,
+			frameId,
+			context: "repl",
+		});
+
+		// Step 2: Redefine — triggers IHotCodeReplaceProvider.redefineClasses()
+		// on the proper framework path (avoids evaluate/redefine deadlock).
+		const response = await this.getDap().send("redefineClasses", {});
+		const body = response.body as { changedClasses?: string[]; errorMessage?: string };
+
+		if (body.errorMessage) {
+			throw new Error(body.errorMessage);
+		}
+
+		const classes = body.changedClasses ?? [];
+		if (classes.length === 0) {
+			throw new Error("No classes were redefined.");
+		}
+
+		// Refresh stack and check for obsolete frames (frames in redefined classes)
+		this._stackFetchPromise = null; // force refresh
+		await this.ensureStack();
+		const obsoleteFrames = this._stackFrames.filter((f) =>
+			classes.some((cls) => f.name.startsWith(`${cls}.`)),
+		);
+
+		let status = `replaced ${classes.length} class(es): ${classes.join(", ")}`;
+		if (obsoleteFrames.length > 0) {
+			status += `. ${obsoleteFrames.length} obsolete frame(s) — use restart-frame to re-enter with new code`;
+		}
+
+		return { status };
 	}
 
 	async searchInScripts(
@@ -958,8 +940,21 @@ export class DapSession extends BaseSession {
 		throw new Error("Setting return values is not supported in DAP mode.");
 	}
 
-	async restartFrame(_frameRef?: string): Promise<{ status: string }> {
-		throw new Error("Frame restart is not supported in DAP mode.");
+	async restartFrame(frameRef?: string): Promise<{ status: string }> {
+		if (this._runtime !== "java") {
+			throw new Error("Frame restart is not supported for this runtime.");
+		}
+		this.requireConnected();
+		this.requirePaused();
+		await this.ensureStack();
+
+		const frameId = this.resolveFrameId(frameRef);
+
+		const waiter = this.waitUntilStopped({ throwOnTimeout: true });
+		await this.getDap().send("restartFrame", { frameId });
+		await waiter;
+
+		return { status: "restarted" };
 	}
 
 	// ── Path remapping & symbol loading (LLDB commands via DAP evaluate) ──
@@ -1036,8 +1031,7 @@ export class DapSession extends BaseSession {
 		const tempBp = await this.setBreakpoint(file, line);
 
 		try {
-			// Continue execution to the temporary breakpoint
-			await this.continue();
+			await this.continue({ waitForStop: true, throwOnTimeout: true });
 		} finally {
 			// Remove the temporary breakpoint regardless of outcome
 			try {
@@ -1354,12 +1348,50 @@ export class DapSession extends BaseSession {
 		}
 	}
 
-	private createStoppedWaiter(timeoutMs: number): Promise<void> {
+	/**
+	 * Resolve a short filename (e.g. "User.java") to its full path by searching sourcePaths.
+	 * If already absolute, returns as-is. If ambiguous, throws with candidate list.
+	 */
+	private resolveSourceFile(file: string): string {
+		// Already a full path — use as-is
+		if (file.startsWith("/") || file.includes("/")) return file;
+		if (this._sourcePaths.length === 0) return file;
+
+		const matches: string[] = [];
+		for (const root of this._sourcePaths) {
+			for (const path of new Bun.Glob(`**/${file}`).scanSync(root)) {
+				matches.push(join(root, path));
+			}
+		}
+
+		if (matches.length === 0) return file; // not found — pass through, adapter may resolve
+		if (matches.length === 1) return matches[0] ?? file;
+
+		// Ambiguous — show candidates
+		const candidates = matches.map((m) => `  ${m}`).join("\n");
+		throw new Error(
+			`Ambiguous filename "${file}" — ${matches.length} matches found:\n${candidates}\nUse a full path instead.`,
+		);
+	}
+
+	/**
+	 * Create a promise that resolves when the debuggee stops (breakpoint, step complete,
+	 * exception, or program exit). Used by continue/step/pause/launch/attach.
+	 */
+	public waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
+		if (this.isPaused()) return Promise.resolve();
+
+		const timeoutMs = options?.timeoutMs ?? WAIT_PAUSE_TIMEOUT_MS;
+		const throwOnTimeout = options?.throwOnTimeout ?? false;
+
 		return new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.stoppedWaiter = null;
-				// Don't reject — the process is still running, just resolve
-				resolve();
+				if (throwOnTimeout) {
+					reject(new Error(`Timed out waiting for stopped event (after ${timeoutMs}ms)`));
+				} else {
+					resolve();
+				}
 			}, timeoutMs);
 
 			this.stoppedWaiter = {
@@ -1395,15 +1427,5 @@ export class DapSession extends BaseSession {
 			};
 			dap.on("initialized", handler);
 		});
-	}
-
-	private async waitForStop(timeoutMs: number): Promise<void> {
-		if (!this.isPaused()) {
-			await this.createStoppedWaiter(timeoutMs);
-		}
-		// Fetch the stack trace if paused and not yet loaded
-		if (this.isPaused() && this._stackFrames.length === 0) {
-			await this.fetchStackTrace();
-		}
 	}
 }

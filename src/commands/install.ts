@@ -50,12 +50,6 @@ defineCommand({
 			return 1;
 		}
 
-		if (installer.isInstalled()) {
-			console.log(`${installer.name} is already installed.`);
-			console.log("  To reinstall, remove ~/.debug-that/adapters/ entry first.");
-			return 0;
-		}
-
 		try {
 			console.log(`Installing ${installer.name}...`);
 			await installer.install((msg) => console.log(msg));

@@ -4,7 +4,7 @@ import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { createLogger, type Logger } from "../logger/index.ts";
-import { BaseSession } from "../session/base-session.ts";
+import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
 import type {
 	AttachResult,
@@ -19,7 +19,7 @@ import type {
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { createAdapter } from "./adapters/index.ts";
-import { CdpClient } from "./client.ts";
+import { CdpClient, TimeoutError } from "./client.ts";
 import type { CdpDialect } from "./dialect.ts";
 import {
 	addBlackbox as addBlackboxImpl,
@@ -71,8 +71,9 @@ export interface ScriptInfo {
 // Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
 import {
 	INSPECTOR_TIMEOUT_MS,
-	PAUSE_WAITER_TIMEOUT_MS,
 	STATE_WAIT_TIMEOUT_MS,
+	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+	WAIT_PAUSE_TIMEOUT_MS,
 } from "../constants.ts";
 
 const INSPECTOR_URL_REGEX = /(?:Debugger listening on\s+)?(wss?:\/\/\S+)/;
@@ -552,12 +553,25 @@ export class CdpSession extends BaseSession {
 	}
 
 	// Execution control
-	async continue(): Promise<void> {
-		return continueExecution(this);
+	async continue(
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: false,
+		},
+	): Promise<void> {
+		return continueExecution(this, options);
 	}
 
-	async step(mode: "over" | "into" | "out"): Promise<void> {
-		return stepExecution(this, mode);
+	async step(
+		mode: "over" | "into" | "out",
+		options: WaitForStopOptions = {
+			waitForStop: true,
+			timeoutMs: WAIT_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: true,
+		},
+	): Promise<void> {
+		return stepExecution(this, mode, options);
 	}
 
 	async pause(): Promise<void> {
@@ -674,8 +688,11 @@ export class CdpSession extends BaseSession {
 	 * miss events. Does NOT check current state — the caller is about to
 	 * send a resume/step command.
 	 */
-	createPauseWaiter(timeoutMs = PAUSE_WAITER_TIMEOUT_MS): Promise<void> {
-		return new Promise<void>((resolve) => {
+	async waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
+		const timeoutMs = options?.timeoutMs ?? WAIT_PAUSE_TIMEOUT_MS;
+		const throwOnTimeout = options?.throwOnTimeout ?? false;
+
+		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
 			const settle = () => {
@@ -686,11 +703,22 @@ export class CdpSession extends BaseSession {
 				resolve();
 			};
 
+			const timeout = () => {
+				if (settled) return;
+				settled = true;
+				clearInterval(pollTimer);
+				this.onProcessExit.delete(settle);
+				if (throwOnTimeout) {
+					reject(`Timed out waiting for paused event (after ${timeoutMs}ms)`);
+				}
+				resolve();
+			};
+
 			// Use waitFor for the event subscription + timeout
 			this.cdp
 				?.waitFor("Debugger.paused", { timeoutMs })
 				.then(() => settle())
-				.catch(() => settle()); // timeout — don't reject, just settle
+				.catch((error) => (error instanceof TimeoutError ? timeout() : reject(error)));
 
 			// Poll as a fallback in case the event/callback is missed
 			// (e.g., process exits and monitorProcessExit runs before

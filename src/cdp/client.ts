@@ -15,6 +15,13 @@ interface PendingRequest {
 	timer: ReturnType<typeof setTimeout>;
 }
 
+export class TimeoutError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "TimeoutError";
+	}
+}
+
 export class CdpClient {
 	private ws: WebSocket;
 	private nextId = 1;
@@ -150,7 +157,7 @@ export class CdpClient {
 
 			const timer = setTimeout(() => {
 				cleanup();
-				reject(new Error(`waitFor timed out: ${event} (after ${timeoutMs}ms)`));
+				reject(new TimeoutError(`waitFor timed out: ${event} (after ${timeoutMs}ms)`));
 			}, timeoutMs);
 
 			const cleanup = () => {

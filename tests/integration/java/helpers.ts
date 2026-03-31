@@ -8,7 +8,7 @@ export const JAVA_VERSION = (() => {
 	return match?.[1] ? parseInt(match[1], 10) : 0;
 })();
 
-export const HAS_JAVA = JAVA_VERSION >= 11 && isJavaAdapterInstalled();
+export const HAS_JAVA = JAVA_VERSION >= 17 && isJavaAdapterInstalled();
 
 export async function withJavaSession(
 	name: string,

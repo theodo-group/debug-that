@@ -1,3 +1,4 @@
+import type { WaitForStopOptions } from "./base-session.ts";
 import type {
 	ConsoleMessage,
 	ExceptionEntry,
@@ -174,8 +175,8 @@ export interface Session {
 	restart(): Promise<LaunchResult>;
 
 	// ── Execution control ─────────────────────────────────────────
-	continue(): Promise<void>;
-	step(mode: "over" | "into" | "out"): Promise<void>;
+	continue(options?: WaitForStopOptions): Promise<void>;
+	step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void>;
 	pause(): Promise<void>;
 	runTo(file: string, line: number): Promise<void>;
 	restartFrame(frameRef?: string): Promise<{ status: string }>;

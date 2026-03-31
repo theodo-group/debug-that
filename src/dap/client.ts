@@ -217,13 +217,13 @@ export class DapClient {
 		} catch {
 			return;
 		}
-
 		if (parsed.type === "response") {
 			const response = parsed as DebugProtocol.Response;
 			this.logger?.trace("recv", {
 				command: response.command,
 				seq: response.request_seq,
 				success: response.success,
+				body: response.body,
 			});
 
 			const pending = this.pending.get(response.request_seq);
@@ -240,7 +240,7 @@ export class DapClient {
 			}
 		} else if (parsed.type === "event") {
 			const event = parsed as DebugProtocol.Event;
-			this.logger?.trace("event", { event: event.event });
+			this.logger?.trace("event", { event: event.event, body: event.body });
 
 			const handlers = this.listeners.get(event.event);
 			if (handlers) {
@@ -265,7 +265,8 @@ export class DapClient {
 			while (true) {
 				const { done, value } = await reader.read();
 				if (done) break;
-				this._stderr += decoder.decode(value, { stream: true });
+				const chunk = decoder.decode(value, { stream: true });
+				this._stderr += chunk;
 				if (this._stderr.length > MAX_STDERR_BUFFER) {
 					this._stderr = this._stderr.slice(-MAX_STDERR_BUFFER);
 				}

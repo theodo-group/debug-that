@@ -44,7 +44,7 @@ export class BunAdapter implements CdpDialect {
 		const entryScript = this.resolveEntryScript(session);
 		const tempBpId = await this.setEntryBreakpoint(entryScript);
 		try {
-			const waiter = session.createPauseWaiter(5_000);
+			const waiter = session.waitUntilStopped();
 			await this.jsc.send("Inspector.initialized");
 			await waiter;
 		} finally {

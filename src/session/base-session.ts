@@ -28,6 +28,12 @@ import type {
 	StateSnapshot,
 } from "./types.ts";
 
+export interface WaitForStopOptions {
+	waitForStop?: boolean;
+	timeoutMs?: number;
+	throwOnTimeout?: boolean;
+}
+
 /**
  * BaseSession provides shared state management, ref tracking, and console/exception
  * buffering for all session types (CDP and DAP).
@@ -143,8 +149,8 @@ export abstract class BaseSession implements Session {
 	abstract stop(): Promise<void>;
 	abstract restart(): Promise<LaunchResult>;
 
-	abstract continue(): Promise<void>;
-	abstract step(mode: "over" | "into" | "out"): Promise<void>;
+	abstract continue(options?: WaitForStopOptions): Promise<void>;
+	abstract step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void>;
 	abstract pause(): Promise<void>;
 	abstract runTo(file: string, line: number): Promise<void>;
 	abstract restartFrame(frameRef?: string): Promise<{ status: string }>;

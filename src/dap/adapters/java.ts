@@ -1,36 +1,29 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { $ } from "bun";
 import { getManagedAdaptersDir } from "../session.ts";
 import type { AdapterInstaller } from "./types.ts";
 
-const MAVEN_CENTRAL = "https://repo1.maven.org/maven2";
-
-const JAVA_DEPS: Record<string, string> = {
-	"com.microsoft.java.debug.core-0.53.0.jar":
-		"com/microsoft/java/com.microsoft.java.debug.core/0.53.0/com.microsoft.java.debug.core-0.53.0.jar",
-	"commons-lang3-3.14.0.jar": "org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar",
-	"gson-2.10.1.jar": "com/google/code/gson/gson/2.10.1/gson-2.10.1.jar",
-	"rxjava-2.2.21.jar": "io/reactivex/rxjava2/rxjava/2.2.21/rxjava-2.2.21.jar",
-	"reactive-streams-1.0.4.jar":
-		"org/reactivestreams/reactive-streams/1.0.4/reactive-streams-1.0.4.jar",
-	"commons-io-2.15.1.jar": "commons-io/commons-io/2.15.1/commons-io-2.15.1.jar",
-};
-
-const JAVA_DEP_NAMES = Object.keys(JAVA_DEPS);
+/** Git commit of microsoft/java-debug that includes suspendAllThreads support. */
+const JAVA_DEBUG_COMMIT = "31dd8ee33403f7365937cf77c653f2f5ec0960ba";
+const JAVA_DEBUG_REPO = "https://github.com/microsoft/java-debug.git";
+/** Version produced by building java-debug at the pinned commit. */
+const JAVA_DEBUG_VERSION = "0.53.2";
 
 function getJavaAdapterDir(): string {
 	return join(getManagedAdaptersDir(), "java");
 }
 
-/** Check if the Java adapter is fully installed (all JARs + compiled classes). */
+/** Check if the Java adapter is fully installed (classes + deps). */
 export function isJavaAdapterInstalled(): boolean {
 	const dir = getJavaAdapterDir();
-	const depsDir = join(dir, "deps");
 	if (!existsSync(join(dir, "classes", "com", "debugthat", "adapter", "Main.class"))) {
 		return false;
 	}
-	return JAVA_DEP_NAMES.every((jar) => existsSync(join(depsDir, jar)));
+	const depsDir = join(dir, "deps");
+	if (!existsSync(depsDir)) return false;
+	const jars = readdirSync(depsDir).filter((f) => f.endsWith(".jar"));
+	return jars.length > 0;
 }
 
 /** Build the classpath string for running the Java adapter. */
@@ -38,7 +31,10 @@ export function getJavaAdapterClasspath(): string {
 	const dir = getJavaAdapterDir();
 	const depsDir = join(dir, "deps");
 	const classesDir = join(dir, "classes");
-	const jars = JAVA_DEP_NAMES.map((jar) => join(depsDir, jar));
+	if (!existsSync(depsDir)) return classesDir;
+	const jars = readdirSync(depsDir)
+		.filter((f) => f.endsWith(".jar"))
+		.map((f) => join(depsDir, f));
 	return [classesDir, ...jars].join(delimiter);
 }
 
@@ -65,45 +61,99 @@ async function extractAdapterSources(installDir: string): Promise<string[]> {
 	return Array.from(new Bun.Glob("*.java").scanSync(packageDir)).map((f) => join(packageDir, f));
 }
 
+/**
+ * Ensure java-debug is built and installed to the local Maven repo (~/.m2).
+ * Clones at the pinned commit and builds if not already present.
+ */
+async function ensureJavaDebugBuilt(log: (msg: string) => void): Promise<void> {
+	// Check if the artifact already exists in local Maven repo
+	const m2Home = join(process.env.HOME ?? "/tmp", ".m2", "repository");
+	const artifactDir = join(
+		m2Home,
+		"com/microsoft/java/com.microsoft.java.debug.core",
+		JAVA_DEBUG_VERSION,
+	);
+	const jarName = `com.microsoft.java.debug.core-${JAVA_DEBUG_VERSION}.jar`;
+	if (existsSync(join(artifactDir, jarName))) {
+		return;
+	}
+
+	log("  Building java-debug from source (pinned commit)...");
+
+	const buildDir = join(getManagedAdaptersDir(), "java-debug-src");
+	if (!existsSync(buildDir)) {
+		await $`git clone --depth 50 ${JAVA_DEBUG_REPO} ${buildDir}`.quiet();
+	}
+
+	await $`git -C ${buildDir} fetch --depth 50 origin ${JAVA_DEBUG_COMMIT}`.quiet().nothrow();
+	await $`git -C ${buildDir} checkout ${JAVA_DEBUG_COMMIT}`.quiet();
+
+	// Install parent POM + core module to local Maven repo
+	await $`mvn -f ${buildDir}/pom.xml -q install -DskipTests -pl com.microsoft.java.debug.core -am`;
+
+	log("  java-debug built and installed to local Maven repo.");
+}
+
+/**
+ * Get the pom.xml path — dev mode uses source tree, bundle mode extracts it.
+ */
+function getAdapterPomPath(): string {
+	const devPom = join(import.meta.dir, "java", "pom.xml");
+	if (existsSync(devPom)) return devPom;
+	// In bundle mode, the pom.xml is extracted alongside sources
+	return join(getManagedAdaptersDir(), "java", "src", "pom.xml");
+}
+
 export const javaInstaller: AdapterInstaller = {
 	name: "java (java-debug.core)",
 
 	isInstalled: isJavaAdapterInstalled,
 
 	async install(log) {
+		// Check Java
 		const javaVersionResult = await $`java -version`.quiet().nothrow();
 		const stderr = javaVersionResult.stderr.toString().trim();
 		const versionMatch = stderr.match(/version "(\d+)/);
 		const version = versionMatch?.[1] ? parseInt(versionMatch[1], 10) : 0;
-		if (version < 11) {
-			throw new Error(`Java 11+ required (found: ${stderr.split("\n")[0]?.trim() ?? "none"})`);
+		if (version < 17) {
+			throw new Error(`Java 17+ required (found: ${stderr.split("\n")[0]?.trim() ?? "none"})`);
+		}
+
+		// Check Maven
+		const mvnResult = await $`mvn -version`.quiet().nothrow();
+		if (mvnResult.exitCode !== 0) {
+			throw new Error(
+				"Maven (mvn) is required to install the Java adapter. Install it with: brew install maven",
+			);
 		}
 
 		const dir = getJavaAdapterDir();
+		mkdirSync(dir, { recursive: true });
+
+		// Step 1: Extract adapter sources (also provides pom.xml for dependency resolution)
+		const sourceFiles = await extractAdapterSources(dir);
+
+		// Step 2: Build java-debug from source if needed (for unreleased suspendAllThreads)
+		await ensureJavaDebugBuilt(log);
+
+		// Step 3: Resolve dependencies via Maven
+		log("  Resolving dependencies...");
 		const depsDir = join(dir, "deps");
 		mkdirSync(depsDir, { recursive: true });
+		const pomPath = getAdapterPomPath();
 
-		for (const [jarName, mavenPath] of Object.entries(JAVA_DEPS)) {
-			const jarPath = join(depsDir, jarName);
-			if (!existsSync(jarPath)) {
-				log(`  Downloading ${jarName}...`);
-				const response = await fetch(`${MAVEN_CENTRAL}/${mavenPath}`, {
-					redirect: "follow",
-				});
-				if (!response.ok) {
-					throw new Error(`Failed to download ${jarName}: HTTP ${response.status}`);
-				}
-				await Bun.write(jarPath, response);
-			}
-		}
+		await $`mvn -f ${pomPath} -q dependency:copy-dependencies -DoutputDirectory=${depsDir}`;
 
+		// Step 4: Compile adapter sources
 		log("  Compiling adapter...");
-		const cp = JAVA_DEP_NAMES.map((jar) => join(depsDir, jar)).join(delimiter);
+		const jars = readdirSync(depsDir)
+			.filter((f) => f.endsWith(".jar"))
+			.map((f) => join(depsDir, f));
+		const cp = jars.join(delimiter);
 		const classesDir = join(dir, "classes");
 		mkdirSync(classesDir, { recursive: true });
 
-		const sourceFiles = await extractAdapterSources(dir);
-		await $`javac -d ${classesDir} -cp ${cp} -source 11 -target 11 ${sourceFiles}`;
+		await $`javac -d ${classesDir} -cp ${cp} -source 17 -target 17 ${sourceFiles}`;
 
 		log("  Adapter compiled.");
 	},

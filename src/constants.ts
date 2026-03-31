@@ -25,8 +25,11 @@ export const MAX_INTERNAL_PAUSE_SKIPS = 5;
 /** Default timeout for waitForState polling. */
 export const STATE_WAIT_TIMEOUT_MS = 5_000;
 
-/** Default timeout for createPauseWaiter (waiting for Debugger.paused event). */
-export const PAUSE_WAITER_TIMEOUT_MS = 30_000;
+/** Default timeout for waitUntilStopped (when debugging SHALL pauses). */
+export const WAIT_PAUSE_TIMEOUT_MS = 5_000;
+
+/** Default timeout for waitUntilStopped (when debugging MAYBE pauses). */
+export const WAIT_MAYBE_PAUSE_TIMEOUT_MS = 500;
 
 /** Max console/exception messages to retain in memory per session. */
 export const MAX_BUFFERED_MESSAGES = 1_000;

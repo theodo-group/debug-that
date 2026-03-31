@@ -26,7 +26,7 @@ describe.skipIf(!HAS_LLDB)("LLDB modules", () => {
 		withDapSession("lldb-modules-basic", async (session) => {
 			await session.launch([HELLO_BINARY], { brk: true });
 			await session.setBreakpoint(HELLO_SOURCE, 4);
-			await session.continue();
+			await session.continue({ waitForStop: true, timeoutMs: 500, throwOnTimeout: true });
 
 			const modules = await session.getModules();
 			expect(modules.length).toBeGreaterThan(0);
@@ -39,7 +39,7 @@ describe.skipIf(!HAS_LLDB)("LLDB modules", () => {
 		withDapSession("lldb-modules-filter", async (session) => {
 			await session.launch([HELLO_BINARY], { brk: true });
 			await session.setBreakpoint(HELLO_SOURCE, 4);
-			await session.continue();
+			await session.continue({ waitForStop: true, timeoutMs: 500, throwOnTimeout: true });
 
 			const all = await session.getModules();
 			const filtered = await session.getModules("hello");
@@ -55,7 +55,7 @@ describe.skipIf(!HAS_LLDB)("LLDB modules", () => {
 		withDapSession("lldb-modules-fields", async (session) => {
 			await session.launch([HELLO_BINARY], { brk: true });
 			await session.setBreakpoint(HELLO_SOURCE, 4);
-			await session.continue();
+			await session.continue({ waitForStop: true, timeoutMs: 500, throwOnTimeout: true });
 
 			const modules = await session.getModules();
 			const first = modules[0]!;
