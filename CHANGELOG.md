@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.6.0
+
+### New Features
+
+- **Java expression evaluation (ECJ compile+inject)** — full Java expression support in `dbg eval`, replacing the limited variable/field-only evaluator
+  - Arithmetic, method calls with arguments, ternary, constructors, collections, string operations
+  - Automatic reflection fallback for private field access
+  - Compiles expressions to bytecode with ECJ 3.40.0, injects via JDI `ClassLoader.defineClass`
+- **Java hot code replace (`dbg hotpatch`)** — live-patch Java classes without restarting the JVM
+  - `.java` input: compiles with ECJ using debuggee classpath, redefines via `vm.redefineClasses()`
+  - `.class` input: reads bytecode directly, auto-detects inner class siblings
+  - Obsolete frame detection with restart-frame support
+  - Two-step DAP protocol (prepare + redefineClasses) avoids java-debug framework deadlock
+  - Works with Spring Boot: attach to running app, hotpatch controller, verify with curl
+- **Unified structured logger** — single typed JSONL log file per session
+  - Replaces separate CdpLogger + DaemonLogger + DEBUG_DAP with `Logger<N>` typed by source
+  - `LogData<N, M>` conditional type: known messages enforce data shapes at compile time
+  - Custom formatters per (source, msg) pair: CDP `→/←/⚡`, DAP `→/←/⚡`, default `key=value`
+  - `dbg logs --src cdp --level trace` with colored output
+
+### Bug Fixes
+
+- **JVM freeze after hotpatch** — `SUSPEND_ALL` breakpoint policy (matching IntelliJ) prevents VM safepoint deadlock when `redefineClasses` is called with only one thread paused
+- **Breakpoint disable/re-enable around redefineClasses** — prevents JDWP agent from firing events during class redefinition safepoint
+
+### Improvements
+
+- **Maven-based Java adapter installer** — dependencies resolved via `mvn dependency:copy-dependencies` instead of manual JAR downloads; `pom.xml` is the single source of truth
+- **java-debug 0.53.2** (built from source) — includes `suspendAllThreads` setting for `SUSPEND_ALL` policy
+- **`bun run build:java`** — one command to recompile the Java adapter during development
+- **`dbg install java`** always recompiles (no "already installed" guard)
+- **DAP runtime configs** extracted into `src/dap/runtimes/` with typed `DapRuntimeConfig` interface
+- **WaitForStopOptions** — unified continue/step options across CDP and DAP sessions
+- **`-cp` classpath support** for Java launch: `dbg launch java -- -cp lib/*:classes Main`
+- **Short filename resolution** for Java sources (Maven layout auto-detection)
+- **`PathSearchingVirtualMachine.classPath()`** for safe classpath resolution without thread resumption
+
 ## 0.5.0
 
 ### New Features
