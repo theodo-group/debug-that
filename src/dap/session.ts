@@ -18,24 +18,27 @@ export function getManagedAdaptersDir(): string {
 	return join(home, ".debug-that", "adapters");
 }
 
-interface DapBreakpointEntry {
+interface DapBreakpointBase {
 	ref: string;
+	condition?: string;
+	hitCondition?: string;
+	verified: boolean;
+}
+
+interface DapFileBreakpoint extends DapBreakpointBase {
+	kind: "file";
 	dapId?: number;
 	file: string;
 	line: number;
-	condition?: string;
-	hitCondition?: string;
-	verified: boolean;
 	actualLine?: number;
 }
 
-interface DapFunctionBreakpointEntry {
-	ref: string;
+interface DapFunctionBreakpoint extends DapBreakpointBase {
+	kind: "function";
 	name: string;
-	condition?: string;
-	hitCondition?: string;
-	verified: boolean;
 }
+
+type DapBreakpoint = DapFileBreakpoint | DapFunctionBreakpoint;
 
 interface DapStackFrame {
 	id: number;
@@ -58,10 +61,8 @@ export class DapSession extends BaseSession {
 	private _stackFrames: DapStackFrame[] = [];
 	private adapterCapabilities: DebugProtocol.Capabilities = {};
 
-	// Breakpoints: DAP requires sending ALL breakpoints per file at once
-	private breakpoints = new Map<string, DapBreakpointEntry[]>();
-	private allBreakpoints: DapBreakpointEntry[] = [];
-	private functionBreakpoints: DapFunctionBreakpointEntry[] = [];
+	// Breakpoints: DAP requires sending ALL breakpoints per file/function at once
+	private breakpoints: DapBreakpoint[] = [];
 
 	// Stored config (applied on launch/restart, and immediately if connected+paused)
 	private _remaps: [string, string][] = [];
@@ -255,9 +256,7 @@ export class DapSession extends BaseSession {
 		this.resetState();
 		this._stackFrames = [];
 		this._isAttached = false;
-		this.breakpoints.clear();
-		this.allBreakpoints = [];
-		this.functionBreakpoints = [];
+		this.breakpoints = [];
 	}
 
 	// ── Execution control ─────────────────────────────────────────────
@@ -331,7 +330,8 @@ export class DapSession extends BaseSession {
 		// Resolve short filenames (e.g. "User.java") to full paths via sourcePaths
 		file = this.resolveSourceFile(file);
 
-		const entry: DapBreakpointEntry = {
+		const entry: DapFileBreakpoint = {
+			kind: "file",
 			ref: "", // will be set by RefTable
 			file,
 			line,
@@ -340,14 +340,7 @@ export class DapSession extends BaseSession {
 			verified: false,
 		};
 
-		// Add to per-file tracking
-		let fileBreakpoints = this.breakpoints.get(file);
-		if (!fileBreakpoints) {
-			fileBreakpoints = [];
-			this.breakpoints.set(file, fileBreakpoints);
-		}
-		fileBreakpoints.push(entry);
-		this.allBreakpoints.push(entry);
+		this.breakpoints.push(entry);
 
 		// Register ref
 		const ref = this.refs.addBreakpoint(`dap-bp:${file}:${line}`, {
@@ -368,40 +361,33 @@ export class DapSession extends BaseSession {
 	async removeBreakpoint(ref: string): Promise<void> {
 		this.requireConnected();
 
-		const entry = this.allBreakpoints.find((bp) => bp.ref === ref);
-		if (!entry) {
+		const idx = this.breakpoints.findIndex((bp) => bp.ref === ref);
+		if (idx === -1) {
 			throw new Error(`Unknown breakpoint ref: ${ref}`);
 		}
-
-		// Remove from per-file tracking
-		const fileBreakpoints = this.breakpoints.get(entry.file);
-		if (fileBreakpoints) {
-			const idx = fileBreakpoints.indexOf(entry);
-			if (idx !== -1) fileBreakpoints.splice(idx, 1);
-			if (fileBreakpoints.length === 0) {
-				this.breakpoints.delete(entry.file);
-			}
-		}
-
-		// Remove from all-breakpoints list
-		const allIdx = this.allBreakpoints.indexOf(entry);
-		if (allIdx !== -1) this.allBreakpoints.splice(allIdx, 1);
-
-		// Remove from ref table
+		// biome-ignore lint/style/noNonNullAssertion: idx validated above
+		const entry = this.breakpoints[idx]!;
+		this.breakpoints.splice(idx, 1);
 		this.refs.remove(ref);
 
-		// Re-sync file breakpoints (or clear them if none left)
-		await this.syncFileBreakpoints(entry.file);
+		if (entry.kind === "file") {
+			await this.syncFileBreakpoints(entry.file);
+		} else {
+			await this.syncFunctionBreakpoints();
+		}
 	}
 
 	async removeAllBreakpoints(): Promise<void> {
 		this.requireConnected();
 
-		// Clear all files
-		const files = [...this.breakpoints.keys()];
-		this.breakpoints.clear();
-		this.allBreakpoints = [];
-		this.functionBreakpoints = [];
+		const files = new Set(
+			this.breakpoints
+				.filter((bp): bp is DapFileBreakpoint => bp.kind === "file")
+				.map((bp) => bp.file),
+		);
+		const hadFunctionBps = this.breakpoints.some((bp) => bp.kind === "function");
+
+		this.breakpoints = [];
 
 		// Remove all BP refs
 		for (const entry of this.refs.list("BP")) {
@@ -417,7 +403,9 @@ export class DapSession extends BaseSession {
 		}
 
 		// Clear function breakpoints
-		await this.getDap().send("setFunctionBreakpoints", { breakpoints: [] });
+		if (hadFunctionBps) {
+			await this.getDap().send("setFunctionBreakpoints", { breakpoints: [] });
+		}
 	}
 
 	/** DAP breakpoints are always bound — the pending filter is ignored. */
@@ -428,21 +416,13 @@ export class DapSession extends BaseSession {
 		line: number;
 		condition?: string;
 	}> {
-		const fileBps = this.allBreakpoints.map((bp) => ({
+		return this.breakpoints.map((bp) => ({
 			ref: bp.ref,
 			type: "BP" as const,
-			url: bp.file,
-			line: bp.actualLine ?? bp.line,
+			url: bp.kind === "file" ? bp.file : bp.name,
+			line: bp.kind === "file" ? (bp.actualLine ?? bp.line) : 0,
 			condition: bp.condition,
 		}));
-		const fnBps = this.functionBreakpoints.map((bp) => ({
-			ref: bp.ref,
-			type: "BP" as const,
-			url: bp.name,
-			line: 0,
-			condition: bp.condition,
-		}));
-		return [...fileBps, ...fnBps];
 	}
 
 	/**
@@ -455,7 +435,8 @@ export class DapSession extends BaseSession {
 	): Promise<{ ref: string }> {
 		this.requireConnected();
 
-		const entry: DapFunctionBreakpointEntry = {
+		const entry: DapFunctionBreakpoint = {
+			kind: "function",
 			ref: "",
 			name,
 			condition: options?.condition,
@@ -463,7 +444,7 @@ export class DapSession extends BaseSession {
 			verified: false,
 		};
 
-		this.functionBreakpoints.push(entry);
+		this.breakpoints.push(entry);
 
 		const ref = this.refs.addBreakpoint(`dap-fn:${name}`, {
 			url: name,
@@ -475,21 +456,11 @@ export class DapSession extends BaseSession {
 		return { ref };
 	}
 
-	async removeFunctionBreakpoint(ref: string): Promise<void> {
-		this.requireConnected();
-
-		const idx = this.functionBreakpoints.findIndex((bp) => bp.ref === ref);
-		if (idx === -1) {
-			throw new Error(`Unknown function breakpoint ref: ${ref}`);
-		}
-
-		this.functionBreakpoints.splice(idx, 1);
-		this.refs.remove(ref);
-		await this.syncFunctionBreakpoints();
-	}
-
 	private async syncFunctionBreakpoints(): Promise<void> {
-		const dapBps = this.functionBreakpoints.map((bp) => ({
+		const fnBps = this.breakpoints.filter(
+			(bp): bp is DapFunctionBreakpoint => bp.kind === "function",
+		);
+		const dapBps = fnBps.map((bp) => ({
 			name: bp.name,
 			condition: bp.condition,
 			hitCondition: bp.hitCondition,
@@ -503,8 +474,8 @@ export class DapSession extends BaseSession {
 			| { breakpoints?: Array<{ id?: number; verified?: boolean }> }
 			| undefined;
 		const resultBps = body?.breakpoints ?? [];
-		for (let i = 0; i < this.functionBreakpoints.length; i++) {
-			const entry = this.functionBreakpoints[i];
+		for (let i = 0; i < fnBps.length; i++) {
+			const entry = fnBps[i];
 			const result = resultBps[i];
 			if (entry && result) {
 				entry.verified = result.verified ?? false;
@@ -791,7 +762,7 @@ export class DapSession extends BaseSession {
 		}
 
 		if (options.breakpoints !== false) {
-			snapshot.breakpointCount = this.allBreakpoints.length;
+			snapshot.breakpointCount = this.breakpoints.length;
 		}
 
 		return snapshot;
@@ -1314,7 +1285,9 @@ export class DapSession extends BaseSession {
 	}
 
 	private async syncFileBreakpoints(file: string): Promise<void> {
-		const entries = this.breakpoints.get(file) ?? [];
+		const entries = this.breakpoints.filter(
+			(bp): bp is DapFileBreakpoint => bp.kind === "file" && bp.file === file,
+		);
 
 		const dapBreakpoints = entries.map((bp) => {
 			const sbp: Record<string, unknown> = { line: bp.line };

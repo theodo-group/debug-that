@@ -16,7 +16,7 @@ const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
 const RUNTIME_ALIASES: Record<string, keyof typeof RUNTIME_CONFIGS> = {
 	jdwp: "java",
 	debugpy: "python",
-	"lldb-dap": "lldb"
+	"lldb-dap": "lldb",
 };
 
 /**
@@ -33,13 +33,14 @@ export const KNOWN_DAP_RUNTIMES = new Set([
 	...Object.keys(RUNTIME_ALIASES),
 ]);
 
-const DEFAULT_CONFIG: DapRuntimeConfig = {
-	getAdapterCommand: () => {
-		throw new Error("Unknown runtime");
-	},
-	buildLaunchArgs: ({ program, args, cwd }) => ({ program, args, cwd }),
-};
-
 export function getRuntimeConfig(runtime: string): DapRuntimeConfig {
-	return RUNTIME_CONFIGS[runtime] ?? { ...DEFAULT_CONFIG, getAdapterCommand: () => [runtime] };
+	const canonical = resolveRuntime(runtime);
+	const config = RUNTIME_CONFIGS[canonical];
+	if (!config) {
+		const available = [...Object.keys(RUNTIME_CONFIGS), ...Object.keys(RUNTIME_ALIASES)]
+			.sort()
+			.join(", ");
+		throw new Error(`Unknown DAP runtime "${runtime}". Available: ${available}`);
+	}
+	return config;
 }
