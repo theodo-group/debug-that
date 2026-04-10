@@ -16,7 +16,7 @@ description: >
 
 # dbg Debugger
 
-`dbg` is a CLI debugger that supports **Node.js** (V8/CDP), **Bun** (WebKit/JSC), and **native code** (C/C++/Rust/Swift via LLDB/DAP). It uses short `@refs` for all entities -- use them instead of long IDs.
+`dbg` is a CLI debugger that supports **Node.js** (V8/CDP), **Bun** (WebKit/JSC), **Java** (via JDWP/DAP) and **native code** (C/C++/Rust/Swift via LLDB/DAP). It uses short `@refs` for all entities -- use them instead of long IDs.
 
 ## Supported Runtimes
 
@@ -26,6 +26,7 @@ description: >
 | tsx / ts-node | TypeScript | `dbg launch --brk tsx src/app.ts` |
 | Bun | JavaScript / TypeScript | `dbg launch --brk bun app.ts` |
 | LLDB | C / C++ / Rust / Swift | `dbg launch --brk --runtime lldb ./program` |
+| JDWP | Java | `dbg launch --brk --runtime java ./program` |
 
 The runtime is auto-detected from the launch command for JS runtimes. For native code, use `--runtime lldb`.
 
