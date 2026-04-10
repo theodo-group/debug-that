@@ -31,7 +31,10 @@ Requires [Bun](https://bun.sh).
 
 ```bash
 bun install --global debug-that
-npx skills add theodo-group/debug-that # Install Claude Code skill
+```
+
+```bash
+npx skills add theodo-group/debug-that
 ```
 
 ## Example
