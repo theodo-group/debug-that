@@ -3,10 +3,10 @@ import { generateCommandHelp, printHelp, printHelpAgent } from "./help.ts";
 import { registry } from "./registry.ts";
 import type { GlobalFlags, ParsedArgs } from "./types.ts";
 
-const GLOBAL_FLAGS = new Set(["session", "json", "color", "help-agent", "help", "version"]);
+const GLOBAL_FLAGS = new Set(["session", "json", "color", "verbose", "help-agent", "help", "version"]);
 
 // Hardcoded defaults — merged with derived config from defineCommand() schemas
-const DEFAULT_BOOLEAN_FLAGS = new Set(["json", "color", "help-agent", "help", "version"]);
+const DEFAULT_BOOLEAN_FLAGS = new Set(["json", "color", "verbose", "help-agent", "help", "version"]);
 
 const DEFAULT_SHORT_MAP: Record<string, string> = {
 	V: "version",
@@ -183,6 +183,7 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 		session: typeof flags.session === "string" ? flags.session : "default",
 		json: flags.json === true,
 		color: flags.color === true,
+		verbose: flags.verbose === true,
 		helpAgent: flags["help-agent"] === true,
 		help: flags.help === true,
 		version: flags.version === true,

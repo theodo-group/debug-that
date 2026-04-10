@@ -17,7 +17,7 @@ defineCommand({
 		if (ctx.global.json) {
 			console.log(JSON.stringify(data, null, 2));
 		} else {
-			printState(data, { color: shouldEnableColor(ctx.global.color) });
+			printState(data, { color: shouldEnableColor(ctx.global.color), verbose: ctx.global.verbose });
 		}
 
 		return 0;

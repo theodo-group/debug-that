@@ -10,6 +10,7 @@ import type { StateSnapshot } from "../session/types.ts";
 
 export interface PrintStateOptions {
 	color?: boolean;
+	verbose?: boolean;
 }
 
 /**
@@ -18,6 +19,7 @@ export interface PrintStateOptions {
  */
 export function printState(data: StateSnapshot, opts?: PrintStateOptions): void {
 	const color = opts?.color ?? false;
+	const verbose = opts?.verbose ?? false;
 	const cc = colorize(color);
 
 	// Non-paused states
@@ -39,7 +41,7 @@ export function printState(data: StateSnapshot, opts?: PrintStateOptions): void 
 
 	// Paused state — header
 	const loc = data.location
-		? `${shortPath(data.location.url)}:${data.location.line}${data.location.column !== undefined ? `:${data.location.column}` : ""}`
+		? `${shortPath(data.location.url, { verbose })}:${data.location.line}${data.location.column !== undefined ? `:${data.location.column}` : ""}`
 		: "unknown";
 	const reason = data.reason ?? "unknown";
 	console.log(
@@ -96,7 +98,7 @@ export function printState(data: StateSnapshot, opts?: PrintStateOptions): void 
 			column: f.column,
 			isAsync: f.isAsync,
 		}));
-		console.log(formatStack(frames, { color }));
+		console.log(formatStack(frames, { color, verbose }));
 	}
 
 	// Breakpoints section

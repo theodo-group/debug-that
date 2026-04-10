@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
+import { shouldEnableColor } from "../formatter/color.ts";
 import { formatStack } from "../formatter/stack.ts";
 
 defineCommand({
@@ -32,7 +33,7 @@ defineCommand({
 			return 0;
 		}
 
-		console.log(formatStack(data));
+		console.log(formatStack(data, { color: shouldEnableColor(ctx.global.color), verbose: ctx.global.verbose }));
 
 		return 0;
 	},

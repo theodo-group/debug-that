@@ -2,6 +2,7 @@ export interface GlobalFlags {
 	session: string;
 	json: boolean;
 	color: boolean;
+	verbose: boolean;
 	helpAgent: boolean;
 	help: boolean;
 	version: boolean;
