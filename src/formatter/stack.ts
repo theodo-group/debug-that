@@ -50,7 +50,9 @@ export function formatStack(frames: StackFrame[], opts?: FormatStackOptions): st
 	for (const seg of segments) {
 		if ("ref" in seg) {
 			maxRefLen = Math.max(maxRefLen, seg.ref.length);
-			const nameLen = verbose ? seg.functionName.length : Math.min(seg.functionName.length, MAX_NAME_WIDTH);
+			const nameLen = verbose
+				? seg.functionName.length
+				: Math.min(seg.functionName.length, MAX_NAME_WIDTH);
 			maxNameLen = Math.max(maxNameLen, nameLen);
 		}
 	}
@@ -72,7 +74,9 @@ export function formatStack(frames: StackFrame[], opts?: FormatStackOptions): st
 		}
 
 		const ref = frame.ref.padEnd(maxRefLen);
-		const displayName = verbose ? frame.functionName : truncateName(frame.functionName, MAX_NAME_WIDTH);
+		const displayName = verbose
+			? frame.functionName
+			: truncateName(frame.functionName, MAX_NAME_WIDTH);
 		const name = displayName.padEnd(maxNameLen);
 		const file = shortPath(frame.file, { verbose });
 		const loc =

@@ -33,7 +33,12 @@ defineCommand({
 			return 0;
 		}
 
-		console.log(formatStack(data, { color: shouldEnableColor(ctx.global.color), verbose: ctx.global.verbose }));
+		console.log(
+			formatStack(data, {
+				color: shouldEnableColor(ctx.global.color),
+				verbose: ctx.global.verbose,
+			}),
+		);
 
 		return 0;
 	},
