@@ -7,12 +7,31 @@ export type { DapAttachArgs, DapLaunchArgs, DapRuntimeConfig, UserLaunchInput } 
 
 const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
 	lldb: lldbConfig,
-	"lldb-dap": lldbConfig,
 	codelldb: codelldbConfig,
 	python: debugpyConfig,
-	debugpy: debugpyConfig,
 	java: javaConfig,
 };
+
+/** Maps alias names to their canonical runtime name. */
+const RUNTIME_ALIASES: Record<string, keyof typeof RUNTIME_CONFIGS> = {
+	jdwp: "java",
+	debugpy: "python",
+	"lldb-dap": "lldb"
+};
+
+/**
+ * Resolves a runtime alias to its canonical name.
+ * Returns the input unchanged if it is not an alias.
+ */
+export function resolveRuntime(runtime: string): string {
+	return RUNTIME_ALIASES[runtime] ?? runtime;
+}
+
+/** Set of all known DAP runtime names (canonical + aliases). */
+export const KNOWN_DAP_RUNTIMES = new Set([
+	...Object.keys(RUNTIME_CONFIGS),
+	...Object.keys(RUNTIME_ALIASES),
+]);
 
 const DEFAULT_CONFIG: DapRuntimeConfig = {
 	getAdapterCommand: () => {
