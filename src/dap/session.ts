@@ -70,6 +70,9 @@ export class DapSession extends BaseSession {
 
 	// Promise that resolves when the adapter stops (for step/continue/pause)
 	private stoppedWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
+	// Promise that resolves on the DAP "initialized" event — registered before
+	// sending "initialize" so the event is never missed (debugpy fires it early).
+	private _initializedPromise: Promise<void> | null = null;
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
@@ -198,24 +201,52 @@ export class DapSession extends BaseSession {
 		this._isAttached = true;
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
-		this.setupEventHandlers();
-		await this.initializeAdapter();
-
-		let attachArgs: Record<string, unknown>;
-		if (config.parseAttachTarget) {
-			attachArgs = config.parseAttachTarget(target);
+		if (config.useTcpAttach) {
+			// Connect directly to the running DAP server over TCP (e.g. debugpy
+			// started with `python -m debugpy --listen <port>`). No adapter process
+			// is spawned — dbg speaks DAP directly over the socket.
+			const colonIdx = target.lastIndexOf(":");
+			const host = colonIdx > 0 ? target.substring(0, colonIdx) : "127.0.0.1";
+			const portStr = colonIdx > 0 ? target.substring(colonIdx + 1) : target;
+			const port = Number.parseInt(portStr, 10);
+			if (Number.isNaN(port)) {
+				throw new Error(
+					`Invalid attach target for Python: "${target}". Expected a port number or host:port.`,
+				);
+			}
+			this.dap = await DapClient.connectTcp(host, port, this.dapLog);
+			this.setupEventHandlers();
+			// debugpy TCP attach sequence:
+			// 1. initialize  (registers "initialized" listener first, inside initializeAdapter)
+			// 2. attach       (debugpy fires "initialized" event after receiving this)
+			// 3. wait for "initialized" event
+			// 4. configurationDone
+			await this.initializeAdapter();
+			const attachPromise = this.dap.send("attach", { justMyCode: false });
+			await this.waitForInitialized();
+			await this.dap.send("configurationDone");
+			await attachPromise;
 		} else {
-			const pid = Number.parseInt(target, 10);
-			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
-		}
+			const adapterCmd = config.getAdapterCommand();
+			this.dap = DapClient.spawn(adapterCmd, this.dapLog);
 
-		const attachPromise = this.dap.send("attach", attachArgs);
-		await this.waitForInitialized();
-		await this.dap.send("configurationDone");
-		await attachPromise;
+			this.setupEventHandlers();
+			await this.initializeAdapter();
+
+			let attachArgs: Record<string, unknown>;
+			if (config.parseAttachTarget) {
+				attachArgs = config.parseAttachTarget(target);
+			} else {
+				const pid = Number.parseInt(target, 10);
+				attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
+			}
+
+			const attachPromise = this.dap.send("attach", attachArgs);
+			await this.waitForInitialized();
+			await this.dap.send("configurationDone");
+			await attachPromise;
+		}
 
 		// Wait briefly for initial stop
 		await this.waitUntilStopped({ timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS, throwOnTimeout: false });
@@ -1142,7 +1173,20 @@ export class DapSession extends BaseSession {
 	}
 
 	private async initializeAdapter(): Promise<void> {
-		const response = await this.getDap().send("initialize", {
+		const dap = this.getDap();
+
+		// Register the "initialized" listener BEFORE sending "initialize" so we
+		// never miss the event — some adapters (e.g. debugpy) fire it immediately
+		// as part of the initialize response sequence, before we return here.
+		this._initializedPromise = new Promise<void>((resolve) => {
+			const handler = () => {
+				dap.off("initialized", handler);
+				resolve();
+			};
+			dap.on("initialized", handler);
+		});
+
+		const response = await dap.send("initialize", {
 			adapterID: this._runtime,
 			clientID: "debug-that",
 			clientName: "debug-that",
@@ -1410,22 +1454,24 @@ export class DapSession extends BaseSession {
 	}
 
 	/**
-	 * Wait for the DAP "initialized" event. Some adapters send this during
-	 * launch/attach; we must receive it before sending configurationDone.
+	 * Wait for the DAP "initialized" event. The listener is registered in
+	 * initializeAdapter() before sending "initialize", so this promise is
+	 * always set by the time we get here — even if the adapter (e.g. debugpy)
+	 * fired the event during the initialize round-trip.
 	 */
 	private async waitForInitialized(): Promise<void> {
-		const dap = this.getDap();
-		return new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				dap.off("initialized", handler);
-				reject(new Error("Timed out waiting for DAP initialized event"));
-			}, INITIALIZED_TIMEOUT_MS);
-			const handler = () => {
-				clearTimeout(timer);
-				dap.off("initialized", handler);
-				resolve();
-			};
-			dap.on("initialized", handler);
-		});
+		if (!this._initializedPromise) {
+			throw new Error("waitForInitialized called before initializeAdapter");
+		}
+		await Promise.race([
+			this._initializedPromise,
+			new Promise<never>((_, reject) =>
+				setTimeout(
+					() => reject(new Error("Timed out waiting for DAP initialized event")),
+					INITIALIZED_TIMEOUT_MS,
+				),
+			),
+		]);
+		this._initializedPromise = null;
 	}
 }

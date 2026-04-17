@@ -52,6 +52,14 @@ export interface UserLaunchInput {
 
 export interface DapRuntimeConfig {
 	/**
+	 * When true, `dbg attach <port>` connects directly to the running DAP server
+	 * over TCP instead of spawning a new adapter process. Use this for runtimes
+	 * like debugpy where the process itself IS the DAP server (started with
+	 * `python -m debugpy --listen <port>`).
+	 */
+	useTcpAttach?: boolean;
+
+	/**
 	 * Return the command + args to spawn the DAP adapter process.
 	 * This is the adapter itself, NOT the program being debugged.
 	 *

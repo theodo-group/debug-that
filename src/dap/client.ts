@@ -1,3 +1,4 @@
+import net from "node:net";
 import type { DebugProtocol } from "@vscode/debugprotocol";
 import type { Subprocess } from "bun";
 
@@ -15,11 +16,12 @@ interface PendingRequest {
 
 /**
  * DAP (Debug Adapter Protocol) client that communicates with a debug adapter
- * via stdin/stdout using the DAP wire format (Content-Length headers + JSON).
+ * either via stdin/stdout (spawned process) or a TCP socket (remote server).
  * Mirrors CdpClient's pattern for consistency.
  */
 export class DapClient {
-	private proc: Subprocess<"pipe", "pipe", "pipe">;
+	private proc: Subprocess<"pipe", "pipe", "pipe"> | null;
+	private tcpSocket: net.Socket | null = null;
 	private nextSeq = 1;
 	private pending = new Map<number, PendingRequest>();
 	private listeners = new Map<string, Set<AnyHandler>>();
@@ -27,12 +29,21 @@ export class DapClient {
 	private buffer = "";
 	private logger: Logger<"dap"> | null = null;
 
-	private constructor(proc: Subprocess<"pipe", "pipe", "pipe">, logger?: Logger<"dap">) {
+	private constructor(
+		proc: Subprocess<"pipe", "pipe", "pipe"> | null,
+		logger?: Logger<"dap">,
+		tcpSocket?: net.Socket,
+	) {
 		this.proc = proc;
+		this.tcpSocket = tcpSocket ?? null;
 		this.logger = logger ?? null;
 		this.isConnected = true;
-		this.readLoop();
-		this.drainStderr();
+		if (tcpSocket) {
+			this.readLoopTcp(tcpSocket);
+		} else {
+			this.readLoop();
+			this.drainStderr();
+		}
 	}
 
 	/**
@@ -50,6 +61,20 @@ export class DapClient {
 			stderr: "pipe",
 		});
 		return new DapClient(proc, logger);
+	}
+
+	/**
+	 * Connect directly to a DAP server listening on a TCP port (e.g. debugpy
+	 * started with `python -m debugpy --listen <port>`). No adapter process is
+	 * spawned — dbg speaks DAP directly over the socket.
+	 */
+	static connectTcp(host: string, port: number, logger?: Logger<"dap">): Promise<DapClient> {
+		return new Promise((resolve, reject) => {
+			const socket = net.createConnection({ host, port }, () => {
+				resolve(new DapClient(null, logger, socket));
+			});
+			socket.once("error", (err) => reject(err));
+		});
 	}
 
 	/**
@@ -109,7 +134,7 @@ export class DapClient {
 	}
 
 	/**
-	 * Disconnect from the debug adapter, killing the subprocess.
+	 * Disconnect from the debug adapter, killing the subprocess or closing the socket.
 	 */
 	disconnect(): void {
 		if (!this.isConnected) {
@@ -126,15 +151,23 @@ export class DapClient {
 
 		this.listeners.clear();
 
-		try {
-			this.proc.stdin.end();
-		} catch {
-			// stdin may already be closed
-		}
-		try {
-			this.proc.kill();
-		} catch {
-			// process may already be dead
+		if (this.tcpSocket) {
+			try {
+				this.tcpSocket.destroy();
+			} catch {
+				// socket may already be closed
+			}
+		} else if (this.proc) {
+			try {
+				this.proc.stdin.end();
+			} catch {
+				// stdin may already be closed
+			}
+			try {
+				this.proc.kill();
+			} catch {
+				// process may already be dead
+			}
 		}
 	}
 
@@ -143,7 +176,7 @@ export class DapClient {
 	}
 
 	get pid(): number {
-		return this.proc.pid;
+		return this.proc?.pid ?? 0;
 	}
 
 	// ── Wire format ────────────────────────────────────────────────────
@@ -152,10 +185,33 @@ export class DapClient {
 		const json = JSON.stringify(msg);
 		const header = `Content-Length: ${Buffer.byteLength(json, "utf-8")}\r\n\r\n`;
 		try {
-			this.proc.stdin.write(header + json);
+			if (this.tcpSocket) {
+				this.tcpSocket.write(header + json);
+			} else if (this.proc) {
+				this.proc.stdin.write(header + json);
+			}
 		} catch {
 			this.isConnected = false;
 		}
+	}
+
+	private readLoopTcp(socket: net.Socket): void {
+		socket.on("data", (chunk: Buffer) => {
+			this.buffer += chunk.toString("utf-8");
+			this.processBuffer();
+		});
+		socket.on("close", () => {
+			this.isConnected = false;
+			const error = new Error("DAP adapter process terminated");
+			for (const [id, pending] of this.pending) {
+				clearTimeout(pending.timer);
+				pending.reject(error);
+				this.pending.delete(id);
+			}
+		});
+		socket.on("error", () => {
+			this.isConnected = false;
+		});
 	}
 
 	private async readLoop(): Promise<void> {
