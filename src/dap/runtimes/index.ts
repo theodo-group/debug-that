@@ -3,7 +3,7 @@ import { codelldbConfig, lldbConfig } from "./lldb.ts";
 import { debugpyConfig } from "./python.ts";
 import type { DapRuntimeConfig } from "./types.ts";
 
-export type { DapAttachArgs, DapLaunchArgs, DapRuntimeConfig, UserLaunchInput } from "./types.ts";
+export type { DapConnectPlan, DapRuntimeConfig, UserLaunchInput } from "./types.ts";
 
 const RUNTIME_CONFIGS: Record<string, DapRuntimeConfig> = {
 	lldb: lldbConfig,

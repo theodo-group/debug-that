@@ -11,6 +11,7 @@ import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../sessi
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
 import { getRuntimeConfig } from "./runtimes/index.ts";
+import type { DapConnectPlan } from "./runtimes/types.ts";
 
 /** Directory where managed adapter binaries are stored. */
 export function getManagedAdaptersDir(): string {
@@ -125,42 +126,29 @@ export class DapSession extends BaseSession {
 		}
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
-
-		this.setupEventHandlers();
-		await this.initializeAdapter();
-
 		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
-		const builtArgs = config.buildLaunchArgs({ program, args: programArgs, cwd: process.cwd() });
-		const launchArgs: Record<string, unknown> = {
-			stopOnEntry: options.brk ?? true,
-			...builtArgs,
-		};
+		const plan = config.launch({ program, args: programArgs, cwd: process.cwd() });
 
 		// Store source paths for short filename resolution in breakpoints
-		if (builtArgs.sourcePaths) {
-			this._sourcePaths = builtArgs.sourcePaths;
+		if (plan.sourcePaths) {
+			this._sourcePaths = plan.sourcePaths;
 		}
 
+		const requestArgs: Record<string, unknown> = {
+			stopOnEntry: options.brk ?? true,
+			...plan.requestArgs,
+		};
 		// Apply stored source-map remappings
 		if (this._remaps.length > 0) {
-			launchArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
+			requestArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
 		}
-
 		// Apply stored symbol paths as pre-run commands
 		if (this._symbolPaths.length > 0) {
-			launchArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
+			requestArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
 		}
 
-		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
-		// after configurationDone. Send launch without awaiting, wait for the
-		// "initialized" event, then send configurationDone, then await launch.
-		const launchPromise = this.dap.send("launch", launchArgs);
-		await this.waitForInitialized();
-		await this.dap.send("configurationDone");
-		await launchPromise;
+		await this.runHandshake(plan, "launch", requestArgs);
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
@@ -180,7 +168,7 @@ export class DapSession extends BaseSession {
 		}
 
 		const result: LaunchResult = {
-			pid: this.dap.pid,
+			pid: this.getDap().pid ?? 0,
 			wsUrl: `dap://${this._runtime}`,
 			paused: this.isPaused(),
 		};
@@ -196,27 +184,15 @@ export class DapSession extends BaseSession {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
-		this._isAttached = true;
 
 		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
-
-		this.setupEventHandlers();
-		await this.initializeAdapter();
-
-		let attachArgs: Record<string, unknown>;
-		if (config.parseAttachTarget) {
-			attachArgs = config.parseAttachTarget(target);
-		} else {
-			const pid = Number.parseInt(target, 10);
-			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
+		if (!config.attach) {
+			throw new Error(`Runtime "${this._runtime}" does not support attach`);
 		}
+		this._isAttached = true;
 
-		const attachPromise = this.dap.send("attach", attachArgs);
-		await this.waitForInitialized();
-		await this.dap.send("configurationDone");
-		await attachPromise;
+		const plan = config.attach(target);
+		await this.runHandshake(plan, "attach", plan.requestArgs);
 
 		// Wait briefly for initial stop
 		await this.waitUntilStopped({ timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS, throwOnTimeout: false });
@@ -227,6 +203,46 @@ export class DapSession extends BaseSession {
 		}
 
 		return { wsUrl: `dap://${this._runtime}/${target}` };
+	}
+
+	/**
+	 * Runs the DAP handshake for a launch or attach: connect transport →
+	 * initialize (with the "initialized" listener registered before the request
+	 * is sent, so adapters that fire it mid-initialize can't race us) → send
+	 * launch/attach (response awaited last, per DAP spec) → wait for
+	 * "initialized" event → configurationDone → await launch/attach response.
+	 */
+	private async runHandshake(
+		plan: DapConnectPlan,
+		command: "launch" | "attach",
+		requestArgs: Record<string, unknown>,
+	): Promise<void> {
+		const transport = await plan.connector.connect();
+		this.dap = new DapClient(transport, this.dapLog);
+		this.setupEventHandlers();
+
+		// Arm the "initialized" waiter BEFORE sending "initialize": debugpy (and
+		// some other adapters) emit the event during the initialize round-trip.
+		const initialized = this.armInitializedWaiter();
+
+		const initResponse = await this.dap.send("initialize", {
+			adapterID: this._runtime,
+			clientID: "debug-that",
+			clientName: "debug-that",
+			linesStartAt1: true,
+			columnsStartAt1: true,
+			pathFormat: "path",
+			supportsVariableType: true,
+		});
+		this.adapterCapabilities = (initResponse.body ?? {}) as DebugProtocol.Capabilities;
+
+		// DAP: some adapters defer the launch/attach response until after
+		// configurationDone. Fire it now, await the "initialized" event, then
+		// configurationDone, then the launch/attach response.
+		const commandPromise = this.dap.send(command, requestArgs);
+		await initialized;
+		await this.dap.send("configurationDone");
+		await commandPromise;
 	}
 
 	getStatus(): SessionStatus {
@@ -1112,20 +1128,6 @@ export class DapSession extends BaseSession {
 		}
 	}
 
-	private async initializeAdapter(): Promise<void> {
-		const response = await this.getDap().send("initialize", {
-			adapterID: this._runtime,
-			clientID: "debug-that",
-			clientName: "debug-that",
-			linesStartAt1: true,
-			columnsStartAt1: true,
-			pathFormat: "path",
-			supportsVariableType: true,
-		});
-
-		this.adapterCapabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
-	}
-
 	private setupEventHandlers(): void {
 		const dap = this.getDap();
 
@@ -1383,10 +1385,12 @@ export class DapSession extends BaseSession {
 	}
 
 	/**
-	 * Wait for the DAP "initialized" event. Some adapters send this during
-	 * launch/attach; we must receive it before sending configurationDone.
+	 * Register the "initialized" event listener immediately and return a promise
+	 * that resolves when the adapter fires the event (or rejects on timeout).
+	 * Called BEFORE the "initialize" request so fast adapters (debugpy emits it
+	 * mid-initialize) can't win the race.
 	 */
-	private async waitForInitialized(): Promise<void> {
+	private armInitializedWaiter(): Promise<void> {
 		const dap = this.getDap();
 		return new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => {

@@ -1,8 +1,8 @@
 import type { DebugProtocol } from "@vscode/debugprotocol";
-import type { Subprocess } from "bun";
 
-import { MAX_STDERR_BUFFER, REQUEST_TIMEOUT_MS } from "../constants.ts";
+import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
+import type { DapTransport } from "./transport.ts";
 
 // biome-ignore lint/suspicious/noExplicitAny: Required for handler map that stores both typed and untyped handlers
 type AnyHandler = (...args: any[]) => void;
@@ -14,42 +14,32 @@ interface PendingRequest {
 }
 
 /**
- * DAP (Debug Adapter Protocol) client that communicates with a debug adapter
- * via stdin/stdout using the DAP wire format (Content-Length headers + JSON).
- * Mirrors CdpClient's pattern for consistency.
+ * DAP (Debug Adapter Protocol) client. Owns the wire format (Content-Length
+ * headers + JSON) and the request/response/event bookkeeping. Bytes flow
+ * through a DapTransport, so this class is agnostic to whether the adapter
+ * is a spawned subprocess or a remote TCP server.
  */
 export class DapClient {
-	private proc: Subprocess<"pipe", "pipe", "pipe">;
 	private nextSeq = 1;
 	private pending = new Map<number, PendingRequest>();
 	private listeners = new Map<string, Set<AnyHandler>>();
 	private isConnected = false;
 	private buffer = "";
-	private logger: Logger<"dap"> | null = null;
+	private logger: Logger<"dap"> | null;
 
-	private constructor(proc: Subprocess<"pipe", "pipe", "pipe">, logger?: Logger<"dap">) {
-		this.proc = proc;
+	constructor(
+		private transport: DapTransport,
+		logger?: Logger<"dap">,
+	) {
 		this.logger = logger ?? null;
 		this.isConnected = true;
-		this.readLoop();
-		this.drainStderr();
-	}
-
-	/**
-	 * Spawn a debug adapter process and return a connected DapClient.
-	 * @param command - The command + args to spawn (e.g. ["lldb-dap"])
-	 */
-	static spawn(command: string[], logger?: Logger<"dap">): DapClient {
-		const [cmd, ...args] = command;
-		if (!cmd) {
-			throw new Error("DapClient.spawn: command array must not be empty");
-		}
-		const proc = Bun.spawn([cmd, ...args], {
-			stdin: "pipe",
-			stdout: "pipe",
-			stderr: "pipe",
+		transport.start({
+			onData: (chunk) => {
+				this.buffer += chunk;
+				this.processBuffer();
+			},
+			onClose: () => this.handleClose(),
 		});
-		return new DapClient(proc, logger);
 	}
 
 	/**
@@ -83,9 +73,7 @@ export class DapClient {
 		});
 	}
 
-	/**
-	 * Register an event listener for a DAP event type (e.g. "stopped", "output").
-	 */
+	/** Register an event listener for a DAP event type (e.g. "stopped", "output"). */
 	on(event: string, handler: (body: unknown) => void): void {
 		let handlers = this.listeners.get(event);
 		if (!handlers) {
@@ -95,9 +83,7 @@ export class DapClient {
 		handlers.add(handler);
 	}
 
-	/**
-	 * Remove an event listener.
-	 */
+	/** Remove an event listener. */
 	off(event: string, handler: (body: unknown) => void): void {
 		const handlers = this.listeners.get(event);
 		if (handlers) {
@@ -108,13 +94,9 @@ export class DapClient {
 		}
 	}
 
-	/**
-	 * Disconnect from the debug adapter, killing the subprocess.
-	 */
+	/** Disconnect from the debug adapter, releasing the transport. */
 	disconnect(): void {
-		if (!this.isConnected) {
-			return;
-		}
+		if (!this.isConnected) return;
 		this.isConnected = false;
 
 		const error = new Error("DAP client disconnected");
@@ -123,27 +105,21 @@ export class DapClient {
 			pending.reject(error);
 			this.pending.delete(id);
 		}
-
 		this.listeners.clear();
-
-		try {
-			this.proc.stdin.end();
-		} catch {
-			// stdin may already be closed
-		}
-		try {
-			this.proc.kill();
-		} catch {
-			// process may already be dead
-		}
+		this.transport.close();
 	}
 
 	get connected(): boolean {
 		return this.isConnected;
 	}
 
-	get pid(): number {
-		return this.proc.pid;
+	get pid(): number | undefined {
+		return this.transport.pid;
+	}
+
+	/** Recent stderr output from the adapter process (capped); empty for TCP. */
+	get stderr(): string {
+		return this.transport.stderr;
 	}
 
 	// ── Wire format ────────────────────────────────────────────────────
@@ -151,35 +127,7 @@ export class DapClient {
 	private writeMessage(msg: DebugProtocol.ProtocolMessage): void {
 		const json = JSON.stringify(msg);
 		const header = `Content-Length: ${Buffer.byteLength(json, "utf-8")}\r\n\r\n`;
-		try {
-			this.proc.stdin.write(header + json);
-		} catch {
-			this.isConnected = false;
-		}
-	}
-
-	private async readLoop(): Promise<void> {
-		const reader = this.proc.stdout.getReader();
-		const decoder = new TextDecoder();
-		try {
-			while (this.isConnected) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				this.buffer += decoder.decode(value, { stream: true });
-				this.processBuffer();
-			}
-		} catch {
-			// Stream closed or errored
-		} finally {
-			this.isConnected = false;
-			// Reject all pending requests
-			const error = new Error("DAP adapter process terminated");
-			for (const [id, pending] of this.pending) {
-				clearTimeout(pending.timer);
-				pending.reject(error);
-				this.pending.delete(id);
-			}
-		}
+		this.transport.write(header + json);
 	}
 
 	private processBuffer(): void {
@@ -251,28 +199,14 @@ export class DapClient {
 		}
 	}
 
-	/** Recent stderr output from the adapter process (capped). */
-	get stderr(): string {
-		return this._stderr;
-	}
-
-	private _stderr = "";
-
-	private async drainStderr(): Promise<void> {
-		const reader = this.proc.stderr.getReader();
-		const decoder = new TextDecoder();
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				const chunk = decoder.decode(value, { stream: true });
-				this._stderr += chunk;
-				if (this._stderr.length > MAX_STDERR_BUFFER) {
-					this._stderr = this._stderr.slice(-MAX_STDERR_BUFFER);
-				}
-			}
-		} catch {
-			// Stream closed or errored
+	private handleClose(): void {
+		if (!this.isConnected) return;
+		this.isConnected = false;
+		const error = new Error("DAP adapter process terminated");
+		for (const [id, pending] of this.pending) {
+			clearTimeout(pending.timer);
+			pending.reject(error);
+			this.pending.delete(id);
 		}
 	}
 }
