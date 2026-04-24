@@ -49,3 +49,11 @@ src/dap/adapters/java/adapter-sources.tar.gz
 demo/**/recording.cast
 demo/**/__hotpatch_tmp/
 docs/java-hotpatch.gif
+
+# Demo build output / local tooling
+demo/**/target/
+demo/**/.agents/
+demo/**/.claude/
+
+# Large demo video — hosted on GitHub Releases (demo-assets-v1) instead
+demo/slides/public/demo-java.mp4

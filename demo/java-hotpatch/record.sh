@@ -16,32 +16,41 @@ SRC_FIXED="src/main/java/com/example/PricingController.java.fixed"
 BUGGY_LINE='subtotal - discount + (discount * VAT_RATE)'
 FIXED_LINE='(subtotal - discount) * (1 + VAT_RATE)'
 
+# ── Colors ──
+BOLD=$'\033[1m'
+RED=$'\033[1;31m'
+GREEN=$'\033[1;32m'
+YELLOW=$'\033[1;33m'
+CYAN=$'\033[1;36m'
+DIM=$'\033[2m'
+RESET=$'\033[0m'
+
 type_cmd() {
   local cmd="$1"
-  local delay="${2:-0.02}"
-  printf "\033[1;32m❯\033[0m "
+  local delay="${2:-0.01}"
+  printf "${GREEN}❯${RESET} "
   for (( i=0; i<${#cmd}; i++ )); do
     printf "%s" "${cmd:$i:1}"
     sleep "$delay"
   done
-  sleep 0.3
+  sleep 0.15
   printf "\n"
 }
 
 run() {
   local cmd="$1"
-  local pause_before="${2:-1}"
-  local pause_after="${3:-2}"
+  local pause_before="${2:-0.5}"
+  local pause_after="${3:-1}"
   sleep "$pause_before"
   type_cmd "$cmd"
   eval "$cmd"
   sleep "$pause_after"
 }
 
-comment() {
-  sleep "${2:-0.8}"
-  printf "\033[1;33m# %s\033[0m\n" "$1"
-  sleep "${3:-1}"
+info() {
+  sleep "${2:-0.2}"
+  printf "%s\n" "${CYAN}  ▸ ${RESET}$1"
+  sleep "${3:-0.6}"
 }
 
 show_diff() {
@@ -49,9 +58,9 @@ show_diff() {
   diff -u "$old" "$new" | tail -n +3 | while IFS= read -r line; do
     case "$line" in
       @@*) ;;
-      -*) printf "\033[1;31m  - %s\033[0m\n" "${line:1}" ;;
-      +*) printf "\033[1;32m  + %s\033[0m\n" "${line:1}" ;;
-       *) printf "\033[90m    %s\033[0m\n" "$line" ;;
+      -*) printf "${RED}  - %s${RESET}\n" "${line:1}" ;;
+      +*) printf "${GREEN}  + %s${RESET}\n" "${line:1}" ;;
+       *) printf "${DIM}    %s${RESET}\n" "$line" ;;
     esac
   done
 }
@@ -75,54 +84,75 @@ fi
 
 # ── Demo starts ──
 
-comment "Spring Boot pricing API has a VAT bug. Let's hotpatch it live." 0.2 1.5
+printf "\n${BOLD}  Spring Boot pricing API has a VAT bug.${RESET}\n"
+printf "  ${DIM}Let's fix it live — without restarting the JVM.${RESET}\n\n"
+sleep 1.2
 
 # 1. Show the bug
-run "curl -s localhost:8080/price | python3 -m json.tool" 0.5 2
-comment "Total is 133.97 — expected (149.97 - 20) * 1.20 = 155.96" 0.3 1.5
+run "curl -s localhost:8080/price | python3 -m json.tool" 0.3 1
+printf "\n"
+info "${RED}total: 133.97${RESET} ${DIM}— expected${RESET} ${GREEN}155.96${RESET} ${DIM}= (149.97 - 20) × 1.20${RESET}" 0.1 1.2
 
-# 2. Attach debugger
-run "dbg attach 5005 --runtime java" 0.5 1.5
+# 2. Attach debugger to the running JVM
+printf "\n"
+run "dbg attach 5005 --runtime java" 0.3 0.8
 
 # 3. Set breakpoint on the buggy line
-run "dbg break $SRC:21" 0.3 1
+run "dbg break $SRC:21" 0.2 0.5
 
-# 4. Trigger a request (blocks at breakpoint)
-comment "Trigger a request to hit the breakpoint:" 0.3 0.8
+# 4. Trigger a request — show it's pending
+printf "\n"
+info "Sending a request to hit the breakpoint..." 0.1 0.1
+printf "%s\n" "${DIM}  \$ curl -s localhost:8080/price${RESET}"
 curl -s localhost:8080/price > /dev/null &
-sleep 3
+CURL_PID=$!
+
+# Spinner while waiting for breakpoint
+for i in 1 2 3 4; do
+  printf "\r${DIM}  ⏳ Waiting for breakpoint...${RESET}"
+  sleep 0.5
+done
+printf "\r${GREEN}  ⏸ Breakpoint hit!              ${RESET}\n"
+sleep 0.5
 
 # 5. Show source with colors (paused at the bug)
-run "dbg source --lines 20" 0.3 2.5
+printf "\n"
+run "dbg source --lines 20" 0.2 1.8
 
 # 6. Eval to understand the bug
-run 'dbg eval "subtotal - discount + (discount * 0.20)"' 0.5 1.5
-comment "133.97 — VAT is on the discount, not the net amount" 0.3 1.5
+run 'dbg eval "subtotal - discount + (discount * 0.20)"' 0.3 0.8
+info "${RED}133.97${RESET} ${DIM}— VAT is applied to the discount, not the net amount${RESET}" 0.1 1
 
 # 7. Test the correct formula
-run 'dbg eval "(subtotal - discount) * (1 + 0.20)"' 0.5 1.5
-comment "155.96 — correct! Apply the fix:" 0.3 1.5
+run 'dbg eval "(subtotal - discount) * (1 + 0.20)"' 0.3 0.8
+info "${GREEN}155.96${RESET} ${DIM}— correct! Let's apply the fix:${RESET}" 0.1 1
 
 # 8. Show the diff and apply the fix
-sleep 0.5
-printf "\033[1;32m❯\033[0m "
-type_cmd "# Applying fix..."
+printf "\n"
+sleep 0.3
+printf "${GREEN}❯${RESET} "
+type_cmd "# Apply fix to source..."
 show_diff "$SRC" "$SRC_FIXED"
-sleep 2
+sleep 1.5
 cp "$SRC_FIXED" "$SRC"
 
-# 9. Hotpatch the running JVM
-run "dbg hotpatch $SRC" 0.5 2.5
+# 9. Hotpatch the running JVM — the magic moment
+printf "\n"
+run "dbg hotpatch $SRC" 0.3 1.5
 
 # 10. Remove breakpoint and continue
-run "dbg break-rm BP#1" 0.3 0.3
-run "dbg continue" 0.3 1.5
+run "dbg break-rm BP#1" 0.2 0.2
+run "dbg continue" 0.2 0.8
 
 # 11. Verify — curl returns the fixed value
-comment "Service is still running. Verify:" 0.5 0.8
-run "curl -s localhost:8080/price | python3 -m json.tool" 0.5 3
+printf "\n"
+info "Service is still running. Verify with a new request:" 0.3 0.5
+run "curl -s localhost:8080/price | python3 -m json.tool" 0.3 1.5
 
-comment "155.96 — fixed without restarting the JVM!" 0.3 2
+printf "\n"
+printf "  ${GREEN}${BOLD}✓ total: 155.96 — fixed without restarting the JVM!${RESET}\n"
+printf "  ${DIM}No recompile. No redeploy. No restart.${RESET}\n\n"
+sleep 2.5
 
 # ── Cleanup ──
 # Restore buggy source for next demo run

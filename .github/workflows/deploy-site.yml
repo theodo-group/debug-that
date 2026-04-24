@@ -1,0 +1,71 @@
+name: Deploy site to GitHub Pages
+
+# Assembles a single GitHub Pages site combining:
+#   - the static landing page in `docs/` (existing dbg homepage)
+#   - the Slidev deck in `demo/slides/`, built into `<site>/slides/`
+#
+# Both served from https://theodo-group.github.io/debug-that/ — landing at
+# `/`, slides at `/slides/`. Requires Pages source = "GitHub Actions" in
+# repo settings (Settings → Pages → Source: GitHub Actions). The previous
+# legacy setup (Source: Branch `main` / `/docs`) must be switched over once;
+# after that, this workflow owns every deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "demo/slides/**"
+      - ".github/workflows/deploy-site.yml"
+  # Manual trigger — useful for the first deploy after flipping the Pages source.
+  workflow_dispatch:
+
+# One deploy at a time; latest push wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install slides dependencies
+        working-directory: demo/slides
+        run: bun install --frozen-lockfile
+
+      - name: Assemble site (docs landing + slides)
+        run: |
+          mkdir -p _site
+          # Copy existing static landing page as-is.
+          cp -R docs/. _site/
+          # Build Slidev into _site/slides. The --base path matches where
+          # it'll be served (Pages serves this repo's site under /debug-that/).
+          cd demo/slides
+          bunx slidev build --base /debug-that/slides/ --out "$GITHUB_WORKSPACE/_site/slides"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
