@@ -7,10 +7,11 @@ import {
 } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
-import type { PendingConfig, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
+import type { PendingConfig, SessionFeatures, SourceMapInfo } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
-import { getRuntimeConfig } from "./runtimes/index.ts";
+import { type CanonicalRuntime, getRuntimeConfig, resolveRuntime } from "./runtimes/index.ts";
+import type { DapConnectPlan, DapRuntimeConfig } from "./runtimes/types.ts";
 
 /** Directory where managed adapter binaries are stored. */
 export function getManagedAdaptersDir(): string {
@@ -49,17 +50,42 @@ interface DapStackFrame {
 }
 
 /**
+ * Default feature matrix for DAP sessions. Mirrors what a generic DAP
+ * adapter supports out of the box (breakpoints, modules, path mapping).
+ * Runtime configs override only fields that differ — most should inherit.
+ */
+const DEFAULT_DAP_FEATURES: SessionFeatures = {
+	functionBreakpoints: true,
+	logpoints: false,
+	hotpatch: false,
+	blackboxing: false,
+	modules: true,
+	restartFrame: false,
+	scriptSearch: false,
+	sourceMapResolution: false,
+	breakableLocations: false,
+	setReturnValue: false,
+	pathMapping: true,
+	symbolLoading: true,
+	breakpointToggle: false,
+	restart: false,
+};
+
+/**
  * DapSession implements the same public interface as CdpSession, but communicates
  * with a DAP debug adapter (e.g. lldb-dap) instead of CDP/V8. This allows debug-that
  * to debug native code (C/C++/Rust via LLDB), Python, Ruby, etc.
  */
 export class DapSession extends BaseSession {
 	private dap: DapClient | null = null;
-	private _runtime: string;
+	private _runtime: CanonicalRuntime;
+	private _runtimeConfig: DapRuntimeConfig;
 	private _isAttached = false; // true if session was created via attach (not launch)
 	private _threadId = 1; // Most adapters use thread 1; updated on "stopped" event
 	private _stackFrames: DapStackFrame[] = [];
 	private adapterCapabilities: DebugProtocol.Capabilities = {};
+	/** Human-readable description of the current transport (e.g. `tcp(127.0.0.1:5678)`). */
+	private _transportDescription: string | null = null;
 
 	// Breakpoints: DAP requires sending ALL breakpoints per file/function at once
 	private breakpoints: DapBreakpoint[] = [];
@@ -74,35 +100,18 @@ export class DapSession extends BaseSession {
 	// Deduplicates concurrent fetchStackTrace calls
 	private _stackFetchPromise: Promise<void> | null = null;
 
-	readonly capabilities: SessionCapabilities;
+	readonly features: SessionFeatures;
 
-	private static buildCapabilities(runtime: string): SessionCapabilities {
-		const isJava = runtime === "java";
-		return {
-			functionBreakpoints: true,
-			logpoints: false,
-			hotpatch: isJava,
-			blackboxing: false,
-			modules: true,
-			restartFrame: isJava,
-			scriptSearch: false,
-			sourceMapResolution: false,
-			breakableLocations: false,
-			setReturnValue: false,
-			pathMapping: true,
-			symbolLoading: true,
-			breakpointToggle: false,
-			restart: false,
-		};
-	}
-
-	private dapLog: Logger<"dap"> | undefined;
+	private logger: Logger<"dap"> | undefined;
 
 	constructor(session: string, runtime: string, options?: { logger?: Logger<"daemon"> }) {
 		super(session);
-		this._runtime = runtime;
-		this.capabilities = DapSession.buildCapabilities(runtime);
-		this.dapLog = options?.logger?.child("dap");
+		// Parse via the zod schema: narrows `string` → `CanonicalRuntime` (or
+		// throws with the full list of accepted names).
+		this._runtime = resolveRuntime(runtime);
+		this._runtimeConfig = getRuntimeConfig(this._runtime);
+		this.features = { ...DEFAULT_DAP_FEATURES, ...this._runtimeConfig.features };
+		this.logger = options?.logger?.child("dap");
 	}
 
 	override applyPendingConfig(config: PendingConfig): void {
@@ -124,43 +133,29 @@ export class DapSession extends BaseSession {
 			throw new Error("Session already has an active debug target");
 		}
 
-		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
-
-		this.setupEventHandlers();
-		await this.initializeAdapter();
-
 		const program = options.program ?? command[0] ?? "";
 		const programArgs = options.args ?? command.slice(1);
-		const builtArgs = config.buildLaunchArgs({ program, args: programArgs, cwd: process.cwd() });
-		const launchArgs: Record<string, unknown> = {
-			stopOnEntry: options.brk ?? true,
-			...builtArgs,
-		};
+		const plan = this._runtimeConfig.launch({ program, args: programArgs, cwd: process.cwd() });
 
 		// Store source paths for short filename resolution in breakpoints
-		if (builtArgs.sourcePaths) {
-			this._sourcePaths = builtArgs.sourcePaths;
+		if (plan.sourcePaths) {
+			this._sourcePaths = plan.sourcePaths;
 		}
 
+		const requestArgs: Record<string, unknown> = {
+			stopOnEntry: options.brk ?? true,
+			...plan.requestArgs,
+		};
 		// Apply stored source-map remappings
 		if (this._remaps.length > 0) {
-			launchArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
+			requestArgs.sourceMap = this._remaps.map(([from, to]) => [from, to]);
 		}
-
 		// Apply stored symbol paths as pre-run commands
 		if (this._symbolPaths.length > 0) {
-			launchArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
+			requestArgs.preRunCommands = this._symbolPaths.map((p) => `add-dsym ${p}`);
 		}
 
-		// DAP spec: some adapters (e.g. debugpy) defer the launch response until
-		// after configurationDone. Send launch without awaiting, wait for the
-		// "initialized" event, then send configurationDone, then await launch.
-		const launchPromise = this.dap.send("launch", launchArgs);
-		await this.waitForInitialized();
-		await this.dap.send("configurationDone");
-		await launchPromise;
+		await this.runHandshake(plan, "launch", requestArgs);
 
 		// Wait briefly for a stopped event if stopOnEntry
 		if (options.brk !== false) {
@@ -180,8 +175,8 @@ export class DapSession extends BaseSession {
 		}
 
 		const result: LaunchResult = {
-			pid: this.dap.pid,
-			wsUrl: `dap://${this._runtime}`,
+			pid: this.client.pid ?? 0,
+			wsUrl: this.buildWsUrl(),
 			paused: this.isPaused(),
 		};
 
@@ -196,27 +191,14 @@ export class DapSession extends BaseSession {
 		if (this.state !== "idle") {
 			throw new Error("Session already has an active debug target");
 		}
+
+		if (!this._runtimeConfig.attach) {
+			throw new Error(`Runtime "${this._runtime}" does not support attach`);
+		}
 		this._isAttached = true;
 
-		const config = getRuntimeConfig(this._runtime);
-		const adapterCmd = config.getAdapterCommand();
-		this.dap = DapClient.spawn(adapterCmd, this.dapLog);
-
-		this.setupEventHandlers();
-		await this.initializeAdapter();
-
-		let attachArgs: Record<string, unknown>;
-		if (config.parseAttachTarget) {
-			attachArgs = config.parseAttachTarget(target);
-		} else {
-			const pid = Number.parseInt(target, 10);
-			attachArgs = Number.isNaN(pid) ? { program: target, waitFor: true } : { pid };
-		}
-
-		const attachPromise = this.dap.send("attach", attachArgs);
-		await this.waitForInitialized();
-		await this.dap.send("configurationDone");
-		await attachPromise;
+		const plan = this._runtimeConfig.attach(target);
+		await this.runHandshake(plan, "attach", plan.requestArgs);
 
 		// Wait briefly for initial stop
 		await this.waitUntilStopped({ timeoutMs: WAIT_MAYBE_PAUSE_TIMEOUT_MS, throwOnTimeout: false });
@@ -226,7 +208,61 @@ export class DapSession extends BaseSession {
 			this.state = "running";
 		}
 
-		return { wsUrl: `dap://${this._runtime}/${target}` };
+		return { wsUrl: this.buildWsUrl(target) };
+	}
+
+	/**
+	 * Runs the DAP handshake for a launch or attach: connect transport →
+	 * initialize (with the "initialized" listener armed via `waitForEvent`
+	 * before the request is sent, so adapters that fire it mid-initialize
+	 * can't race us) → send launch/attach (response awaited last, per DAP
+	 * spec) → wait for "initialized" event → configurationDone → await
+	 * launch/attach response.
+	 */
+	private async runHandshake(
+		plan: DapConnectPlan,
+		command: "launch" | "attach",
+		requestArgs: Record<string, unknown>,
+	): Promise<void> {
+		const transport = await plan.connector.connect();
+		this.dap = new DapClient(transport, this.logger);
+		this._transportDescription = plan.connector.describe();
+		this.setupEventHandlers();
+
+		// Arm the "initialized" waiter BEFORE sending "initialize": debugpy (and
+		// some other adapters) emit the event during the initialize round-trip.
+		const initialized = this.dap.waitForEvent("initialized", INITIALIZED_TIMEOUT_MS);
+
+		const capabilities = await this.dap.send("initialize", {
+			adapterID: this._runtime,
+			clientID: "debug-that",
+			clientName: "debug-that",
+			linesStartAt1: true,
+			columnsStartAt1: true,
+			pathFormat: "path",
+			supportsVariableType: true,
+		});
+		this.adapterCapabilities = capabilities ?? {};
+
+		// DAP: some adapters defer the launch/attach response until after
+		// configurationDone. Fire it now, await the "initialized" event, then
+		// configurationDone, then the launch/attach response.
+		const commandPromise = this.dap.send(command, requestArgs);
+		await initialized;
+		await this.dap.send("configurationDone");
+		await commandPromise;
+	}
+
+	/**
+	 * Build the wsUrl exposed to clients. Embeds the transport description
+	 * (`tcp(host:port)` or `spawn(cmd)`) so `dbg status` / `dbg sessions` make
+	 * clear whether the adapter is owned by us or attached remotely.
+	 */
+	private buildWsUrl(target?: string): string {
+		const base = `dap://${this._runtime}`;
+		const suffix = this._transportDescription ? `/${this._transportDescription}` : "";
+		const tail = target ? `#${target}` : "";
+		return `${base}${suffix}${tail}`;
 	}
 
 	getStatus(): SessionStatus {
@@ -234,7 +270,7 @@ export class DapSession extends BaseSession {
 			session: this.session,
 			state: this.state,
 			pid: this.dap?.pid,
-			wsUrl: this.dap ? `dap://${this._runtime}` : undefined,
+			wsUrl: this.dap ? this.buildWsUrl() : undefined,
 			pauseInfo: this.pauseInfo ?? undefined,
 			uptime: Math.floor((Date.now() - this.startTime) / 1000),
 			scriptCount: 0,
@@ -252,6 +288,7 @@ export class DapSession extends BaseSession {
 			this.dap.disconnect();
 			this.dap = null;
 		}
+		this._transportDescription = null;
 
 		this.resetState();
 		this._stackFrames = [];
@@ -278,7 +315,7 @@ export class DapSession extends BaseSession {
 
 		const waiter =
 			options?.waitForStop === true ? this.waitUntilStopped(options) : Promise.resolve();
-		await this.getDap().send("continue", { threadId: this._threadId });
+		await this.client.send("continue", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -301,7 +338,7 @@ export class DapSession extends BaseSession {
 		const waiter =
 			options?.waitForStop !== false ? this.waitUntilStopped(options) : Promise.resolve();
 		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
-		await this.getDap().send(command, { threadId: this._threadId });
+		await this.client.send(command, { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -313,7 +350,7 @@ export class DapSession extends BaseSession {
 		}
 
 		const waiter = this.waitUntilStopped();
-		await this.getDap().send("pause", { threadId: this._threadId });
+		await this.client.send("pause", { threadId: this._threadId });
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -396,7 +433,7 @@ export class DapSession extends BaseSession {
 
 		// Send empty breakpoints for each file
 		for (const file of files) {
-			await this.getDap().send("setBreakpoints", {
+			await this.client.send("setBreakpoints", {
 				source: { path: file },
 				breakpoints: [],
 			});
@@ -404,7 +441,7 @@ export class DapSession extends BaseSession {
 
 		// Clear function breakpoints
 		if (hadFunctionBps) {
-			await this.getDap().send("setFunctionBreakpoints", { breakpoints: [] });
+			await this.client.send("setFunctionBreakpoints", { breakpoints: [] });
 		}
 	}
 
@@ -466,13 +503,10 @@ export class DapSession extends BaseSession {
 			hitCondition: bp.hitCondition,
 		}));
 
-		const response = await this.getDap().send("setFunctionBreakpoints", {
+		const body = await this.client.send("setFunctionBreakpoints", {
 			breakpoints: dapBps,
 		});
 
-		const body = response.body as
-			| { breakpoints?: Array<{ id?: number; verified?: boolean }> }
-			| undefined;
 		const resultBps = body?.breakpoints ?? [];
 		for (let i = 0; i < fnBps.length; i++) {
 			const entry = fnBps[i];
@@ -495,17 +529,11 @@ export class DapSession extends BaseSession {
 
 		const frameId = this.resolveFrameId(options.frame);
 
-		const response = await this.getDap().send("evaluate", {
+		const body = await this.client.send("evaluate", {
 			expression,
 			frameId,
 			context: "repl",
 		});
-
-		const body = response.body as {
-			result: string;
-			type?: string;
-			variablesReference: number;
-		};
 
 		const remoteId =
 			body.variablesReference > 0 ? String(body.variablesReference) : `eval:${Date.now()}`;
@@ -529,12 +557,7 @@ export class DapSession extends BaseSession {
 		const frameId = this.resolveFrameId(options.frame);
 
 		// Get scopes for the frame
-		const scopesResponse = await this.getDap().send("scopes", { frameId });
-		const scopes = (
-			scopesResponse.body as {
-				scopes: Array<{ name: string; variablesReference: number; expensive: boolean }>;
-			}
-		).scopes;
+		const { scopes } = await this.client.send("scopes", { frameId });
 
 		const result: Array<{ ref: string; name: string; type: string; value: string }> = [];
 
@@ -544,20 +567,9 @@ export class DapSession extends BaseSession {
 			: scopes.filter((s) => !s.expensive).slice(0, 2); // locals + args typically
 
 		for (const scope of scopesToFetch) {
-			const varsResponse = await this.getDap().send("variables", {
+			const { variables } = await this.client.send("variables", {
 				variablesReference: scope.variablesReference,
 			});
-
-			const variables = (
-				varsResponse.body as {
-					variables: Array<{
-						name: string;
-						value: string;
-						type?: string;
-						variablesReference: number;
-					}>;
-				}
-			).variables;
 
 			for (const v of variables) {
 				if (options.names && !options.names.includes(v.name)) continue;
@@ -601,17 +613,7 @@ export class DapSession extends BaseSession {
 			return [];
 		}
 
-		const response = await this.getDap().send("variables", { variablesReference });
-		const variables = (
-			response.body as {
-				variables: Array<{
-					name: string;
-					value: string;
-					type?: string;
-					variablesReference: number;
-				}>;
-			}
-		).variables;
+		const { variables } = await this.client.send("variables", { variablesReference });
 
 		return variables.map((v) => {
 			const childRemoteId =
@@ -797,7 +799,7 @@ export class DapSession extends BaseSession {
 			filters = filterIds.filter((id) => id.includes(mode));
 			if (filters.length === 0) filters = filterIds; // fallback to all
 		}
-		await this.getDap().send("setExceptionBreakpoints", { filters });
+		await this.client.send("setExceptionBreakpoints", { filters });
 	}
 
 	async toggleBreakpoint(_ref: string): Promise<{ ref: string; state: "enabled" | "disabled" }> {
@@ -830,7 +832,7 @@ export class DapSession extends BaseSession {
 		// Done via evaluate to access the debuggee thread for classpath resolution.
 		const payload = `__HOTPATCH_PREPARE__${file}\n${source}`;
 		const frameId = this.resolveFrameId();
-		await this.getDap().send("evaluate", {
+		await this.client.send("evaluate", {
 			expression: payload,
 			frameId,
 			context: "repl",
@@ -838,14 +840,18 @@ export class DapSession extends BaseSession {
 
 		// Step 2: Redefine — triggers IHotCodeReplaceProvider.redefineClasses()
 		// on the proper framework path (avoids evaluate/redefine deadlock).
-		const response = await this.getDap().send("redefineClasses", {});
-		const body = response.body as { changedClasses?: string[]; errorMessage?: string };
+		// `redefineClasses` is a Java-vendor extension, not in the DAP spec,
+		// so it falls through to the untyped send overload.
+		const rawBody = (await this.client.send("redefineClasses", {})) as {
+			changedClasses?: string[];
+			errorMessage?: string;
+		} | null;
 
-		if (body.errorMessage) {
-			throw new Error(body.errorMessage);
+		if (rawBody?.errorMessage) {
+			throw new Error(rawBody.errorMessage);
 		}
 
-		const classes = body.changedClasses ?? [];
+		const classes = rawBody?.changedClasses ?? [];
 		if (classes.length === 0) {
 			throw new Error("No classes were redefined.");
 		}
@@ -885,19 +891,16 @@ export class DapSession extends BaseSession {
 
 		const frameId = this.resolveFrameId(options.frame);
 		// Get the scopes to find the variable
-		const scopesResponse = await this.getDap().send("scopes", { frameId });
-		const scopes = (scopesResponse.body as { scopes: Array<{ variablesReference: number }> })
-			.scopes;
+		const { scopes } = await this.client.send("scopes", { frameId });
 
 		// Try setting in each scope
 		for (const scope of scopes) {
 			try {
-				const response = await this.getDap().send("setVariable", {
+				const body = await this.client.send("setVariable", {
 					variablesReference: scope.variablesReference,
 					name: varName,
 					value,
 				});
-				const body = response.body as { value: string; type?: string };
 				return { name: varName, newValue: body.value, type: body.type ?? "unknown" };
 			} catch {
 				// Variable not in this scope, try next
@@ -922,7 +925,7 @@ export class DapSession extends BaseSession {
 		const frameId = this.resolveFrameId(frameRef);
 
 		const waiter = this.waitUntilStopped({ throwOnTimeout: true });
-		await this.getDap().send("restartFrame", { frameId });
+		await this.client.send("restartFrame", { frameId });
 		await waiter;
 
 		return { status: "restarted" };
@@ -940,13 +943,11 @@ export class DapSession extends BaseSession {
 		await this.ensureStack();
 
 		const frameId = this.resolveFrameId();
-		const response = await this.getDap().send("evaluate", {
+		const body = await this.client.send("evaluate", {
 			expression: command,
 			frameId,
 			context: "repl",
 		});
-
-		const body = response.body as { result: string; variablesReference: number };
 		return body.result;
 	}
 
@@ -1029,19 +1030,7 @@ export class DapSession extends BaseSession {
 			);
 		}
 
-		const response = await this.getDap().send("modules", { startModule: 0, moduleCount: 0 });
-		const body = response.body as {
-			modules: Array<{
-				id: number | string;
-				name: string;
-				path?: string;
-				symbolStatus?: string;
-				symbolFilePath?: string;
-				version?: string;
-			}>;
-			totalModules?: number;
-		};
-
+		const body = await this.client.send("modules", { startModule: 0, moduleCount: 0 });
 		let modules = body.modules ?? [];
 
 		if (filter) {
@@ -1094,8 +1083,12 @@ export class DapSession extends BaseSession {
 		}
 	}
 
-	/** Returns the DAP client, throwing if not connected. Call after requireConnected(). */
-	private getDap(): DapClient {
+	/**
+	 * The connected DAP client. Throws if not yet attached / after disconnect.
+	 * Use this from any method whose body assumes a live connection — the
+	 * getter replaces the old `requireConnected()` + `getDap()` pair.
+	 */
+	private get client(): DapClient {
 		if (!this.dap || !this.dap.connected) {
 			throw new Error("Not connected to a debug adapter. Use launch or attach first.");
 		}
@@ -1103,7 +1096,7 @@ export class DapSession extends BaseSession {
 	}
 
 	private requireConnected(): void {
-		this.getDap();
+		void this.client;
 	}
 
 	private requirePaused(): void {
@@ -1112,22 +1105,8 @@ export class DapSession extends BaseSession {
 		}
 	}
 
-	private async initializeAdapter(): Promise<void> {
-		const response = await this.getDap().send("initialize", {
-			adapterID: this._runtime,
-			clientID: "debug-that",
-			clientName: "debug-that",
-			linesStartAt1: true,
-			columnsStartAt1: true,
-			pathFormat: "path",
-			supportsVariableType: true,
-		});
-
-		this.adapterCapabilities = (response.body ?? {}) as DebugProtocol.Capabilities;
-	}
-
 	private setupEventHandlers(): void {
-		const dap = this.getDap();
+		const dap = this.client;
 
 		dap.on("stopped", (body: unknown) => {
 			const event = body as {
@@ -1230,21 +1209,11 @@ export class DapSession extends BaseSession {
 		if (!this.dap || this.state !== "paused") return;
 
 		try {
-			const response = await this.dap.send("stackTrace", {
+			const body = await this.dap.send("stackTrace", {
 				threadId: this._threadId,
 				startFrame: 0,
 				levels: 50,
 			});
-
-			const body = response.body as {
-				stackFrames: Array<{
-					id: number;
-					name: string;
-					source?: { path?: string; name?: string };
-					line: number;
-					column: number;
-				}>;
-			};
 
 			this._stackFrames = body.stackFrames.map((f) => ({
 				id: f.id,
@@ -1289,27 +1258,19 @@ export class DapSession extends BaseSession {
 			(bp): bp is DapFileBreakpoint => bp.kind === "file" && bp.file === file,
 		);
 
-		const dapBreakpoints = entries.map((bp) => {
-			const sbp: Record<string, unknown> = { line: bp.line };
+		const dapBreakpoints: DebugProtocol.SourceBreakpoint[] = entries.map((bp) => {
+			const sbp: DebugProtocol.SourceBreakpoint = { line: bp.line };
 			if (bp.condition) sbp.condition = bp.condition;
 			if (bp.hitCondition) sbp.hitCondition = bp.hitCondition;
 			return sbp;
 		});
 
-		const response = await this.getDap().send("setBreakpoints", {
+		const body = await this.client.send("setBreakpoints", {
 			source: { path: file },
 			breakpoints: dapBreakpoints,
 		});
 
 		// Update entries with actual verified locations
-		const body = response.body as {
-			breakpoints: Array<{
-				id?: number;
-				verified: boolean;
-				line?: number;
-			}>;
-		};
-
 		for (let i = 0; i < entries.length && i < body.breakpoints.length; i++) {
 			const bp = body.breakpoints[i];
 			const entry = entries[i];
@@ -1379,26 +1340,6 @@ export class DapSession extends BaseSession {
 					reject(e);
 				},
 			};
-		});
-	}
-
-	/**
-	 * Wait for the DAP "initialized" event. Some adapters send this during
-	 * launch/attach; we must receive it before sending configurationDone.
-	 */
-	private async waitForInitialized(): Promise<void> {
-		const dap = this.getDap();
-		return new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				dap.off("initialized", handler);
-				reject(new Error("Timed out waiting for DAP initialized event"));
-			}, INITIALIZED_TIMEOUT_MS);
-			const handler = () => {
-				clearTimeout(timer);
-				dap.off("initialized", handler);
-				resolve();
-			};
-			dap.on("initialized", handler);
 		});
 	}
 }

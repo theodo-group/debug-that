@@ -155,11 +155,11 @@ describe.skipIf(!HAS_JAVA)("Java hotpatch (hot code replace)", () => {
 			);
 		}));
 
-	// ── Capabilities ──
+	// ── Features ──
 
-	test("capabilities report hotpatch as supported", () =>
+	test("features report hotpatch as supported", () =>
 		withJavaSession("java-hotpatch-caps", async (session) => {
 			await session.launch([HOTPATCH_JAVA], { brk: true });
-			expect(session.capabilities.hotpatch).toBe(true);
+			expect(session.features.hotpatch).toBe(true);
 		}));
 });

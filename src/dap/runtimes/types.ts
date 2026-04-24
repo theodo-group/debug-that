@@ -7,34 +7,8 @@
  * 3. Register it in src/dap/runtimes/index.ts
  */
 
-/** Arguments passed to the DAP adapter's "launch" request. */
-export interface DapLaunchArgs {
-	/** Working directory for the debuggee. */
-	cwd: string;
-	/** Whether to pause on entry (before any user code runs). */
-	stopOnEntry?: boolean;
-	/**
-	 * Directories containing source files. Used for:
-	 * - Resolving short filenames in breakpoints (e.g. "User.java" → full path)
-	 * - Mapping stack frames to source locations
-	 */
-	sourcePaths?: string[];
-	/**
-	 * Any additional adapter-specific keys (e.g. `mainClass`, `classPaths` for Java,
-	 * `program` for LLDB/Python). These are passed directly to the DAP launch request.
-	 */
-	[key: string]: unknown;
-}
-
-/** Arguments passed to the DAP adapter's "attach" request. */
-export interface DapAttachArgs {
-	/** Host to connect to. */
-	hostName: string;
-	/** Port to connect to. */
-	port: number;
-	/** Any additional adapter-specific keys. */
-	[key: string]: unknown;
-}
+import type { SessionFeatures } from "../../session/session.ts";
+import type { DapConnector } from "../connector.ts";
 
 /** What the user typed on the CLI: `dbg launch --runtime <rt> <program> [args...]` */
 export interface UserLaunchInput {
@@ -50,37 +24,45 @@ export interface UserLaunchInput {
 	cwd: string;
 }
 
+/**
+ * Everything DapSession needs to perform one launch or attach handshake:
+ * a connector (how to get a DAP endpoint) plus the request args to spread
+ * into the DAP "launch"/"attach" request.
+ */
+export interface DapConnectPlan {
+	/** How to obtain a transport to the DAP server. */
+	connector: DapConnector;
+	/**
+	 * Arguments spread directly into the DAP "launch" or "attach" request.
+	 * Must include adapter-specific keys (`program` for LLDB, `mainClass` for Java, etc.).
+	 */
+	requestArgs: Record<string, unknown>;
+	/**
+	 * Source directories used to resolve short filenames to full paths for
+	 * breakpoints. Only meaningful for `launch`. Forwarded to the adapter when
+	 * supported (`sourcePaths` key on the launch request).
+	 */
+	sourcePaths?: string[];
+}
+
 export interface DapRuntimeConfig {
 	/**
-	 * Return the command + args to spawn the DAP adapter process.
-	 * This is the adapter itself, NOT the program being debugged.
+	 * Overrides on top of the DAP session's default feature set. Most
+	 * runtimes inherit the defaults (function breakpoints, modules, path
+	 * mapping, symbol loading — features the DAP spec covers) and only
+	 * override when the adapter surfaces something extra that the spec
+	 * doesn't cover. Example: our custom Java adapter implements hot code
+	 * replace + restart-frame, so `javaConfig` sets `{ hotpatch: true,
+	 * restartFrame: true }` and inherits the rest.
 	 *
-	 * @example
-	 * // Python: spawn debugpy adapter
-	 * () => ["python3", "-m", "debugpy.adapter"]
-	 *
-	 * @example
-	 * // LLDB: spawn lldb-dap binary
-	 * () => ["lldb-dap"]
+	 * Omit this field entirely if the defaults are correct.
 	 */
-	getAdapterCommand(): string[];
-
+	features?: Partial<SessionFeatures>;
+	/** Build a plan for `dbg launch --runtime <rt> ...`. */
+	launch(input: UserLaunchInput): DapConnectPlan;
 	/**
-	 * Transform user CLI input into DAP launch request arguments.
-	 * The returned object is spread directly into the DAP "launch" request.
-	 *
-	 * Must include `cwd`. Should include `sourcePaths` for breakpoint resolution.
-	 * All other keys are adapter-specific (see your adapter's DAP documentation).
+	 * Build a plan for `dbg attach <target> --runtime <rt>`.
+	 * Undefined means the runtime does not support attach (e.g. plain lldb today).
 	 */
-	buildLaunchArgs(input: UserLaunchInput): DapLaunchArgs;
-
-	/**
-	 * Parse a user-provided attach target string into DAP attach request arguments.
-	 * Only needed if the runtime supports attaching to a running process.
-	 *
-	 * @example
-	 * // Java: "localhost:5005" or just "5005"
-	 * (target) => ({ hostName: "localhost", port: 5005 })
-	 */
-	parseAttachTarget?(target: string): DapAttachArgs;
+	attach?(target: string): DapConnectPlan;
 }
