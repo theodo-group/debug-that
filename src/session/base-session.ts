@@ -10,7 +10,7 @@ import type {
 	PropEntry,
 	ScriptEntry,
 	Session,
-	SessionCapabilities,
+	SessionFeatures,
 	SetVarResult,
 	SourceMapInfo,
 	SourceResult,
@@ -50,7 +50,7 @@ export abstract class BaseSession implements Session {
 	readonly session: string;
 	startTime: number = Date.now();
 
-	abstract readonly capabilities: SessionCapabilities;
+	abstract readonly features: SessionFeatures;
 
 	// ── Source map diagnostics (overridden by subclasses) ──────────
 	abstract getSourceMapInfos(file?: string): SourceMapInfo[];

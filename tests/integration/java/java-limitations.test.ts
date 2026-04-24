@@ -42,14 +42,14 @@ describe.skipIf(!HAS_JAVA)("Java debugging — known limitations (lightweight ad
 			await expect(session.restart()).rejects.toThrow(/not.*supported/i);
 		}));
 
-	test("capabilities reflect lightweight adapter limits", () => {
+	test("features reflect lightweight adapter limits", () => {
 		const session = new DapSession("java-lim-caps", "java");
-		expect(session.capabilities.hotpatch).toBe(true);
-		expect(session.capabilities.blackboxing).toBe(false);
-		expect(session.capabilities.logpoints).toBe(false);
-		expect(session.capabilities.scriptSearch).toBe(false);
-		expect(session.capabilities.restartFrame).toBe(true);
-		expect(session.capabilities.setReturnValue).toBe(false);
-		expect(session.capabilities.functionBreakpoints).toBe(true);
+		expect(session.features.hotpatch).toBe(true);
+		expect(session.features.blackboxing).toBe(false);
+		expect(session.features.logpoints).toBe(false);
+		expect(session.features.scriptSearch).toBe(false);
+		expect(session.features.restartFrame).toBe(true);
+		expect(session.features.setReturnValue).toBe(false);
+		expect(session.features.functionBreakpoints).toBe(true);
 	});
 });

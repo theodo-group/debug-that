@@ -150,7 +150,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		case "break-fn": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			if (!session.capabilities.functionBreakpoints || !session.setFunctionBreakpoint) {
+			if (!session.features.functionBreakpoints || !session.setFunctionBreakpoint) {
 				return {
 					ok: false,
 					error: "Function breakpoints are only supported with DAP runtimes (e.g. --runtime lldb)",
@@ -365,7 +365,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		case "modules": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			if (!session.capabilities.modules || !session.getModules) {
+			if (!session.features.modules || !session.getModules) {
 				return {
 					ok: false,
 					error: "Modules are only available in DAP mode (e.g. --runtime lldb)",

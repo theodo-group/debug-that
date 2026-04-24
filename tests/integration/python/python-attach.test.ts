@@ -76,15 +76,7 @@ async function waitForDebugpyReady(proc: Subprocess, timeoutMs: number): Promise
 
 async function spawnDebugpyListener(port: number): Promise<Subprocess> {
 	const proc = Bun.spawn(
-		[
-			"python3",
-			"-m",
-			"debugpy",
-			"--listen",
-			`127.0.0.1:${port}`,
-			"--wait-for-client",
-			LOOP_SCRIPT,
-		],
+		["python3", "-m", "debugpy", "--listen", `127.0.0.1:${port}`, "--wait-for-client", LOOP_SCRIPT],
 		{ stdout: "pipe", stderr: "pipe" },
 	);
 	await waitForDebugpyReady(proc, 5_000);

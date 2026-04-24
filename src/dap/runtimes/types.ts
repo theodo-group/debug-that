@@ -7,6 +7,7 @@
  * 3. Register it in src/dap/runtimes/index.ts
  */
 
+import type { SessionFeatures } from "../../session/session.ts";
 import type { DapConnector } from "../connector.ts";
 
 /** What the user typed on the CLI: `dbg launch --runtime <rt> <program> [args...]` */
@@ -45,6 +46,18 @@ export interface DapConnectPlan {
 }
 
 export interface DapRuntimeConfig {
+	/**
+	 * Overrides on top of the DAP session's default feature set. Most
+	 * runtimes inherit the defaults (function breakpoints, modules, path
+	 * mapping, symbol loading — features the DAP spec covers) and only
+	 * override when the adapter surfaces something extra that the spec
+	 * doesn't cover. Example: our custom Java adapter implements hot code
+	 * replace + restart-frame, so `javaConfig` sets `{ hotpatch: true,
+	 * restartFrame: true }` and inherits the rest.
+	 *
+	 * Omit this field entirely if the defaults are correct.
+	 */
+	features?: Partial<SessionFeatures>;
 	/** Build a plan for `dbg launch --runtime <rt> ...`. */
 	launch(input: UserLaunchInput): DapConnectPlan;
 	/**

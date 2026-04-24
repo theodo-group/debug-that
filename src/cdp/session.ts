@@ -5,7 +5,7 @@ import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
-import type { BreakpointListItem, SessionCapabilities, SourceMapInfo } from "../session/session.ts";
+import type { BreakpointListItem, SessionFeatures, SourceMapInfo } from "../session/session.ts";
 import type {
 	AttachResult,
 	ConsoleMessage,
@@ -102,7 +102,7 @@ export class CdpSession extends BaseSession {
 	private log: Logger<"session">;
 	private cdpLog: Logger<"cdp">;
 
-	readonly capabilities: SessionCapabilities = {
+	readonly features: SessionFeatures = {
 		functionBreakpoints: false,
 		logpoints: true,
 		hotpatch: true,

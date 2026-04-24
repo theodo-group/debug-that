@@ -8,9 +8,14 @@ import type {
 	StateSnapshot,
 } from "./types.ts";
 
-// ── Capabilities ─────────────────────────────────────────────────────
+// ── Session features ─────────────────────────────────────────────────
+//
+// Feature matrix this session exposes to the CLI. Named `SessionFeatures`
+// rather than `SessionCapabilities` so it doesn't collide with the DAP
+// spec's `DebugProtocol.Capabilities` (what the *adapter* advertises to us
+// in its `initialize` response — see DapSession.adapterCapabilities).
 
-export interface SessionCapabilities {
+export interface SessionFeatures {
 	/** DAP: setFunctionBreakpoints */
 	functionBreakpoints: boolean;
 	/** CDP: logpoints via condition expression */
@@ -160,7 +165,7 @@ export interface PendingConfig {
 export type ExceptionPauseMode = "all" | "uncaught" | "caught" | "none";
 
 export interface Session {
-	readonly capabilities: SessionCapabilities;
+	readonly features: SessionFeatures;
 
 	// ── Source map diagnostics ─────────────────────────────────────
 	getSourceMapInfos(file?: string): SourceMapInfo[];

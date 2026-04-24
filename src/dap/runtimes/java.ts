@@ -64,6 +64,10 @@ function buildJavaLaunchArgs({ program, args, cwd }: UserLaunchInput): {
 }
 
 export const javaConfig: DapRuntimeConfig = {
+	// Our custom Java adapter implements hot code replace and restart-frame,
+	// which aren't part of the DAP capability surface the spec advertises.
+	features: { hotpatch: true, restartFrame: true },
+
 	launch(input: UserLaunchInput): DapConnectPlan {
 		const { requestArgs, sourcePaths } = buildJavaLaunchArgs(input);
 		return {
