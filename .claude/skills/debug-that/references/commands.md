@@ -15,7 +15,9 @@
 ```bash
 dbg launch [--brk] <command...>     # Start + attach debugger (--brk pauses at first line)
 dbg launch --brk --runtime lldb ./program  # Native debugging via LLDB (DAP)
+dbg launch --brk python3 app.py     # Python debugging via debugpy (DAP)
 dbg attach <pid|ws-url|port>        # Attach to running process
+dbg attach <port> --runtime python  # Python: attach to a `debugpy --listen <port>` server
 dbg stop                            # Kill process + daemon
 dbg sessions [--cleanup]            # List active sessions
 dbg status                          # Session info (pid, state, pause location)
@@ -170,7 +172,7 @@ dbg sourcemap --disable             # Disable resolution globally
 
 ```bash
 --session NAME                       # Target session (default: "default")
---runtime NAME                       # Debug adapter: lldb, codelldb, etc. (for native debugging)
+--runtime NAME                       # Debug adapter: lldb, codelldb, python (debugpy), java, etc.
 --json                               # JSON output
 --color                              # Enable ANSI colors
 --help-agent                         # LLM-optimized reference card

@@ -2,13 +2,13 @@
 name: dbg
 description: >
   Debug applications using the dbg CLI debugger.
-  Supports Node.js (V8/CDP), Bun (WebKit/JSC), and native code via LLDB (DAP).
+  Supports Node.js (V8/CDP), Bun (WebKit/JSC), Python (debugpy/DAP), Java (JDWP/DAP), and native code via LLDB (DAP).
   Use when: (1) investigating runtime bugs by stepping through code, (2) inspecting
   variable values at specific execution points, (3) setting breakpoints and conditional
   breakpoints, (4) evaluating expressions in a paused context, (5) hot-patching code
   without restarting (JS/TS), (6) debugging test failures by attaching to a running process,
-  (7) debugging C/C++/Rust/Swift with LLDB, (8) any task where understanding runtime
-  behavior requires a debugger.
+  (7) debugging C/C++/Rust/Swift with LLDB, (8) debugging Python via debugpy,
+  (9) any task where understanding runtime behavior requires a debugger.
   Triggers: "debug this", "set a breakpoint", "step through", "inspect variables",
   "why is this value wrong", "trace execution", "attach debugger", "runtime error",
   "segfault", "core dump".
@@ -16,7 +16,7 @@ description: >
 
 # dbg Debugger
 
-`dbg` is a CLI debugger that supports **Node.js** (V8/CDP), **Bun** (WebKit/JSC), **Java** (via JDWP/DAP) and **native code** (C/C++/Rust/Swift via LLDB/DAP). It uses short `@refs` for all entities -- use them instead of long IDs.
+`dbg` is a CLI debugger that supports **Node.js** (V8/CDP), **Bun** (WebKit/JSC), **Python** (via debugpy/DAP), **Java** (via JDWP/DAP) and **native code** (C/C++/Rust/Swift via LLDB/DAP). It uses short `@refs` for all entities -- use them instead of long IDs.
 
 ## Supported Runtimes
 
@@ -25,10 +25,11 @@ description: >
 | Node.js | JavaScript | `dbg launch --brk node app.js` |
 | tsx / ts-node | TypeScript | `dbg launch --brk tsx src/app.ts` |
 | Bun | JavaScript / TypeScript | `dbg launch --brk bun app.ts` |
+| debugpy | Python | `dbg launch --brk python3 app.py` (or attach -- see Python section) |
 | LLDB | C / C++ / Rust / Swift | `dbg launch --brk --runtime lldb ./program` |
 | JDWP | Java | `dbg launch --brk --runtime java ./program` |
 
-The runtime is auto-detected from the launch command for JS runtimes. For native code, use `--runtime lldb`.
+The runtime is auto-detected from the launch command for JS and Python runtimes. For native code, use `--runtime lldb`. Python can also attach to a running `debugpy` listener over TCP (`--runtime python`).
 
 ## Core Debug Loop
 
@@ -36,6 +37,7 @@ The runtime is auto-detected from the launch command for JS runtimes. For native
 # 1. Launch with breakpoint at first line
 dbg launch --brk node app.js
 # Or: dbg launch --brk bun app.ts
+# Or: dbg launch --brk python3 app.py
 # Or: dbg launch --brk --runtime lldb ./my_program
 # Or attach to a running process with the --inspect flag
 dbg attach 9229
@@ -86,7 +88,45 @@ dbg eval "array[i]"                         # evaluate expression
 dbg step into                               # step into function
 ```
 
-### Attach to running/test process
+### Python debugging (debugpy)
+Python uses the `debugpy` DAP adapter. Two ways in:
+
+**Launch** (auto-detected from a `python`/`python3` command):
+```bash
+dbg launch --brk python3 app.py        # pauses at first line
+dbg break app.py:42
+dbg continue
+dbg state                              # location + locals + stack
+dbg eval "some_expr"                   # evaluate in the paused frame
+dbg step over
+```
+
+**Attach** -- the debuggee runs its own `debugpy` listener and `dbg` connects
+over TCP (no adapter spawned in between). Useful when the process must be
+launched a specific way (a test runner, a virtualenv, a secrets wrapper):
+```bash
+# 1. Start the program listening on a port. --wait-for-client blocks before
+#    the first line runs, so you have time to attach and set breakpoints.
+python3 -m debugpy --listen 5679 --wait-for-client app.py &
+
+# 2. Attach. --runtime python (alias: debugpy) is REQUIRED for a bare port.
+dbg attach 5679 --runtime python
+
+# 3. Set breakpoints (use absolute paths), then drive execution.
+dbg break /abs/path/app.py:42
+dbg continue
+dbg state
+```
+Notes:
+- `--wait-for-client` treats the FIRST TCP connection as the client -- don't
+  probe the port to check readiness; just attach once debugpy prints its
+  startup banner to stderr.
+- A short script can run to completion before you set a breakpoint. Set it
+  immediately after attaching, or attach to a long-running entry point.
+- `dbg set` / `dbg hotpatch` are JS/TS only; inspection (`break`, `continue`,
+  `state`, `vars`, `eval`, `step`, `break-fn`) all work for Python.
+
+### Attach to running/test process (Node/Bun)
 ```bash
 # Start with inspector enabled
 node --inspect app.js
@@ -144,6 +184,7 @@ See [references/commands.md](references/commands.md) for full command details an
 - `dbg eval` supports `await` -- useful for async inspection (JS/TS)
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)
-- `dbg break-fn funcName` -- function breakpoints work with DAP runtimes (LLDB)
+- `dbg break-fn funcName` -- function breakpoints work with DAP runtimes (LLDB, Python, Java)
+- Python: `dbg launch --brk python3 app.py`, or attach to a `debugpy --listen <port>` server with `dbg attach <port> --runtime python`
 - Execution commands (`continue`, `step`, `pause`, `run-to`) auto-return status
 - `dbg stop` kills the debugged process and daemon
