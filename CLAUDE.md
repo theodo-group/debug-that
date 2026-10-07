@@ -47,6 +47,7 @@ tests/
 ## Commands
 - `bun run dev` — run in development
 - `bun test` — run all tests
+- `bun run test:stress` — rerun the CDP suites on a CPU-starved machine (`--burners N`, `--background`, `--runs N`) to catch code that waits on time instead of protocol events
 - `bun run build` — compile standalone binary
 - `bun run lint` — lint with biome
 - `bun run format` — format with biome

@@ -34,6 +34,7 @@
     "dev": "bun run src/main.ts",
     "build": "bun run build.ts",
     "test": "bun test tests/unit/ && bun test --concurrent tests/integration/",
+    "test:stress": "bun scripts/stress-tests.ts",
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit -p tsconfig.check.json",
