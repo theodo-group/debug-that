@@ -32,7 +32,8 @@ export function createSession(
 			const available = [...ALL_RUNTIMES].sort().join(", ");
 			throw new Error(`Unknown runtime "${runtime}". Available: ${available}`);
 		}
-		runtime = resolveRuntime(runtime);
+		// Aliases such as "jdwp" only exist on the DAP side
+		if (!CDP_RUNTIMES.has(runtime)) runtime = resolveRuntime(runtime);
 	}
 	if (isDapRuntime(runtime)) {
 		return new DapSession(sessionName, runtime, options);
