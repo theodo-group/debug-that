@@ -185,6 +185,42 @@ describe("SourceMapResolver", () => {
 		});
 	});
 
+	describe("a source declared by several chunks", () => {
+		const SHARED_TS = "src/shared.ts";
+		// VLQ "AAAA": generated 1:0 → shared.ts 1:0. "AAIA": generated 1:0 → shared.ts 5:0.
+		const chunkMappingLine1 = inlineMap({
+			sources: [SHARED_TS],
+			sourcesContent: ["// chunk A"],
+			mappings: "AAAA",
+		});
+		const chunkMappingLine5 = inlineMap({
+			sources: [SHARED_TS],
+			sourcesContent: ["// chunk B"],
+			mappings: "AAIA",
+		});
+
+		beforeEach(async () => {
+			await resolver.loadSourceMap("A", "/virtual/a.js", chunkMappingLine1);
+			await resolver.loadSourceMap("B", "/virtual/b.js", chunkMappingLine5);
+		});
+
+		test("toGenerated picks the chunk that maps the requested line", () => {
+			expect(resolver.toGenerated(SHARED_TS, 1, 0)?.scriptId).toBe("A");
+			expect(resolver.toGenerated(SHARED_TS, 5, 0)?.scriptId).toBe("B");
+			expect(resolver.toGenerated(SHARED_TS, 9, 0)).toBeNull();
+		});
+
+		test("findScriptForSource returns the first chunk declaring the file", () => {
+			expect(resolver.findScriptForSource(SHARED_TS)?.scriptId).toBe("A");
+			expect(resolver.findScriptForSource("/virtual/src/shared.ts")?.scriptId).toBe("A");
+		});
+
+		test("getOriginalSource reads the content of the chunk asked for", () => {
+			expect(resolver.getOriginalSource("A", SHARED_TS)).toBe("// chunk A");
+			expect(resolver.getOriginalSource("B", SHARED_TS)).toBe("// chunk B");
+		});
+	});
+
 	describe("getInfo / getAllInfos", () => {
 		test("getInfo returns source map info for loaded script", async () => {
 			await resolver.loadSourceMap("1", APP_JS, "app.js.map");
@@ -233,3 +269,8 @@ describe("SourceMapResolver", () => {
 		});
 	});
 });
+
+function inlineMap(map: { sources: string[]; sourcesContent: string[]; mappings: string }): string {
+	const json = JSON.stringify({ version: 3, names: [], ...map });
+	return `data:application/json;base64,${Buffer.from(json).toString("base64")}`;
+}

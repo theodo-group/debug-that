@@ -37,10 +37,16 @@ interface LoadedMap {
 	hasSourcesContent: boolean;
 }
 
+/** One map's declaration of a source file */
+interface SourceRef {
+	map: LoadedMap;
+	sourceIndex: number;
+}
+
 export class SourceMapResolver {
 	private maps: Map<string, LoadedMap> = new Map();
-	// Reverse lookup: resolved source path → { scriptId, sourceIndex }
-	private sourceIndex: Map<string, { scriptId: string; sourceIndex: number }> = new Map();
+	/** Source path, raw or resolved → every map declaring it, in load order */
+	private declarations: Map<string, SourceRef[]> = new Map();
 	private disabled = false;
 	private pendingLoads: Set<Promise<boolean>> = new Set();
 
@@ -127,23 +133,22 @@ export class SourceMapResolver {
 
 			this.maps.set(scriptId, entry);
 
-			// Build reverse lookup for each source
 			for (let i = 0; i < sources.length; i++) {
-				const rawSource = sources[i];
-				const resolvedSource = resolvedSources[i];
-
-				if (rawSource) {
-					this.sourceIndex.set(rawSource, { scriptId, sourceIndex: i });
-				}
-				if (resolvedSource && resolvedSource !== rawSource) {
-					this.sourceIndex.set(resolvedSource, { scriptId, sourceIndex: i });
-				}
+				this.declare(sources[i], { map: entry, sourceIndex: i });
+				this.declare(resolvedSources[i], { map: entry, sourceIndex: i });
 			}
 
 			return true;
 		} catch {
 			return false;
 		}
+	}
+
+	private declare(path: string | undefined, ref: SourceRef): void {
+		if (!path) return;
+		const refs = this.declarations.get(path) ?? [];
+		if (!refs.some((r) => sameRef(r, ref))) refs.push(ref);
+		this.declarations.set(path, refs);
 	}
 
 	toOriginal(scriptId: string, line: number, column: number): OriginalPosition | null {
@@ -167,124 +172,53 @@ export class SourceMapResolver {
 		};
 	}
 
+	/**
+	 * A source can be bundled into several chunks (a duplicated module, split
+	 * server/client variants). Only a chunk that maps the requested line can take
+	 * a breakpoint there; one that merely contains the file would bind nothing.
+	 */
 	toGenerated(source: string, line: number, column: number): GeneratedPosition | null {
 		if (this.disabled) return null;
 
-		// Try direct lookup first
-		const indexEntry = this.sourceIndex.get(source);
-		if (indexEntry) {
-			const entry = this.maps.get(indexEntry.scriptId);
-			if (entry) {
-				const sourceName = entry.sources[indexEntry.sourceIndex];
-				if (sourceName) {
-					const result = this.tryGeneratedPosition(entry.traceMap, sourceName, line, column);
-					if (result) {
-						return { scriptId: indexEntry.scriptId, ...result };
-					}
-				}
-			}
+		for (const { map, sourceIndex } of this.declarationsOf(source)) {
+			const sourceName = map.sources[sourceIndex];
+			const position = sourceName ? generatedPositionIn(map, sourceName, line, column) : null;
+			if (position) return { scriptId: map.scriptId, ...position };
 		}
-
-		// Try suffix matching
-		const match = this.findScriptForSource(source);
-		if (match) {
-			const entry = this.maps.get(match.scriptId);
-			if (entry) {
-				// Find the matching source name in the map
-				for (const s of entry.sources) {
-					if (s && (s === source || s.endsWith(source) || source.endsWith(s))) {
-						const result = this.tryGeneratedPosition(entry.traceMap, s, line, column);
-						if (result) {
-							return { scriptId: match.scriptId, ...result };
-						}
-					}
-				}
-			}
-		}
-
-		return null;
-	}
-
-	private tryGeneratedPosition(
-		traceMap: TraceMap,
-		source: string,
-		line: number,
-		column: number,
-	): { line: number; column: number } | null {
-		// Try exact match first
-		const exact = generatedPositionFor(traceMap, { source, line, column });
-		if (exact.line != null) {
-			return { line: exact.line, column: exact.column ?? 0 };
-		}
-
-		// Fallback: use LEAST_UPPER_BOUND to find the nearest mapping on this line
-		const approx = generatedPositionFor(traceMap, {
-			source,
-			line,
-			column,
-			bias: LEAST_UPPER_BOUND,
-		});
-		if (approx.line != null) {
-			return { line: approx.line, column: approx.column ?? 0 };
-		}
-
 		return null;
 	}
 
 	getOriginalSource(scriptId: string, sourcePath: string): string | null {
 		if (this.disabled) return null;
 
-		const entry = this.maps.get(scriptId);
-		if (!entry) return null;
+		const map = this.maps.get(scriptId);
+		const contents = map?.traceMap.sourcesContent as (string | null)[] | undefined;
+		if (!map || !contents) return null;
 
-		const sourcesContent = entry.traceMap.sourcesContent as (string | null)[] | undefined;
-		if (!sourcesContent) return null;
-
-		// Match by raw source path or resolved path
-		for (let i = 0; i < entry.sources.length; i++) {
-			const raw = entry.sources[i];
-			const resolved = entry.resolvedSources[i];
-			if (
-				(raw && (raw === sourcePath || raw.endsWith(sourcePath) || sourcePath.endsWith(raw))) ||
-				(resolved &&
-					(resolved === sourcePath ||
-						resolved.endsWith(sourcePath) ||
-						sourcePath.endsWith(resolved)))
-			) {
-				return sourcesContent[i] ?? null;
-			}
-		}
-
-		return null;
+		const ref = this.declarationsOf(sourcePath).find((r) => r.map === map);
+		return ref ? (contents[ref.sourceIndex] ?? null) : null;
 	}
 
 	findScriptForSource(path: string): { scriptId: string; url: string } | null {
 		if (this.disabled) return null;
 
-		// Try direct lookup first
-		const direct = this.sourceIndex.get(path);
-		if (direct) {
-			const entry = this.maps.get(direct.scriptId);
-			if (entry) {
-				return { scriptId: direct.scriptId, url: entry.generatedUrl };
-			}
-		}
+		const map = this.declarationsOf(path)[0]?.map;
+		return map ? { scriptId: map.scriptId, url: map.generatedUrl } : null;
+	}
 
-		// Try suffix matching against all sources
-		for (const [scriptId, entry] of this.maps) {
-			for (let i = 0; i < entry.sources.length; i++) {
-				const raw = entry.sources[i];
-				const resolved = entry.resolvedSources[i];
-				if (raw && (raw.endsWith(path) || path.endsWith(raw))) {
-					return { scriptId, url: entry.generatedUrl };
-				}
-				if (resolved && (resolved.endsWith(path) || path.endsWith(resolved))) {
-					return { scriptId, url: entry.generatedUrl };
+	/** Every map declaring `path`: exact path matches first, then suffix matches, each once. */
+	private declarationsOf(path: string): SourceRef[] {
+		const refs = [...(this.declarations.get(path) ?? [])];
+		for (const map of this.maps.values()) {
+			for (let i = 0; i < map.sources.length; i++) {
+				const ref = { map, sourceIndex: i };
+				if (refs.some((r) => sameRef(r, ref))) continue;
+				if (sameFile(map.sources[i], path) || sameFile(map.resolvedSources[i], path)) {
+					refs.push(ref);
 				}
 			}
 		}
-
-		return null;
+		return refs;
 	}
 
 	/**
@@ -336,6 +270,36 @@ export class SourceMapResolver {
 
 	clear(): void {
 		this.maps.clear();
-		this.sourceIndex.clear();
+		this.declarations.clear();
 	}
+}
+
+function sameRef(a: SourceRef, b: SourceRef): boolean {
+	return a.map === b.map && a.sourceIndex === b.sourceIndex;
+}
+
+/** The same file named with more or less of its directory path */
+function sameFile(a: string | undefined, b: string): boolean {
+	return a !== undefined && (a === b || a.endsWith(b) || b.endsWith(a));
+}
+
+/** The exact mapping, else the nearest one after it on the same source line */
+function generatedPositionIn(
+	map: LoadedMap,
+	source: string,
+	line: number,
+	column: number,
+): { line: number; column: number } | null {
+	const exact = generatedPositionFor(map.traceMap, { source, line, column });
+	if (exact.line != null) return { line: exact.line, column: exact.column ?? 0 };
+
+	const next = generatedPositionFor(map.traceMap, {
+		source,
+		line,
+		column,
+		bias: LEAST_UPPER_BOUND,
+	});
+	if (next.line != null) return { line: next.line, column: next.column ?? 0 };
+
+	return null;
 }
