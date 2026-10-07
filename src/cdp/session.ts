@@ -47,6 +47,7 @@ import {
 	stepExecution,
 } from "./session-execution.ts";
 import {
+	functionBreakpointReason,
 	reinstallFunctionBreakpoints,
 	setFunctionBreakpoint as setFunctionBreakpointImpl,
 } from "./session-function-breakpoints.ts";
@@ -861,7 +862,7 @@ export class CdpSession extends BaseSession {
 			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
 
 			this.pauseInfo = {
-				reason: p.reason ?? "unknown",
+				reason: functionBreakpointReason(url) ?? p.reason ?? "unknown",
 				scriptId,
 				url,
 				line: location?.lineNumber,

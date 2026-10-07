@@ -11,6 +11,9 @@ import type { CdpSession } from "./session.ts";
 
 const REGISTRY = "globalThis.__dbg_functionBreakpoints";
 
+/** Script URL of every wrapper; lets a pause inside one be reported as a function breakpoint. */
+export const FUNCTION_BREAKPOINT_URL = "dbg://function-breakpoint/";
+
 export async function setFunctionBreakpoint(
 	session: CdpSession,
 	path: string,
@@ -57,6 +60,13 @@ export async function reinstallFunctionBreakpoints(session: CdpSession): Promise
 	}
 }
 
+/** The pause reason to report for a frame URL, when it is one of our wrappers. */
+export function functionBreakpointReason(url: string | undefined): string | undefined {
+	return url?.startsWith(FUNCTION_BREAKPOINT_URL)
+		? `Function breakpoint ${url.slice(FUNCTION_BREAKPOINT_URL.length)}`
+		: undefined;
+}
+
 export function isFunctionBreakpoint(
 	entry: BreakpointEntry | LogpointEntry,
 ): entry is BreakpointEntry & { meta: { fn: string } } {
@@ -92,7 +102,7 @@ async function installWrapper(
 	holder[key] = wrapped;
 	return ${JSON.stringify(id)};
 })()
-//# sourceURL=dbg://function-breakpoint/${path}`);
+//# sourceURL=${FUNCTION_BREAKPOINT_URL}${path}`);
 	return id;
 }
 

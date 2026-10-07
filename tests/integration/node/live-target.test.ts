@@ -24,6 +24,7 @@ describe("Running target (Node.js)", () => {
 			});
 			expect(ref).toMatch(/^BP#/);
 			await session.waitForState("paused", 3000);
+			expect(session.pauseInfo?.reason).toBe("Function breakpoint service.ping");
 			expect(session.getStack({})[0]?.functionName).toBe("ping");
 			expect((await session.eval("args[0]")).value).toBe('"tick"');
 			expect((await session.eval("typeof this.calls")).value).toBe('"number"');
