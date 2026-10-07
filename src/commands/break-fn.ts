@@ -4,8 +4,8 @@ import { daemonRequest } from "../daemon/client.ts";
 
 defineCommand({
 	name: "break-fn",
-	description: "Break on function by name",
-	usage: "break-fn <function-name>",
+	description: "Break when a function is called",
+	usage: "break-fn <name|path.to.fn> [--condition expr]",
 	category: "breakpoints",
 	positional: { kind: "required", name: "name", description: "Function name" },
 	flags: z.object({

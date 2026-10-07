@@ -24,6 +24,43 @@ describe("Bun debugging", () => {
 			expect(session.pauseInfo?.reason).toBe("DebuggerStatement");
 		}));
 
+	test("captures console output (JSC Console domain)", () =>
+		withSession("bun-test-console", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/console-app.js"], { brk: true });
+			await session.continue();
+			await session.waitForState("paused", 5000);
+			await Bun.sleep(50);
+			const levels = session.getConsoleMessages().map((m) => m.level);
+			expect(levels).toContain("log");
+			expect(levels).toContain("warning");
+			expect(levels).toContain("error");
+			expect(session.getConsoleMessages().some((m) => m.text.includes("hello from app"))).toBe(
+				true,
+			);
+		}));
+
+	test("eval works while running", () =>
+		withSession("bun-test-live-eval", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/live-app.js"], { brk: true });
+			await session.continue();
+			expect(session.state).toBe("running");
+			expect((await session.eval("typeof service.ping")).value).toBe('"function"');
+		}));
+
+	test("function breakpoint pauses in the wrapper", () =>
+		withSession("bun-test-fnbp", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/live-app.js"], { brk: true });
+			await session.continue();
+			const { ref } = await session.setFunctionBreakpoint("service.ping");
+			await session.waitForState("paused", 3000);
+			expect(session.getStack({})[0]?.functionName).toBe("ping");
+			expect((await session.eval("args[0]")).value).toBe('"tick"');
+			await session.removeBreakpoint(ref);
+			await session.continue();
+			await Bun.sleep(150);
+			expect(session.state).toBe("running");
+		}));
+
 	test("detects bun runtime", () =>
 		withSession("bun-test-detect", async (session) => {
 			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });

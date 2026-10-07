@@ -114,7 +114,7 @@ dbg stop
 | Session | `launch`, `attach`, `stop`, `status`, `sessions` |
 | Execution | `continue`, `step [over\|into\|out]`, `pause`, `run-to`, `restart-frame` |
 | Inspection | `state`, `vars`, `stack`, `eval`, `props`, `source`, `scripts`, `search`, `console`, `exceptions` |
-| Breakpoints | `break`, `break-rm`, `break-ls`, `break-toggle`, `breakable`, `logpoint`, `catch`, `break-fn` (DAP only) |
+| Breakpoints | `break`, `break-rm`, `break-ls`, `break-toggle`, `breakable`, `logpoint`, `catch`, `break-fn` |
 | Mutation | `set`, `set-return`, `hotpatch` |
 | Blackbox | `blackbox`, `blackbox-ls`, `blackbox-rm` |
 

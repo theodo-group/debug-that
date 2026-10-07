@@ -128,8 +128,9 @@ dbg break-toggle all                # Disable/enable all
 dbg breakable src/app.ts:10-50      # List valid breakpoint locations
 dbg logpoint src/app.ts:20 "x=${x}" # Log without pausing
 dbg logpoint src/app.ts:20 "x=${x}" --condition "x > 0"
-dbg break-fn <name>                  # Function breakpoint (DAP runtimes only)
+dbg break-fn <name>                  # Function breakpoint (DAP: symbol, JS: path such as service.ping)
 dbg break-fn main --condition "argc > 1"
+dbg break-fn fetch --condition 'args[0].includes("/api")'   # JS: args/this in scope
 dbg catch all                       # Pause on all exceptions
 dbg catch uncaught                  # Pause on uncaught only
 dbg catch none                      # Don't pause on exceptions

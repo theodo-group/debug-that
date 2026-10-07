@@ -21,6 +21,7 @@ import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { type CdpClient, TimeoutError } from "./client.ts";
 import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
 import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
+import type { JSC } from "./jsc-protocol.js";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -45,6 +46,10 @@ import {
 	runToLocation,
 	stepExecution,
 } from "./session-execution.ts";
+import {
+	reinstallFunctionBreakpoints,
+	setFunctionBreakpoint as setFunctionBreakpointImpl,
+} from "./session-function-breakpoints.ts";
 import {
 	evalExpression,
 	getProps as getPropsImpl,
@@ -97,13 +102,14 @@ export class CdpSession extends BaseSession {
 	}> = [];
 	private _pendingRebinds = new Set<Promise<void>>();
 	launchCommand: string[] | null = null;
+	functionBreakpointSeq = 0;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
 	private _dialect: InspectorDialect | null = null;
 	private log: Logger<"session">;
 	private cdpLog: Logger<"cdp">;
 
 	readonly features: SessionFeatures = {
-		functionBreakpoints: false,
+		functionBreakpoints: true,
 		logpoints: true,
 		hotpatch: true,
 		blackboxing: true,
@@ -207,6 +213,7 @@ export class CdpSession extends BaseSession {
 			pauseAtEntry: brk,
 			entryScript: entryScriptOf(command),
 		});
+		await reinstallFunctionBreakpoints(this);
 
 		const result: LaunchResult = {
 			pid: proc.pid,
@@ -580,6 +587,13 @@ export class CdpSession extends BaseSession {
 		return runToLocation(this, file, line);
 	}
 
+	async setFunctionBreakpoint(
+		name: string,
+		options?: { condition?: string },
+	): Promise<{ ref: string }> {
+		return setFunctionBreakpointImpl(this, name, { condition: options?.condition });
+	}
+
 	async restartFrame(frameRef?: string): Promise<{ status: string }> {
 		return restartFrameExecution(this, frameRef);
 	}
@@ -933,6 +947,19 @@ export class CdpSession extends BaseSession {
 				line: topFrame?.lineNumber !== undefined ? topFrame.lineNumber + 1 : undefined,
 			};
 			this.pushConsoleMessage(msg);
+		});
+
+		cdp.on("Console.messageAdded", (p) => {
+			const message = p.message as JSC.Console.ConsoleMessage;
+			const args = (message.parameters ?? []).map((a) => formatValue(a as unknown as RemoteObject));
+			this.pushConsoleMessage({
+				timestamp: Date.now(),
+				level: message.level,
+				text: args.length > 0 ? args.join(" ") : message.text,
+				args,
+				url: message.url,
+				line: message.line,
+			});
 		});
 
 		cdp.on("Runtime.exceptionThrown", (p) => {

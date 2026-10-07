@@ -13,6 +13,8 @@ export interface BreakpointMeta {
 	generatedUrl?: string;
 	generatedLine?: number;
 	urlRegex?: string;
+	/** Function breakpoint: the wrapped path. url/line are placeholders. */
+	fn?: string;
 }
 
 export interface LogpointMeta {

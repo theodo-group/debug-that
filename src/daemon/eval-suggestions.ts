@@ -2,6 +2,10 @@
 export function suggestEvalFix(errorMsg: string): string | undefined {
 	const lower = errorMsg.toLowerCase();
 
+	if (lower.includes("cannot eval in a frame")) {
+		return "Drop --frame to evaluate in the global scope, or pause first: debug-that pause";
+	}
+
 	if (lower.includes("invalid use of 'this'") || lower.includes("invalid use of this")) {
 		return "This frame may lack debug symbols. Try: debug-that modules\n  Or try a different frame: debug-that eval <expr> --frame @f1";
 	}

@@ -153,8 +153,8 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			if (!session.features.functionBreakpoints || !session.setFunctionBreakpoint) {
 				return {
 					ok: false,
-					error: "Function breakpoints are only supported with DAP runtimes (e.g. --runtime lldb)",
-					suggestion: "Use 'break <file>:<line>' for CDP sessions",
+					error: "Function breakpoints are not supported by this runtime",
+					suggestion: "Use 'break <file>:<line>'",
 				};
 			}
 			const { name, condition } = req.args;

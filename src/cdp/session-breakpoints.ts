@@ -7,6 +7,11 @@ import type {
 import type { BreakpointListItem } from "../session/session.ts";
 import type { BreakpointTarget } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
+import {
+	isFunctionBreakpoint,
+	reinstallFunctionBreakpoint,
+	removeFunctionBreakpoint,
+} from "./session-function-breakpoints.ts";
 
 // ── Condition builders ────────────────────────────────────────────
 
@@ -159,15 +164,7 @@ export async function removeBreakpoint(session: CdpSession, ref: string): Promis
 		throw new Error(`Ref ${ref} is not a breakpoint or logpoint`);
 	}
 
-	if (entry.pending) {
-		session.refs.remove(ref);
-		return;
-	}
-
-	await session.cdp.send("Debugger.removeBreakpoint", {
-		breakpointId: entry.remoteId,
-	});
-
+	if (!entry.pending) await unbind(session, entry);
 	session.refs.remove(ref);
 }
 
@@ -176,11 +173,8 @@ export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 		throw new Error("No active debug session");
 	}
 
-	// Remove bound breakpoints from V8
 	for (const entry of session.refs.listBreakpoints({ pending: false })) {
-		await session.cdp.send("Debugger.removeBreakpoint", {
-			breakpointId: entry.remoteId,
-		});
+		await unbind(session, entry);
 		session.refs.remove(entry.ref);
 	}
 	// Remove pending breakpoints (local only)
@@ -223,6 +217,9 @@ export function listBreakpoints(
 			item.originalUrl = meta.originalUrl;
 			item.originalLine = meta.originalLine;
 		}
+		if ("fn" in meta && meta.fn !== undefined) {
+			item.fn = meta.fn;
+		}
 
 		return item;
 	});
@@ -250,6 +247,9 @@ export function listBreakpoints(
 		if ("template" in meta && meta.template !== undefined) {
 			item.template = meta.template;
 		}
+		if ("fn" in meta && meta.fn !== undefined) {
+			item.fn = meta.fn;
+		}
 
 		results.push(item);
 	}
@@ -272,9 +272,7 @@ export async function toggleBreakpoint(
 		if (allActive.length > 0) {
 			// Disable bound breakpoints
 			for (const entry of session.refs.listBreakpoints({ pending: false })) {
-				await session.cdp.send("Debugger.removeBreakpoint", {
-					breakpointId: entry.remoteId,
-				});
+				await unbind(session, entry);
 				session.disabledBreakpoints.set(entry.ref, toDisabled(entry, entry.remoteId));
 				session.refs.remove(entry.ref);
 			}
@@ -300,11 +298,7 @@ export async function toggleBreakpoint(
 	const activeEntry = session.refs.resolve(ref);
 	if (activeEntry && (activeEntry.type === "BP" || activeEntry.type === "LP")) {
 		// Disable it
-		if (!activeEntry.pending) {
-			await session.cdp.send("Debugger.removeBreakpoint", {
-				breakpointId: activeEntry.remoteId,
-			});
-		}
+		if (!activeEntry.pending) await unbind(session, activeEntry);
 		session.disabledBreakpoints.set(
 			ref,
 			toDisabled(
@@ -341,6 +335,13 @@ async function reEnableBreakpoint(
 		} else {
 			session.refs.addPendingLogpoint(entry.meta);
 		}
+		session.disabledBreakpoints.delete(ref);
+		return;
+	}
+
+	if (entry.type === "BP" && entry.meta.fn !== undefined) {
+		const id = await reinstallFunctionBreakpoint(session, entry.meta.fn, entry.meta.condition);
+		session.refs.addBreakpoint(id, entry.meta);
 		session.disabledBreakpoints.delete(ref);
 		return;
 	}
@@ -535,4 +536,14 @@ function breakpointTarget(
 	}
 	if (known.url) return { kind: "url", url: known.url };
 	throw new Error("Breakpoint needs a loaded script, a url, or a url pattern");
+}
+
+/** Detaches a bound breakpoint from the target, whichever kind it is. */
+async function unbind(session: CdpSession, entry: BreakpointEntry | LogpointEntry): Promise<void> {
+	if (entry.pending) return;
+	if (isFunctionBreakpoint(entry)) {
+		await removeFunctionBreakpoint(session, entry.remoteId);
+		return;
+	}
+	await session.cdp?.send("Debugger.removeBreakpoint", { breakpointId: entry.remoteId });
 }

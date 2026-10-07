@@ -67,6 +67,8 @@ export interface BreakpointListItem {
 	pending?: boolean;
 	originalUrl?: string;
 	originalLine?: number;
+	/** Function breakpoint path (JS: wrapped function, DAP: symbol) */
+	fn?: string;
 }
 
 export interface EvalResult {

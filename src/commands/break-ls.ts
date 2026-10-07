@@ -22,7 +22,7 @@ defineCommand({
 				console.log("No breakpoints or logpoints set");
 			} else {
 				for (const bp of data) {
-					const loc = `${shortPath(bp.url)}:${bp.line}`;
+					const loc = bp.fn ? `fn:${bp.fn}` : `${shortPath(bp.url)}:${bp.line}`;
 					let line = `${cc(bp.ref, "magenta")} ${cc(loc, "cyan")}`;
 					if (bp.type === "LP" && bp.template) {
 						line += ` ${cc(`(log: ${bp.template})`, "green")}`;

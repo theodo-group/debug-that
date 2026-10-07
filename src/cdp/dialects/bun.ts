@@ -30,6 +30,8 @@ export class BunDialect implements InspectorDialect {
 	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
 		await this.enableInspectorDomain();
 		await this.cdp.enableDomains();
+		// JSC reports console output on its own domain, not via Runtime.consoleAPICalled.
+		await this.jsc.send("Console.enable");
 
 		if (intent.mode === "launch" && intent.pauseAtEntry) {
 			await this.pauseAtEntryScript(target, intent.entryScript);

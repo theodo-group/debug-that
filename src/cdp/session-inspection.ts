@@ -1,6 +1,7 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
+import type { CdpClient } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 
 export async function evalExpression(
@@ -18,122 +19,101 @@ export async function evalExpression(
 	value: string;
 	objectId?: string;
 }> {
-	if (!session.cdp) {
+	const cdp = session.cdp;
+	if (!cdp) {
 		throw new Error("No active debug session");
 	}
+
+	const bound = bindRefs(session, expression);
+	if (bound.refs.length > 0) {
+		const response = await withTimeout(callWithRefs(cdp, bound, options), options.timeout);
+		return session.processEvalResult(response, expression);
+	}
+
+	// A running target evaluates in its global scope; only frames need a pause.
 	if (session.sessionState !== "paused") {
-		throw new Error("Cannot eval: process is not paused");
-	}
-
-	// Determine which frame to evaluate in
-	let frameIndex = 0;
-	if (options.frame) {
-		const entry = session.refs.resolve(options.frame);
-		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
-			frameIndex = entry.meta.frameIndex as number;
+		if (options.frame) {
+			throw new Error("Cannot eval in a frame: process is not paused");
 		}
+		const params: Protocol.Runtime.EvaluateRequest = {
+			expression,
+			returnByValue: false,
+			generatePreview: true,
+		};
+		if (options.awaitPromise) params.awaitPromise = true;
+		if (options.throwOnSideEffect) params.throwOnSideEffect = true;
+		const response = await withTimeout(cdp.send("Runtime.evaluate", params), options.timeout);
+		return session.processEvalResult(response, expression);
 	}
 
-	const targetFrame = session.pausedCallFrames[frameIndex];
+	const targetFrame = session.pausedCallFrames[frameIndexOf(session, options.frame)];
 	if (!targetFrame) {
 		throw new Error("No call frame available");
 	}
-
-	const callFrameId = targetFrame.callFrameId;
-
-	// Resolve @ref patterns in the expression
-	let resolvedExpression = expression;
-	const refPattern = /@[vof]\d+/g;
-	const refMatches = expression.match(refPattern);
-	if (refMatches) {
-		const refEntries: Array<{
-			ref: string;
-			name: string;
-			objectId: string;
-		}> = [];
-		for (const ref of refMatches) {
-			const remoteId = session.refs.resolveId(ref);
-			if (remoteId) {
-				const argName = `__adbg_ref_${ref.slice(1)}`;
-				resolvedExpression = resolvedExpression.replace(ref, argName);
-				refEntries.push({
-					ref,
-					name: argName,
-					objectId: remoteId,
-				});
-			}
-		}
-
-		// If we have ref entries, use callFunctionOn to bind them
-		if (refEntries.length > 0) {
-			const argNames = refEntries.map((e) => e.name);
-			const funcBody = `return (function(${argNames.join(", ")}) { return ${resolvedExpression}; })(...arguments)`;
-			const firstObjectId = refEntries[0]?.objectId;
-			if (!firstObjectId) {
-				throw new Error("No object ID for ref resolution");
-			}
-
-			const callFnParams: Protocol.Runtime.CallFunctionOnRequest = {
-				functionDeclaration: `function() { ${funcBody} }`,
-				arguments: refEntries.map((e) => ({
-					objectId: e.objectId,
-				})),
-				objectId: firstObjectId,
-				returnByValue: false,
-				generatePreview: true,
-			};
-
-			if (options.awaitPromise) {
-				callFnParams.awaitPromise = true;
-			}
-
-			const evalPromise = session.cdp.send("Runtime.callFunctionOn", callFnParams);
-
-			let evalResponse: Protocol.Runtime.CallFunctionOnResponse;
-			if (options.timeout) {
-				const timeoutPromise = Bun.sleep(options.timeout).then(() => {
-					throw new Error(`Evaluation timed out after ${options.timeout}ms`);
-				});
-				evalResponse = (await Promise.race([
-					evalPromise,
-					timeoutPromise,
-				])) as Protocol.Runtime.CallFunctionOnResponse;
-			} else {
-				evalResponse = await evalPromise;
-			}
-
-			return session.processEvalResult(evalResponse, expression);
-		}
-	}
-
-	// Standard evaluation on call frame
-	const frameEvalParams: Protocol.Debugger.EvaluateOnCallFrameRequest = {
-		callFrameId,
-		expression: resolvedExpression,
+	const params: Protocol.Debugger.EvaluateOnCallFrameRequest = {
+		callFrameId: targetFrame.callFrameId,
+		expression,
 		returnByValue: false,
 		generatePreview: true,
 	};
+	if (options.throwOnSideEffect) params.throwOnSideEffect = true;
+	const response = await withTimeout(
+		cdp.send("Debugger.evaluateOnCallFrame", params),
+		options.timeout,
+	);
+	return session.processEvalResult(response, expression);
+}
 
-	if (options.throwOnSideEffect) {
-		frameEvalParams.throwOnSideEffect = true;
+function frameIndexOf(session: CdpSession, frameRef?: string): number {
+	if (!frameRef) return 0;
+	const entry = session.refs.resolve(frameRef);
+	if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
+		return entry.meta.frameIndex as number;
 	}
+	return 0;
+}
 
-	const evalPromise = session.cdp.send("Debugger.evaluateOnCallFrame", frameEvalParams);
+interface BoundExpression {
+	expression: string;
+	refs: Array<{ name: string; objectId: string }>;
+}
 
-	let evalResponse: Protocol.Debugger.EvaluateOnCallFrameResponse;
-	if (options.timeout) {
-		const timeoutPromise = Bun.sleep(options.timeout).then(() => {
-			throw new Error(`Evaluation timed out after ${options.timeout}ms`);
-		});
-		evalResponse = (await Promise.race([
-			evalPromise,
-			timeoutPromise,
-		])) as Protocol.Debugger.EvaluateOnCallFrameResponse;
-	} else {
-		evalResponse = await evalPromise;
+/** Replaces @v/@o/@f refs in the expression with argument names bound to their remote objects. */
+function bindRefs(session: CdpSession, expression: string): BoundExpression {
+	const bound: BoundExpression = { expression, refs: [] };
+	for (const ref of expression.match(/@[vof]\d+/g) ?? []) {
+		const objectId = session.refs.resolveId(ref);
+		if (!objectId) continue;
+		const name = `__adbg_ref_${ref.slice(1)}`;
+		bound.expression = bound.expression.replace(ref, name);
+		bound.refs.push({ name, objectId });
 	}
+	return bound;
+}
 
-	return session.processEvalResult(evalResponse, expression);
+function callWithRefs(
+	cdp: CdpClient,
+	bound: BoundExpression,
+	options: { awaitPromise?: boolean },
+): Promise<Protocol.Runtime.CallFunctionOnResponse> {
+	const argNames = bound.refs.map((r) => r.name).join(", ");
+	const params: Protocol.Runtime.CallFunctionOnRequest = {
+		functionDeclaration: `function() { return (function(${argNames}) { return ${bound.expression}; })(...arguments) }`,
+		arguments: bound.refs.map((r) => ({ objectId: r.objectId })),
+		objectId: bound.refs[0]?.objectId,
+		returnByValue: false,
+		generatePreview: true,
+	};
+	if (options.awaitPromise) params.awaitPromise = true;
+	return cdp.send("Runtime.callFunctionOn", params);
+}
+
+async function withTimeout<T>(work: Promise<T>, timeoutMs?: number): Promise<T> {
+	if (!timeoutMs) return work;
+	const expiry = Bun.sleep(timeoutMs).then(() => {
+		throw new Error(`Evaluation timed out after ${timeoutMs}ms`);
+	});
+	return Promise.race([work, expiry]);
 }
 
 export async function getVars(

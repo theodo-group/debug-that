@@ -56,11 +56,12 @@ describe("Inspection: eval", () => {
 			},
 		));
 
-	test("eval throws when not paused", () =>
+	test("eval runs in the global scope when not paused", () =>
 		withSession("test-eval-not-paused", async (session) => {
 			await session.launch(["node", "-e", "setInterval(() => {}, 100)"], { brk: false });
 			expect(session.sessionState).toBe("running");
-			await expect(session.eval("1 + 1")).rejects.toThrow("not paused");
+			expect((await session.eval("1 + 1")).value).toBe("2");
+			await expect(session.eval("1", { frame: "@f0" })).rejects.toThrow("not paused");
 		}));
 
 	test("eval with @ref interpolation", () =>

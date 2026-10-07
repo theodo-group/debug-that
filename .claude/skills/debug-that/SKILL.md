@@ -81,7 +81,7 @@ dbg state                                   # see new state
 ```bash
 dbg launch --brk --runtime lldb ./my_program
 dbg break main.c:42
-dbg break-fn main                          # function breakpoint (DAP only)
+dbg break-fn main                          # function breakpoint
 dbg continue
 dbg vars                                    # inspect locals
 dbg eval "array[i]"                         # evaluate expression
@@ -139,9 +139,9 @@ dbg state
 # holds the process until dbg attaches, then pauses on its first statement.
 BUN_INSPECT='ws://localhost:6499/app?break=1' ./my-bun-binary
 dbg attach ws://localhost:6499/app        # runtime auto-detected
-# Function breakpoint on a global (JS/TS): wrap it with a `debugger` statement
-dbg eval 'const o=globalThis.fetch; globalThis.fetch=function(...a){debugger; return o.apply(this,a)}'
-dbg continue                              # pauses inside the hook; `dbg stack` shows the caller
+# Function breakpoint on anything reachable from the global scope (JS/TS)
+dbg break-fn fetch --condition 'String(args[0]).includes("/v1/messages")'
+dbg continue                              # pauses inside the wrapper; `dbg stack` @f1 is the caller
 ```
 
 ### Trace execution flow with logpoints (no pause)
@@ -192,7 +192,8 @@ See [references/commands.md](references/commands.md) for full command details an
 - `dbg eval` supports `await` -- useful for async inspection (JS/TS)
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)
-- `dbg break-fn funcName` -- function breakpoints work with DAP runtimes (LLDB, Python, Java)
+- `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes, by reachable path (`obj.method`) on JS where `args` and `this` are usable in `--condition`
+- `dbg eval` works on a running target too (global scope); only `--frame` needs a pause
 - Python: `dbg launch --brk python3 app.py`, or attach to a `debugpy --listen <port>` server with `dbg attach <port> --runtime python`
 - Execution commands (`continue`, `step`, `pause`, `run-to`) auto-return status
 - `dbg stop` kills the debugged process and daemon

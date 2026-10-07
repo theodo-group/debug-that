@@ -187,12 +187,13 @@ BREAKPOINTS:
   dbg breakable file:start-end  Valid breakpoint locations
   dbg logpoint file:line "template \${var}" [--condition expr]
   dbg catch [all|uncaught|caught|none]
+  dbg break-fn <name|obj.path.fn> [--condition expr]  Pause when called (JS: args/this usable in condition)
 
 INSPECTION:
   dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
   dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
   dbg stack [--async-depth N] [--generated] [--filter <keyword>]
-  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
+  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]  (works while running, global scope)
   dbg props @ref [--own] [--depth N] [--private] [--internal]
   dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
   dbg source [--lines N] [--file path] [--all] [--generated]
