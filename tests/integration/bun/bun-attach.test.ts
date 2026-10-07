@@ -4,7 +4,7 @@ import { withSession } from "../../helpers.ts";
 /**
  * Attach to a Bun process started with BUN_INSPECT. With `?break=1` Bun holds
  * execution until the inspector handshake completes; dbg must release it and
- * land in a paused state on the entry script (see BunAdapter.afterAttach).
+ * land in a paused state on the entry script (see BunDialect.connect).
  */
 describe("Bun attach", () => {
 	let proc: ReturnType<typeof Bun.spawn> | null = null;

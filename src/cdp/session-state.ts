@@ -155,7 +155,7 @@ export async function buildState(
 						const objectId = scopeObj.objectId;
 						if (!objectId) continue;
 
-						const propsResult = await session.adapter.getProperties(session.cdp, {
+						const propsResult = await session.dialect.getProperties({
 							objectId,
 							ownProperties: true,
 							generatePreview: true,

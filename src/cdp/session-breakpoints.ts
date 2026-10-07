@@ -5,6 +5,7 @@ import type {
 	LogpointMeta,
 } from "../refs/ref-table.ts";
 import type { BreakpointListItem } from "../session/session.ts";
+import type { BreakpointTarget } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
 
 // ── Condition builders ────────────────────────────────────────────
@@ -92,19 +93,15 @@ export async function setBreakpoint(
 		return { ref, location: { url: file, line }, pending: true };
 	}
 
-	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
-		file: actualFile,
-		line: actualLine,
-		column: actualColumn,
-		condition,
-		url: url ?? undefined,
-		urlRegex,
-		scriptId: resolved?.runtime.scriptId,
-		scripts: session.scripts,
-	});
+	const r = await session
+		.dialect()
+		.setBreakpoint(
+			breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url, urlRegex }),
+			{ line: actualLine, column: actualColumn, condition },
+		);
 
 	const loc = r.location;
-	if (!url) url = r.url ?? session.findScriptUrl(actualFile);
+	if (!url) url = session.findScriptUrl(actualFile);
 
 	const sourceUrl = resolved?.source.file ?? url ?? file;
 	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
@@ -352,18 +349,13 @@ async function reEnableBreakpoint(
 			? buildLogpointCondition(entry.meta.template, entry.meta.condition)
 			: buildBreakpointCondition(entry.meta);
 
-	// Find scriptId for Bun adapter which needs it
-	const scriptId = session.findScriptIdByUrl(entry.meta.url);
-
-	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
-		file: entry.meta.url,
-		line: entry.meta.line,
-		condition,
-		url: entry.meta.url,
-		urlRegex: entry.type === "BP" ? entry.meta.urlRegex : undefined,
-		scriptId,
-		scripts: session.scripts,
-	});
+	const r = await session.dialect.setBreakpoint(
+		breakpointTarget(session, {
+			url: entry.meta.url,
+			urlRegex: entry.type === "BP" ? entry.meta.urlRegex : undefined,
+		}),
+		{ line: entry.meta.line, condition },
+	);
 
 	// Re-create the ref entry in the ref table
 	if (entry.type === "BP") {
@@ -403,7 +395,7 @@ export async function getBreakableLocations(
 		throw new Error(`No scriptId found for "${file}"`);
 	}
 
-	return session.adapter.getBreakableLocations(session.cdp, scriptId, startLine, endLine);
+	return session.dialect.getBreakableLocations(scriptId, startLine, endLine);
 }
 
 export async function setLogpoint(
@@ -438,26 +430,12 @@ export async function setLogpoint(
 		return { ref, location: { url: file, line } };
 	}
 
-	// Find scriptId for Bun adapter
-	let scriptId: string | undefined;
-	if (url) {
-		for (const [sid, info] of session.scripts) {
-			if (info.url === url) {
-				scriptId = sid;
-				break;
-			}
-		}
-	}
-
-	const r = await session.adapter.setBreakpointByLocation(session.cdp, {
-		file: actualFile,
-		line: actualLine,
-		condition: logExpr,
-		url: url ?? undefined,
-		urlRegex: undefined,
-		scriptId: resolved?.runtime.scriptId ?? scriptId,
-		scripts: session.scripts,
-	});
+	const r = await session
+		.dialect()
+		.setBreakpoint(breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url }), {
+			line: actualLine,
+			condition: logExpr,
+		});
 
 	const loc = r.location;
 	const sourceUrl = resolved?.source.file ?? url ?? file;
@@ -537,4 +515,21 @@ function toDisabled(
 		return { breakpointId, type: "BP", meta: entry.meta, wasPending };
 	}
 	return { breakpointId, type: "LP", meta: entry.meta, wasPending };
+}
+
+/**
+ * Picks how a breakpoint binds from what the caller knows. A loaded script wins
+ * (V8 then binds by its url, JSC by its id); an explicit pattern wins over both.
+ */
+function breakpointTarget(
+	session: CdpSession,
+	known: { scriptId?: string; url?: string | null; urlRegex?: string },
+): BreakpointTarget {
+	if (known.urlRegex) return { kind: "urlRegex", pattern: known.urlRegex };
+	const scriptId = known.scriptId ?? (known.url ? session.findScriptIdByUrl(known.url) : undefined);
+	if (scriptId) {
+		return { kind: "script", scriptId, url: known.url ?? session.scripts.get(scriptId)?.url ?? "" };
+	}
+	if (known.url) return { kind: "url", url: known.url };
+	throw new Error("Breakpoint needs a loaded script, a url, or a url pattern");
 }

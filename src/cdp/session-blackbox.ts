@@ -11,7 +11,7 @@ export async function addBlackbox(session: CdpSession, patterns: string[]): Prom
 		}
 	}
 
-	await session.adapter.setBlackboxPatterns(session.cdp, session.blackboxPatterns);
+	await session.dialect.setBlackboxPatterns(session.blackboxPatterns);
 
 	return [...session.blackboxPatterns];
 }
@@ -31,7 +31,7 @@ export async function removeBlackbox(session: CdpSession, patterns: string[]): P
 		session.blackboxPatterns = session.blackboxPatterns.filter((p) => !patterns.includes(p));
 	}
 
-	await session.adapter.setBlackboxPatterns(session.cdp, session.blackboxPatterns);
+	await session.dialect.setBlackboxPatterns(session.blackboxPatterns);
 
 	return [...session.blackboxPatterns];
 }

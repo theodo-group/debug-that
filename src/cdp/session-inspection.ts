@@ -188,7 +188,7 @@ export async function getVars(
 			const objectId = scopeObj.objectId;
 			if (!objectId) continue;
 
-			const propsResult = await session.adapter.getProperties(session.cdp, {
+			const propsResult = await session.dialect.getProperties({
 				objectId,
 				ownProperties: true,
 				generatePreview: true,
@@ -289,9 +289,7 @@ async function fetchPropsRecursive(
 		propsParams.accessorPropertiesOnly = false;
 	}
 
-	const cdp = session.cdp;
-	if (!cdp) throw new Error("No active debug session");
-	const propsResult = await session.adapter.getProperties(cdp, propsParams);
+	const propsResult = await session.dialect.getProperties(propsParams);
 	const properties = propsResult.result ?? [];
 	const internalProps = options.internal ? (propsResult.internalProperties ?? []) : [];
 

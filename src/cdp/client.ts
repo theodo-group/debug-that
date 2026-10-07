@@ -176,7 +176,7 @@ export class CdpClient {
 		try {
 			await this.send(`${domain}.enable`);
 		} catch (err) {
-			if (!(err instanceof Error) || !err.message.includes("already enabled")) throw err;
+			if (!isAlreadyEnabledError(err)) throw err;
 		}
 	}
 
@@ -304,4 +304,9 @@ export class CdpClient {
 			}
 		}
 	}
+}
+
+/** A target that kept a domain on from a previous inspector connection reports this. */
+export function isAlreadyEnabledError(err: unknown): boolean {
+	return err instanceof Error && err.message.includes("already enabled");
 }

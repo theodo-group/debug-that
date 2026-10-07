@@ -35,7 +35,7 @@ type SessionMessages = {
 	"child.exit": { code: number | null; signal?: string };
 	"child.stderr": { text: string };
 	"state.change": { from: string; to: string };
-	"cdp.connected": { url: string };
+	"cdp.connected": { url: string; runtime: string };
 	"breakpoint.rebound": { file: string; line: number };
 	"sourcemap.load.failed": { file: string; reason: string };
 };

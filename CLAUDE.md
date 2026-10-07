@@ -25,8 +25,8 @@ src/
   cdp/          # Chrome DevTools Protocol (Node.js / Bun)
     session.ts    # CdpSession (extends BaseSession)
     session-*.ts  # CDP method modules (breakpoints, execution, inspection, etc.)
-    dialect.ts    # CdpDialect interface (V8 vs JSC strategy)
-    adapters/     # NodeAdapter, BunAdapter (CdpDialect implementations)
+    dialect.ts    # InspectorDialect interface (what differs between V8 and JSC)
+    dialects/     # NodeDialect, BunDialect + openInspector() (socket + runtime probing)
     client.ts     # CdpClient WebSocket wrapper
   dap/          # Debug Adapter Protocol (LLDB, Python, etc.)
     session.ts    # DapSession (extends BaseSession)

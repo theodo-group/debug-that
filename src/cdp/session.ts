@@ -18,9 +18,9 @@ import type {
 	StateSnapshot,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
-import { createAdapter, detectAdapterOverWire } from "./adapters/index.ts";
-import { CdpClient, TimeoutError } from "./client.ts";
-import type { CdpDialect } from "./dialect.ts";
+import { type CdpClient, TimeoutError } from "./client.ts";
+import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
+import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -98,7 +98,7 @@ export class CdpSession extends BaseSession {
 	private _pendingRebinds = new Set<Promise<void>>();
 	launchCommand: string[] | null = null;
 	launchOptions: { brk?: boolean; port?: number } | null = null;
-	adapter: CdpDialect;
+	private _dialect: InspectorDialect | null = null;
 	private log: Logger<"session">;
 	private cdpLog: Logger<"cdp">;
 
@@ -135,24 +135,26 @@ export class CdpSession extends BaseSession {
 		this.sourceMapResolver.setDisabled(true);
 	}
 
-	/** Runtime forced via --runtime; skips auto-detection on attach */
-	private readonly explicitRuntime: "node" | "bun" | undefined;
+	/** Runtime forced via --runtime; skips probing on attach */
+	private readonly runtimeHint: RuntimeName | undefined;
 
-	constructor(session: string, options?: { logger?: Logger<"daemon">; runtime?: "node" | "bun" }) {
+	constructor(session: string, options?: { logger?: Logger<"daemon">; runtime?: RuntimeName }) {
 		super(session);
 		ensureSocketDir();
 		const rootLogger = options?.logger ?? createLogger(getLogPath(session));
 		this.log = rootLogger.child("session");
 		this.cdpLog = rootLogger.child("cdp");
-		this.explicitRuntime = options?.runtime;
-		// Default to NodeAdapter; overridden in launch() when the command is known
-		// and in attach() by probing the inspector when no runtime was forced.
-		this.adapter = createAdapter([options?.runtime ?? "node"]);
+		this.runtimeHint = options?.runtime;
 	}
 
-	/** Detected runtime name — delegates to the adapter */
 	get runtime(): "node" | "bun" | "unknown" {
-		return this.adapter.name;
+		return this._dialect?.name ?? this.runtimeHint ?? "unknown";
+	}
+
+	/** Protocol strategy of the connected runtime */
+	get dialect(): InspectorDialect {
+		if (!this._dialect) throw new Error("No active debug session");
+		return this._dialect;
 	}
 
 	// ── Session lifecycle ─────────────────────────────────────────────
@@ -171,7 +173,6 @@ export class CdpSession extends BaseSession {
 
 		this.launchCommand = command;
 		this.launchOptions = options;
-		this.adapter = createAdapter(command);
 
 		const brk = options.brk ?? true;
 		const port = options.port ?? 0;
@@ -201,21 +202,11 @@ export class CdpSession extends BaseSession {
 		const wsUrl = await this.readInspectorUrl(proc.stderr);
 		this.wsUrl = wsUrl;
 
-		this.log.info("cdp.connected", { url: wsUrl });
-
-		// Connect CDP
-		const cdp = await this.connectCdp(wsUrl);
-
-		// If brk mode, ensure the session enters "paused" state.
-		// On older Node.js versions, Debugger.paused fires automatically after
-		// Debugger.enable. On newer versions (v24+), the initial --inspect-brk
-		// pause does not emit the event, so we request an explicit pause and then
-		// signal Runtime.runIfWaitingForDebugger so the process starts execution
-		// and immediately hits our pause request.
-		if (brk) {
-			await this.waitForBrkPause();
-		}
-		await this.adapter.postConnect(cdp);
+		await this.connect(wsUrl, runtimeFromCommand(command), {
+			mode: "launch",
+			pauseAtEntry: brk,
+			entryScript: entryScriptOf(command),
+		});
 
 		const result: LaunchResult = {
 			pid: proc.pid,
@@ -267,12 +258,7 @@ export class CdpSession extends BaseSession {
 		}
 
 		this.wsUrl = wsUrl;
-		const cdp = await this.connectCdp(wsUrl, { detectRuntime: this.explicitRuntime === undefined });
-
-		// Release runtimes that hold execution until the inspector handshake
-		// (Bun with BUN_INSPECT=...?break=1) and land them in a paused state.
-		await this.adapter.afterAttach(this);
-		await this.adapter.postConnect(cdp);
+		await this.connect(wsUrl, this.runtimeHint, { mode: "attach" });
 
 		return { wsUrl };
 	}
@@ -325,6 +311,7 @@ export class CdpSession extends BaseSession {
 		if (this.cdp) {
 			this.cdp.disconnect();
 			this.cdp = null;
+			this._dialect = null;
 		}
 
 		if (this.childProcess) {
@@ -822,45 +809,30 @@ export class CdpSession extends BaseSession {
 
 	// ── Private helpers ───────────────────────────────────────────────
 
-	private async waitForBrkPause(): Promise<void> {
-		return this.adapter.waitForBrkPause(this);
-	}
-
-	private async connectCdp(
+	private async connect(
 		wsUrl: string,
-		options?: { detectRuntime?: boolean },
-	): Promise<CdpClient> {
+		runtimeHint: RuntimeName | undefined,
+		intent: ConnectIntent,
+	): Promise<void> {
 		this.log.debug("cdp.connecting", { url: wsUrl });
-		const cdp = await CdpClient.connect(wsUrl, this.cdpLog);
+		const { cdp, dialect } = await openInspector(wsUrl, runtimeHint, this.cdpLog);
 		this.cdp = cdp;
-		this.log.info("cdp.connected", { url: wsUrl });
+		this._dialect = dialect;
+		this.log.info("cdp.connected", { url: wsUrl, runtime: dialect.name });
 
-		// Set up event handlers before enabling domains so we don't miss any events
+		// Handlers before any domain is enabled so no event is missed; "running"
+		// before the handshake so waitUntilStopped() has a live target to wait on.
 		this.setupCdpEventHandlers(cdp);
-
-		// On attach the command line is unknown: ask the inspector which runtime it is
-		if (options?.detectRuntime) {
-			this.adapter = await detectAdapterOverWire(cdp);
-			this.log.info("cdp.runtime-detected", { runtime: this.adapter.name });
-		}
-
-		// Runtime-specific pre-enable hook (e.g. Bun needs Inspector.enable first)
-		await this.adapter.preEnable(cdp);
-
-		await cdp.enableDomains();
-
-		// Re-apply blackbox patterns if any exist
-		if (this.blackboxPatterns.length > 0) {
-			await this.adapter.setBlackboxPatterns(cdp, this.blackboxPatterns);
-		}
-
-		// Update state to running if not already paused
 		if (this.state === "idle") {
 			this.state = "running";
 			this._notifyStateWaiters();
 		}
 
-		return cdp;
+		await dialect.connect(this, intent);
+
+		if (this.blackboxPatterns.length > 0) {
+			await dialect.setBlackboxPatterns(this.blackboxPatterns);
+		}
 	}
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
@@ -1001,6 +973,7 @@ export class CdpSession extends BaseSession {
 				if (this.cdp) {
 					this.cdp.disconnect();
 					this.cdp = null;
+					this._dialect = null;
 				}
 				this.state = "idle";
 				this.pauseInfo = null;
@@ -1107,4 +1080,13 @@ export class CdpSession extends BaseSession {
 		};
 		pump();
 	}
+}
+
+/** The script a launch command runs: its last non-flag argument. */
+function entryScriptOf(command: string[]): string | null {
+	for (let i = command.length - 1; i >= 0; i--) {
+		const arg = command[i] as string;
+		if (!arg.startsWith("-")) return arg;
+	}
+	return null;
 }

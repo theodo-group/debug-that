@@ -18,6 +18,8 @@ export const SPAWN_POLL_INTERVAL_MS = 50;
 
 /** Time to wait for Node.js v24+ to reach the initial --inspect-brk pause state. */
 export const BRK_PAUSE_TIMEOUT_MS = 2_000;
+/** Grace period for older Node.js to emit the --inspect-brk Debugger.paused event on its own */
+export const BRK_PAUSED_EVENT_GRACE_MS = 100;
 /** On attach, how long to wait for the runtime to replay already-parsed scripts before deciding it is still waiting for the inspector */
 export const ATTACH_SCRIPTS_SETTLE_MS = 100;
 
