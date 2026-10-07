@@ -189,7 +189,7 @@ BREAKPOINTS:
   dbg catch [all|uncaught|caught|none]
   dbg break-fn <path|@ref|name> [--condition expr] [--log args] [--name]  Pause when a function is called
   dbg break fn:<path> / dbg logpoint fn:<path> <args>   Same, in location form (JS)
-    (JS: conditions and --log read the call as args/this; at the pause use the function's own parameters)
+    (JS: --condition and --log run where the pause lands: the function's parameters/arguments/this, or args/this for wrapped natives)
 
 INSPECTION:
   dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N] [--reflow]

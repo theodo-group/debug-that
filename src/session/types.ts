@@ -31,6 +31,8 @@ export interface PauseInfo {
 	line?: number;
 	column?: number;
 	callFrameCount?: number;
+	/** Engine breakpoint ids that caused this pause */
+	hitBreakpoints?: string[];
 }
 
 export interface StateOptions {

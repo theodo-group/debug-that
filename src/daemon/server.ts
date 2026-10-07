@@ -189,9 +189,13 @@ export class DaemonServer {
 			this.sendResponse(socket, response);
 		} catch (err) {
 			this.logger.error("socket.handler-error", { error: String(err) });
+			// Errors may carry their next step as "<what failed> -> Try: <command>"
+			const message = err instanceof Error ? err.message : String(err);
+			const split = message.indexOf(" -> ");
 			this.sendResponse(socket, {
 				ok: false,
-				error: err instanceof Error ? err.message : String(err),
+				error: split === -1 ? message : message.slice(0, split),
+				suggestion: split === -1 ? undefined : message.slice(split + 1),
 			});
 		}
 	}

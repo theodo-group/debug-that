@@ -1,12 +1,9 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import {
-	BRK_PAUSE_TIMEOUT_MS,
-	BRK_PAUSED_EVENT_GRACE_MS,
-	MAX_BOUND_FUNCTION_DEPTH,
-	MAX_INTERNAL_PAUSE_SKIPS,
-} from "../../constants.ts";
+import { BRK_PAUSE_TIMEOUT_MS, MAX_INTERNAL_PAUSE_SKIPS } from "../../constants.ts";
 import type { CdpClient } from "../client.ts";
+import { asCondition } from "../condition.ts";
 import type {
+	BreakpointBehavior,
 	BreakpointBinding,
 	BreakpointSpec,
 	BreakpointTarget,
@@ -19,17 +16,37 @@ export class NodeDialect implements InspectorDialect {
 	readonly name = "node" as const;
 	readonly internalUrlPrefix = "node:";
 
+	private beforeScriptsBreakpoint: string | null = null;
+
 	constructor(private readonly cdp: CdpClient) {}
 
 	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
+		// dbg started a launched process with --inspect-brk, so it knows it is held;
+		// an attached process says so itself
+		const waited = intent.mode === "attach" ? await this.watchWaitingForDebugger() : null;
 		await this.cdp.enableDomains();
-		if (intent.mode === "launch" && intent.pauseAtEntry) {
-			await this.pauseAtEntry(target);
-		}
+		const held = intent.mode === "launch" ? intent.pauseAtEntry : (waited?.() ?? false);
+		if (held) await this.pauseAtEntry(target);
 	}
 
-	/** V8 binds by URL, so the breakpoint survives script reloads. */
+	/**
+	 * V8 breakpoints take only a condition, so hit counts and logs are folded
+	 * into it. A script target binds by URL, which survives script reloads.
+	 */
 	async setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding> {
+		const condition = asCondition(spec);
+		if (target.kind === "location") {
+			const r = await this.cdp.send("Debugger.setBreakpoint", {
+				location: {
+					scriptId: target.scriptId,
+					lineNumber: spec.line - 1,
+					columnNumber: spec.column,
+				},
+				...(condition ? { condition } : {}),
+			});
+			return { breakpointId: r.breakpointId, location: r.actualLocation };
+		}
+
 		const params: Protocol.Debugger.SetBreakpointByUrlRequest = { lineNumber: spec.line - 1 };
 		if (target.kind === "urlRegex") {
 			params.urlRegex = target.pattern;
@@ -37,7 +54,7 @@ export class NodeDialect implements InspectorDialect {
 			params.url = target.url;
 		}
 		if (spec.column !== undefined) params.columnNumber = spec.column;
-		if (spec.condition) params.condition = spec.condition;
+		if (condition) params.condition = condition;
 
 		const r = await this.cdp.send("Debugger.setBreakpointByUrl", params);
 		const loc = r.locations[0];
@@ -49,9 +66,13 @@ export class NodeDialect implements InspectorDialect {
 		};
 	}
 
-	async breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null> {
+	async breakOnFunctionCall(
+		functionObjectId: string,
+		behavior: BreakpointBehavior,
+	): Promise<string | null> {
 		const target = await this.functionWithSource(functionObjectId);
 		if (!target) return null;
+		const condition = asCondition(behavior);
 		const r = await this.cdp.send("Debugger.setBreakpointOnFunctionCall", {
 			objectId: target,
 			...(condition ? { condition } : {}),
@@ -59,23 +80,21 @@ export class NodeDialect implements InspectorDialect {
 		return r.breakpointId;
 	}
 
-	async breakOnFunctionName(): Promise<null> {
-		return null;
+	async pauseBeforeNewScripts(enabled: boolean): Promise<void> {
+		if (enabled === (this.beforeScriptsBreakpoint !== null)) return;
+		if (enabled) {
+			const r = await this.cdp.send("Debugger.setInstrumentationBreakpoint", {
+				instrumentation: "beforeScriptExecution",
+			});
+			this.beforeScriptsBreakpoint = r.breakpointId;
+			return;
+		}
+		const breakpointId = this.beforeScriptsBreakpoint as string;
+		this.beforeScriptsBreakpoint = null;
+		await this.cdp.send("Debugger.removeBreakpoint", { breakpointId });
 	}
 
-	/** Follows bound functions to the one they call; null when that one is a builtin without source. */
-	private async functionWithSource(objectId: string): Promise<string | null> {
-		let id = objectId;
-		for (let depth = 0; depth < MAX_BOUND_FUNCTION_DEPTH; depth++) {
-			const { internalProperties = [] } = await this.cdp.send("Runtime.getProperties", {
-				objectId: id,
-				ownProperties: true,
-			});
-			if (internalProperties.some((p) => p.name === "[[FunctionLocation]]")) return id;
-			const next = internalProperties.find((p) => p.name === "[[TargetFunction]]")?.value?.objectId;
-			if (!next) return null;
-			id = next;
-		}
+	async breakOnFunctionName(): Promise<null> {
 		return null;
 	}
 
@@ -104,13 +123,38 @@ export class NodeDialect implements InspectorDialect {
 		await this.cdp.send("Debugger.setBlackboxPatterns", { patterns });
 	}
 
+	// ── Handshake steps ───────────────────────────────────────────────
+
 	/**
-	 * Node.js v24+ no longer emits Debugger.paused for the --inspect-brk pause
-	 * when the inspector connects late, and that pause lands in a node:internal
-	 * bootstrap module. Older versions emit it right after Debugger.enable.
+	 * Whether the process is held until an inspector releases it (--inspect-brk,
+	 * --inspect-wait), which Node reports as NodeRuntime.waitingForDebugger once
+	 * NodeRuntime.enable arrives. Usually that comes before the reply, but not
+	 * always; the inspector handles messages in order, so the notification is
+	 * in by the time later commands are answered. Read the result after them.
+	 */
+	private async watchWaitingForDebugger(): Promise<() => boolean> {
+		let waiting = false;
+		const onWaiting = () => {
+			waiting = true;
+		};
+		this.cdp.on("NodeRuntime.waitingForDebugger", onWaiting);
+		try {
+			await this.cdp.sendRaw("NodeRuntime.enable");
+		} catch {
+			// Runtimes without the NodeRuntime domain never hold
+		}
+		return () => {
+			this.cdp.off("NodeRuntime.waitingForDebugger", onWaiting);
+			return waiting;
+		};
+	}
+
+	/**
+	 * Older Node.js reports the --inspect-brk pause on Debugger.enable. Newer
+	 * versions only hold the process: pause on its first statement, then
+	 * release it. That first pause lands in node:internal bootstrap code.
 	 */
 	private async pauseAtEntry(target: ConnectTarget): Promise<void> {
-		if (!target.isPaused()) await Bun.sleep(BRK_PAUSED_EVENT_GRACE_MS);
 		if (!target.isPaused()) {
 			const stopped = target.waitUntilStopped({
 				timeoutMs: BRK_PAUSE_TIMEOUT_MS,
@@ -129,6 +173,21 @@ export class NodeDialect implements InspectorDialect {
 			const stopped = target.waitUntilStopped();
 			await this.cdp.send("Debugger.resume");
 			await stopped;
+		}
+	}
+
+	/** Follows bound functions to the one they call; null when that one is a builtin without source. */
+	private async functionWithSource(objectId: string): Promise<string | null> {
+		// Bound-function chains always end: a function cannot be bound to itself.
+		for (let id = objectId; ; ) {
+			const { internalProperties = [] } = await this.cdp.send("Runtime.getProperties", {
+				objectId: id,
+				ownProperties: true,
+			});
+			if (internalProperties.some((p) => p.name === "[[FunctionLocation]]")) return id;
+			const next = internalProperties.find((p) => p.name === "[[TargetFunction]]")?.value?.objectId;
+			if (!next) return null;
+			id = next;
 		}
 	}
 }

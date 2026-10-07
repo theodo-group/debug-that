@@ -14,8 +14,9 @@ export async function pausedWithin(session: CdpSession, ms: number): Promise<boo
 	);
 }
 
-export async function expectPausedIn(session: CdpSession, fn: string, reason: string) {
+/** fn null: the engine's name for the frame does not matter (anonymous arrows differ per engine) */
+export async function expectPausedIn(session: CdpSession, fn: string | null, reason: string) {
 	expect(await pausedWithin(session, 3000)).toBe(true);
 	expect(session.pauseInfo?.reason).toBe(reason);
-	expect(session.getStack({})[0]?.functionName).toBe(fn);
+	if (fn !== null) expect(session.getStack({})[0]?.functionName).toBe(fn);
 }

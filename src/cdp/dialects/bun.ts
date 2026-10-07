@@ -1,12 +1,9 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import {
-	ATTACH_SCRIPTS_SETTLE_MS,
-	BRK_PAUSE_TIMEOUT_MS,
-	FUNCTION_BODY_SEARCH_LINES,
-} from "../../constants.ts";
+import { BRK_PAUSE_TIMEOUT_MS } from "../../constants.ts";
 import { escapeRegex } from "../../util/escape-regex.ts";
 import { type CdpClient, isAlreadyEnabledError } from "../client.ts";
 import type {
+	BreakpointBehavior,
 	BreakpointBinding,
 	BreakpointSpec,
 	BreakpointTarget,
@@ -15,12 +12,14 @@ import type {
 	InspectorDialect,
 } from "../dialect.ts";
 import { JscClient } from "../jsc-client.ts";
+import type { JSC } from "../jsc-protocol.js";
 
 /**
  * WebKit Inspector Protocol as spoken by Bun. Differs from CDP in that the
  * Inspector domain must be enabled first, breakpoints bind to script ids,
- * Inspector.initialized is what starts a held process, and `debugger`
- * statements are ignored until the inspector opts in.
+ * Inspector.initialized is what starts a held process, `debugger` statements
+ * are ignored until the inspector opts in, and breakpoints take hit counts and
+ * log actions natively.
  */
 export class BunDialect implements InspectorDialect {
 	readonly name = "bun" as const;
@@ -53,7 +52,7 @@ export class BunDialect implements InspectorDialect {
 
 	/** JSC binds by script id, so only a loaded script can take a breakpoint. */
 	async setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding> {
-		if (target.kind !== "script") {
+		if (target.kind !== "script" && target.kind !== "location") {
 			const what = target.kind === "url" ? target.url : target.pattern;
 			throw new Error(`Cannot find a loaded script for "${what}" — ensure the script is loaded`);
 		}
@@ -63,59 +62,47 @@ export class BunDialect implements InspectorDialect {
 				lineNumber: spec.line - 1,
 				columnNumber: spec.column,
 			},
-			options: spec.condition ? { condition: spec.condition } : undefined,
+			options: breakpointOptions(spec),
 		});
 		return { breakpointId: r.breakpointId, location: r.actualLocation };
 	}
 
-	/** A location breakpoint on the first statement of the function's body. */
-	async breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null> {
-		const location = await this.firstStatementOf(functionObjectId);
-		if (!location) return null;
-		const r = await this.jsc.send("Debugger.setBreakpoint", {
-			location,
-			options: condition ? { condition } : undefined,
-		});
-		return r.breakpointId;
-	}
-
-	async breakOnFunctionName(pattern: string, condition?: string): Promise<() => Promise<void>> {
-		const symbol = { symbol: pattern, isRegex: true };
-		await this.jsc.send("Debugger.addSymbolicBreakpoint", {
-			...symbol,
-			options: condition ? { condition } : undefined,
-		});
-		return async () => {
-			await this.jsc.send("Debugger.removeSymbolicBreakpoint", symbol);
-		};
-	}
-
-	/** Null for native functions, which JSC cannot locate in any script. */
-	private async firstStatementOf(functionObjectId: string) {
-		let declared: { scriptId: string; lineNumber: number; columnNumber?: number };
+	/** A breakpoint at the declaration; JSC resolves it to the first statement of the body. */
+	async breakOnFunctionCall(
+		functionObjectId: string,
+		behavior: BreakpointBehavior,
+	): Promise<string | null> {
+		let declared: JSC.Debugger.Location;
 		try {
 			const r = await this.jsc.send("Debugger.getFunctionDetails", {
 				functionId: functionObjectId,
 			});
 			declared = r.details.location;
 		} catch {
-			return null;
+			return null; // Native: no script to locate it in
 		}
-		const { locations = [] } = await this.jsc.send("Debugger.getBreakpointLocations", {
-			start: declared,
-			end: {
-				scriptId: declared.scriptId,
-				lineNumber: declared.lineNumber + FUNCTION_BODY_SEARCH_LINES,
-			},
+		const r = await this.jsc.send("Debugger.setBreakpoint", {
+			location: declared,
+			options: breakpointOptions(behavior),
 		});
-		const declaredColumn = declared.columnNumber ?? 0;
-		return (
-			locations.find(
-				(l) =>
-					l.lineNumber > declared.lineNumber ||
-					(l.lineNumber === declared.lineNumber && (l.columnNumber ?? 0) > declaredColumn),
-			) ?? null
-		);
+		return r.breakpointId;
+	}
+
+	/** JSC has no instrumentation pause; pending breakpoints bind when their script is parsed. */
+	async pauseBeforeNewScripts(): Promise<void> {}
+
+	async breakOnFunctionName(
+		pattern: string,
+		behavior: BreakpointBehavior,
+	): Promise<() => Promise<void>> {
+		const symbol = { symbol: pattern, isRegex: true };
+		await this.jsc.send("Debugger.addSymbolicBreakpoint", {
+			...symbol,
+			options: breakpointOptions(behavior),
+		});
+		return async () => {
+			await this.jsc.send("Debugger.removeSymbolicBreakpoint", symbol);
+		};
 	}
 
 	async getBreakableLocations(
@@ -180,14 +167,19 @@ export class BunDialect implements InspectorDialect {
 	}
 
 	/**
-	 * A process started with BUN_INSPECT=...?break=1 (or ?wait=1) runs nothing
-	 * until Inspector.initialized. A running process replays its scripts right
-	 * after Debugger.enable; a held one has parsed none.
+	 * A process started with BUN_INSPECT=...?break=1 or ?wait=1, or with
+	 * --inspect-brk / --inspect-wait, runs nothing until Inspector.initialized.
+	 * JSC has no event for that state. Debugger.enable replays every loaded
+	 * script before it replies, but a process that has only just started has
+	 * none yet either, so the process's own configuration decides.
 	 */
 	private async isHeldByInspector(target: ConnectTarget): Promise<boolean> {
-		if (target.isPaused()) return false;
-		if (target.scripts.size === 0) await Bun.sleep(ATTACH_SCRIPTS_SETTLE_MS);
-		return target.scripts.size === 0;
+		if (target.isPaused() || target.scripts.size > 0) return false;
+		const r = (await this.cdp.send("Runtime.evaluate", {
+			expression: HOLDS_FOR_INSPECTOR,
+			returnByValue: true,
+		})) as { result: { value?: unknown } };
+		return r.result.value === true;
 	}
 
 	/** Pausing before Inspector.initialized stops on the very first statement. */
@@ -224,4 +216,22 @@ export class BunDialect implements InspectorDialect {
 			// Already removed or disconnected
 		}
 	}
+}
+
+/** Evaluated in the target: whether Bun was told to wait for an inspector before running */
+const HOLDS_FOR_INSPECTOR = `/[?&](break|wait)=1/.test(process.env.BUN_INSPECT ?? "") ||
+	process.execArgv.some((arg) => /^--inspect-(brk|wait)/.test(arg))`;
+
+/** Hit counts and logs as JSC breakpoint options; only the user's condition stays an expression. */
+function breakpointOptions(
+	behavior: BreakpointBehavior,
+): JSC.Debugger.BreakpointOptions | undefined {
+	const options: JSC.Debugger.BreakpointOptions = {};
+	if (behavior.condition) options.condition = behavior.condition;
+	if (behavior.hitCount && behavior.hitCount > 1) options.ignoreCount = behavior.hitCount - 1;
+	if (behavior.log !== undefined) {
+		options.actions = [{ type: "evaluate", data: `console.log(${behavior.log})` }];
+		options.autoContinue = true;
+	}
+	return Object.keys(options).length > 0 ? options : undefined;
 }

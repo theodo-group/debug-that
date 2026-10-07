@@ -164,18 +164,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				};
 			}
 			const { name, ...options } = req.args;
-			try {
-				return { ok: true, data: await session.setFunctionBreakpoint(name, options) };
-			} catch (err) {
-				const [error, suggestion] = (err instanceof Error ? err.message : String(err)).split(
-					" -> ",
-				);
-				return {
-					ok: false,
-					error: error ?? "",
-					suggestion: suggestion ? `-> ${suggestion}` : undefined,
-				};
-			}
+			return { ok: true, data: await session.setFunctionBreakpoint(name, options) };
 		}
 
 		case "break-rm": {

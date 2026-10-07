@@ -142,7 +142,7 @@ dbg attach ws://localhost:6499/app        # runtime auto-detected
 # Function breakpoint (JS/TS): a path from the global scope, an @ref, or --name <regex> (Bun)
 dbg break-fn fetch --condition 'String(args[0]).includes("/v1/messages")'
 dbg break-fn @v12                          # a function object you found in vars/props
-dbg logpoint fn:service.ping '"ping", args[0]'   # trace calls without pausing; dbg console
+dbg logpoint fn:service.ping '"ping", label'   # trace calls without pausing; dbg console
 dbg continue                              # pauses on the call; `dbg stack` @f1 is the caller
 ```
 
@@ -195,7 +195,7 @@ See [references/commands.md](references/commands.md) for full command details an
 - `dbg eval` supports `await` -- useful for async inspection (JS/TS)
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)
-- `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes; on JS by path (`obj.method`), `@ref`, or `--name <regex>` (Bun). Conditions and `--log` see `args` and `this`. A path not defined yet stays pending and binds when it appears. Native functions (e.g. `fetch` on Bun) are wrapped in the process; `break-ls` says so, and `dbg stop` removes the wrapper
+- `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes; on JS by path (`obj.method`), `@ref`, or `--name <regex>` (Bun). `--condition`/`--log` run where the pause lands: the function's own parameters, `arguments` and `this`; for native functions (e.g. `fetch` on Bun), which dbg wraps in the process, `args` and `this`. The path must exist when set; `dbg stop` removes wrappers
 - `dbg eval` works on a running target too (global scope); only `--frame` needs a pause
 - Python: `dbg launch --brk python3 app.py`, or attach to a `debugpy --listen <port>` server with `dbg attach <port> --runtime python`
 - Execution commands (`continue`, `step`, `pause`, `run-to`) auto-return status

@@ -130,7 +130,7 @@ dbg logpoint src/app.ts:20 "x=${x}" # Log without pausing
 dbg logpoint src/app.ts:20 "x=${x}" --condition "x > 0"
 dbg break-fn <name>                  # Function breakpoint (DAP: symbol, JS: path such as service.ping)
 dbg break-fn main --condition "argc > 1"
-dbg break-fn fetch --condition 'String(args[0]).includes("/api")'   # JS: args/this in scope
+dbg break-fn fetch --condition 'String(args[0]).includes("/api")'   # native (wrapped): args/this; JS functions: their parameters
 dbg break-fn @v3                     # JS: the function object behind a ref
 dbg break-fn '^send' --name          # Bun: any function whose name matches
 dbg break fn:service.ping --hit-count 3   # location form; also: dbg logpoint fn:<path> <args>

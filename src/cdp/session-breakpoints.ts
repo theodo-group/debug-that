@@ -5,43 +5,15 @@ import type {
 	LogpointMeta,
 } from "../refs/ref-table.ts";
 import type { BreakpointListItem } from "../session/session.ts";
-import type { BreakpointTarget } from "./dialect.ts";
+import type { BreakpointBehavior, BreakpointTarget } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
 
-// ── Condition builders ────────────────────────────────────────────
-
-/** Build a CDP condition for a breakpoint (hitCount gate + optional user condition). */
-export function buildBreakpointCondition(opts?: {
-	condition?: string;
-	hitCount?: number;
-}): string | undefined {
-	const { condition, hitCount } = opts ?? {};
-	if (hitCount && hitCount > 0) {
-		const countVar = `__adbg_bp_count_${Date.now()}`;
-		const hitExpr = `(typeof ${countVar} === "undefined" ? (${countVar} = 1) : ++${countVar}) >= ${hitCount}`;
-		if (condition) {
-			return `(${hitExpr}) && (${condition})`;
-		}
-		return hitExpr;
-	}
-	return condition;
-}
-
-/** Build a CDP condition for a logpoint (logs and never pauses). */
-export function buildLogpointCondition(template: string, condition?: string): string {
-	const logExpr = `console.log(${template})`;
-	if (condition) {
-		return `(${condition}) ? (${logExpr}, false) : false`;
-	}
-	return `${logExpr}, false`;
-}
-
-/** Build the CDP condition for a stored breakpoint/logpoint entry. */
-export function buildEntryCondition(entry: BreakpointEntry | LogpointEntry): string | undefined {
-	if (entry.type === "LP") {
-		return buildLogpointCondition(entry.meta.template, entry.meta.condition);
-	}
-	return buildBreakpointCondition(entry.meta);
+/** What a stored breakpoint or logpoint does when hit, active or disabled */
+export function behaviorOf(
+	entry: { type: "BP"; meta: BreakpointMeta } | { type: "LP"; meta: LogpointMeta },
+): BreakpointBehavior {
+	if (entry.type === "LP") return { condition: entry.meta.condition, log: entry.meta.template };
+	return { condition: entry.meta.condition, hitCount: entry.meta.hitCount };
 }
 
 export async function setBreakpoint(
@@ -58,7 +30,6 @@ export async function setBreakpoint(
 		throw new Error("No active debug session");
 	}
 
-	const condition = buildBreakpointCondition(options);
 	const userColumn = options?.column !== undefined ? options.column - 1 : undefined;
 
 	// Source map translation (source .ts → runtime .js)
@@ -94,12 +65,18 @@ export async function setBreakpoint(
 		if (options?.hitCount) meta.hitCount = options.hitCount;
 
 		const ref = session.refs.addPendingBreakpoint(meta);
+		await session.guardPendingBreakpoints();
 		return { ref, location: { url: file, line }, pending: true };
 	}
 
 	const r = await session.dialect.setBreakpoint(
 		breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url, urlRegex }),
-		{ line: actualLine, column: actualColumn, condition },
+		{
+			line: actualLine,
+			column: actualColumn,
+			condition: options?.condition,
+			hitCount: options?.hitCount,
+		},
 	);
 
 	const loc = r.location;
@@ -338,30 +315,18 @@ async function reEnableBreakpoint(
 
 	if (entry.meta.fn !== undefined) {
 		const id = await session.functionBreakpoints.rebind({ ...entry.meta, fn: entry.meta.fn });
-		if (entry.type === "BP") {
-			if (id) session.refs.addBreakpoint(id, entry.meta);
-			else session.refs.addPendingBreakpoint(entry.meta);
-		} else if (id) {
-			session.refs.addLogpoint(id, entry.meta);
-		} else {
-			session.refs.addPendingLogpoint(entry.meta);
-		}
+		if (entry.type === "BP") session.refs.addBreakpoint(id, entry.meta);
+		else session.refs.addLogpoint(id, entry.meta);
 		session.disabledBreakpoints.delete(ref);
 		return;
 	}
-
-	// Build condition from typed meta (discriminated union narrows meta by type)
-	const condition =
-		entry.type === "LP"
-			? buildLogpointCondition(entry.meta.template, entry.meta.condition)
-			: buildBreakpointCondition(entry.meta);
 
 	const r = await session.dialect.setBreakpoint(
 		breakpointTarget(session, {
 			url: entry.meta.url,
 			urlRegex: entry.type === "BP" ? entry.meta.urlRegex : undefined,
 		}),
-		{ line: entry.meta.line, condition },
+		{ line: entry.meta.line, ...behaviorOf(entry) },
 	);
 
 	// Re-create the ref entry in the ref table
@@ -416,8 +381,6 @@ export async function setLogpoint(
 		throw new Error("No active debug session");
 	}
 
-	const logExpr = buildLogpointCondition(template, options?.condition);
-
 	// Source map translation (source .ts → runtime .js)
 	const resolved = session.resolveToRuntime(file, line, 0);
 	const actualFile = resolved?.runtime.file ?? file;
@@ -434,15 +397,13 @@ export async function setLogpoint(
 		if (options?.maxEmissions) meta.maxEmissions = options.maxEmissions;
 
 		const ref = session.refs.addPendingLogpoint(meta);
+		await session.guardPendingBreakpoints();
 		return { ref, location: { url: file, line } };
 	}
 
 	const r = await session.dialect.setBreakpoint(
 		breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url }),
-		{
-			line: actualLine,
-			condition: logExpr,
-		},
+		{ line: actualLine, condition: options?.condition, log: template },
 	);
 
 	const loc = r.location;
@@ -559,6 +520,5 @@ function functionNote(
 ): string | undefined {
 	if (entry.meta.fn === undefined) return undefined;
 	if (entry.meta.fnFound) return "left in the process by an earlier session";
-	if (entry.pending) return "pending: not defined yet";
-	return session.functionBreakpoints.describe(entry.remoteId);
+	return entry.pending ? undefined : session.functionBreakpoints.describe(entry.remoteId);
 }

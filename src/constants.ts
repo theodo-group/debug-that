@@ -7,8 +7,12 @@
 /** Default timeout for CDP/DAP/IPC requests before considering them failed. */
 export const REQUEST_TIMEOUT_MS = 30_000;
 
-/** Time to wait for the inspector URL to appear on child process stderr after spawn. */
-export const INSPECTOR_TIMEOUT_MS = 5_000;
+/**
+ * Safety net while waiting for a launched runtime to print its inspector URL.
+ * The wait already ends when the child exits; this only bounds a child that
+ * stays alive without inspecting. Generous because a busy machine starts slowly.
+ */
+export const INSPECTOR_TIMEOUT_MS = 20_000;
 
 /** Time to wait for the daemon socket file to appear after spawning the daemon process. */
 export const SPAWN_TIMEOUT_MS = 5_000;
@@ -18,18 +22,6 @@ export const SPAWN_POLL_INTERVAL_MS = 50;
 
 /** Time to wait for Node.js v24+ to reach the initial --inspect-brk pause state. */
 export const BRK_PAUSE_TIMEOUT_MS = 2_000;
-/** Grace period for older Node.js to emit the --inspect-brk Debugger.paused event on its own */
-export const BRK_PAUSED_EVENT_GRACE_MS = 100;
-/** Delay before retrying pending function breakpoints after a script loads (debounce) */
-export const FUNCTION_BREAKPOINT_RETRY_MS = 100;
-/** Poll interval for function breakpoints whose path is not defined yet */
-export const PENDING_FUNCTION_POLL_MS = 500;
-/** Lines after a function's declaration searched for the first statement of its body (Bun) */
-export const FUNCTION_BODY_SEARCH_LINES = 200;
-/** Bound functions followed to their target before giving up (Node) */
-export const MAX_BOUND_FUNCTION_DEPTH = 8;
-/** On attach, how long to wait for the runtime to replay already-parsed scripts before deciding it is still waiting for the inspector */
-export const ATTACH_SCRIPTS_SETTLE_MS = 100;
 
 /** Max number of internal bootstrap pauses to skip (Node.js v24+ --inspect-brk). */
 export const MAX_INTERNAL_PAUSE_SKIPS = 5;

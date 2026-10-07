@@ -77,3 +77,33 @@ export async function withSession(
 		await session.stop();
 	}
 }
+
+/** Resolves once something listens on the port, e.g. a target's inspector. Polls instead of guessing a delay. */
+export async function waitForPort(port: number, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		try {
+			// localhost, not 127.0.0.1: inspectors bound to "localhost" may listen on ::1 only
+			const socket = await Bun.connect({ hostname: "localhost", port, socket: { data() {} } });
+			socket.end();
+			return;
+		} catch {
+			await Bun.sleep(50);
+		}
+	}
+	throw new Error(`Nothing listened on port ${port} within ${timeoutMs}ms`);
+}
+
+/** Resolves once a Node.js inspector serves its target list, which is what `attach <port>` reads. */
+export async function waitForNodeInspector(port: number, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const ok = await fetch(`http://127.0.0.1:${port}/json/version`).then(
+			(r) => r.ok,
+			() => false,
+		);
+		if (ok) return;
+		await Bun.sleep(50);
+	}
+	throw new Error(`No inspector answered on port ${port} within ${timeoutMs}ms`);
+}

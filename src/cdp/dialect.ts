@@ -18,16 +18,27 @@ export interface ConnectTarget {
 
 /** Where a breakpoint binds. The session resolves this; the dialect never looks scripts up. */
 export type BreakpointTarget =
+	/** A loaded script; V8 binds by its url, so the breakpoint survives reloads */
 	| { kind: "script"; scriptId: string; url: string }
+	/** Exactly this script instance, at the line given (pending breakpoints after source mapping) */
+	| { kind: "location"; scriptId: string }
 	| { kind: "url"; url: string }
 	| { kind: "urlRegex"; pattern: string };
 
-export interface BreakpointSpec {
+/** What a breakpoint does when hit. Each engine expresses it as natively as it can. */
+export interface BreakpointBehavior {
+	condition?: string;
+	/** Pause from the Nth hit on */
+	hitCount?: number;
+	/** console.log arguments; log and continue instead of pausing */
+	log?: string;
+}
+
+export interface BreakpointSpec extends BreakpointBehavior {
 	/** 1-based */
 	line: number;
 	/** Passed through to the protocol unchanged */
 	column?: number;
-	condition?: string;
 }
 
 export interface BreakpointBinding {
@@ -55,14 +66,28 @@ export interface InspectorDialect {
 	setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding>;
 
 	/**
-	 * Pauses whenever this function object is called, with the condition
+	 * While enabled, newly loaded scripts pause before their first statement
+	 * (reason "instrumentation"), so breakpoints waiting for them can bind
+	 * before they run. V8 does this for ES modules and classic scripts, not for
+	 * CommonJS or vm.compileFunction (Jest). A no-op where the engine has none.
+	 */
+	pauseBeforeNewScripts(enabled: boolean): Promise<void>;
+
+	/**
+	 * Pauses whenever this function object is called, with the behavior
 	 * evaluated in its frame. Resolves the breakpoint id, or null when the
 	 * engine cannot: native functions have no frame to pause in.
 	 */
-	breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null>;
+	breakOnFunctionCall(
+		functionObjectId: string,
+		behavior: BreakpointBehavior,
+	): Promise<string | null>;
 
 	/** Pauses on calls of any function whose name matches the regex. Resolves its remover, or null when unsupported. */
-	breakOnFunctionName(pattern: string, condition?: string): Promise<(() => Promise<void>) | null>;
+	breakOnFunctionName(
+		pattern: string,
+		behavior: BreakpointBehavior,
+	): Promise<(() => Promise<void>) | null>;
 
 	/** 1-based lines in, 1-based lines and columns out */
 	getBreakableLocations(

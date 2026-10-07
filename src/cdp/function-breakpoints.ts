@@ -1,8 +1,8 @@
-import { FUNCTION_BREAKPOINT_RETRY_MS, PENDING_FUNCTION_POLL_MS } from "../constants.ts";
 import type { BreakpointMeta, LogpointMeta } from "../refs/ref-table.ts";
 import type { FunctionBreakpointResult } from "../session/session.ts";
+import { asCondition } from "./condition.ts";
+import type { BreakpointBehavior } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
-import { buildBreakpointCondition, buildLogpointCondition } from "./session-breakpoints.ts";
 
 /**
  * Breakpoints on function calls. A target is a path from the global scope
@@ -10,26 +10,23 @@ import { buildBreakpointCondition, buildLogpointCondition } from "./session-brea
  * regex over function names.
  *
  * Each target is bound once, by the first strategy that can:
- * - call: the engine pauses on calls of that exact object. Leaves nothing in
- *   the process and vanishes with the connection. Not possible for native
- *   functions, nor for arrow functions whose condition reads `args`, since
- *   arrows have no `arguments` to derive them from.
- * - wrapper: the function at the path is replaced by one that runs the
- *   condition and a `debugger` statement, then calls through. Works for
- *   anything reachable by path, but lives in the process until removed.
+ * - call: the engine pauses when that exact object is called. Leaves nothing
+ *   in the process and goes away with the connection. Impossible for native
+ *   functions, which have no frame to pause in.
+ * - wrapper: the function at the path is replaced by one that evaluates the
+ *   behavior and a `debugger` statement, then calls through. Works for
+ *   natives, but lives in the process until removed.
  * - name: the engine pauses on calls of any function whose name matches.
  *
- * Conditions and log templates read the call through `args` and `this`.
+ * A condition runs where the pause lands: in the function itself (its
+ * parameters, `arguments`, `this`) or, for a wrapped native, in the wrapper
+ * (`args`, `this`).
  */
 
 const WRAPPER_URL = "dbg://function-breakpoint/";
 const REGISTRY = "globalThis.__dbg_functionBreakpoints";
 
-export interface FunctionBreakpointOptions {
-	condition?: string;
-	hitCount?: number;
-	/** console.log arguments; turns the breakpoint into a logpoint */
-	log?: string;
+export interface FunctionBreakpointOptions extends BreakpointBehavior {
 	/** Treat the target as a regex over function names */
 	byName?: boolean;
 }
@@ -45,13 +42,12 @@ type FunctionMeta = (BreakpointMeta | LogpointMeta) & { fn: string };
 
 const NOTES: Record<Mechanism, string | undefined> = {
 	call: undefined,
-	wrapper: "wrapped in the process until removed",
+	wrapper: "native: wrapped in the process until removed",
 	name: "any function whose name matches",
 };
 
 export class FunctionBreakpoints {
 	private readonly bindings = new Map<string, Binding>();
-	private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private readonly session: CdpSession) {}
 
@@ -59,7 +55,10 @@ export class FunctionBreakpoints {
 		target: string,
 		options: FunctionBreakpointOptions = {},
 	): Promise<FunctionBreakpointResult> {
+		// Name the target first: once bound, a call can pause before the entry is
+		// recorded, and the pause would not be reported as this breakpoint.
 		const label = isRef(target) ? await this.describeRef(target) : target;
+		const bound = await this.bind(target, options);
 		const meta = {
 			url: `fn:${label}`,
 			line: 0,
@@ -68,34 +67,46 @@ export class FunctionBreakpoints {
 			fnByName: options.byName || undefined,
 			condition: options.condition,
 		};
-		const refs = this.session.refs;
-		const bound = await this.bind(target, options);
+		const ref =
+			options.log !== undefined
+				? this.session.refs.addLogpoint(bound.id, { ...meta, template: options.log })
+				: this.session.refs.addBreakpoint(bound.id, { ...meta, hitCount: options.hitCount });
+		this.relabelPauseFrom(bound.id, label);
+		return { ref, note: NOTES[bound.mechanism] };
+	}
 
-		if (options.log !== undefined) {
-			const lpMeta: LogpointMeta = { ...meta, template: options.log };
-			if (!bound) return this.pending(refs.addPendingLogpoint(lpMeta), target);
-			return { ref: refs.addLogpoint(bound.id, lpMeta), note: NOTES[bound.mechanism] };
+	/**
+	 * The engine can report the first pause of a breakpoint in the same message
+	 * batch as the reply that created it, before the entry above was recorded.
+	 * Such a pause got the engine's generic reason; give it the right one.
+	 */
+	private relabelPauseFrom(id: string, label: string): void {
+		const pause = this.session.isPaused() ? this.session.pauseInfo : null;
+		if (!pause || pause.reason.startsWith("Function breakpoint")) return;
+		const byName = this.bindings.get(id)?.mechanism === "name" && pause.reason === "FunctionCall";
+		if (byName) {
+			const top = this.session.pausedCallFrames[0]?.functionName;
+			pause.reason = `Function breakpoint ${top || label}`;
+		} else if (pause.hitBreakpoints?.includes(id)) {
+			pause.reason = `Function breakpoint ${label}`;
 		}
-		const bpMeta: BreakpointMeta = { ...meta, hitCount: options.hitCount };
-		if (!bound) return this.pending(refs.addPendingBreakpoint(bpMeta), target);
-		return { ref: refs.addBreakpoint(bound.id, bpMeta), note: NOTES[bound.mechanism] };
 	}
 
-	private pending(ref: string, target: string): FunctionBreakpointResult {
-		this.retryPendingSoon(PENDING_FUNCTION_POLL_MS);
-		return { ref, pending: true, note: pendingNote(target) };
-	}
-
-	/** Binds a stored entry again (re-enable). Resolves null when its path is not defined yet. */
-	async rebind(meta: FunctionMeta): Promise<string | null> {
+	/** Binds a stored entry again (re-enable). */
+	async rebind(meta: FunctionMeta): Promise<string> {
 		const target = meta.fnByName ? meta.fn : meta.fnPath;
 		if (!target) {
 			throw new Error(
 				`${meta.fn} was set on an object ref, which does not outlive its pause -> Try: dbg break-fn <path.to.function>`,
 			);
 		}
-		const bound = await this.bind(target, { ...optionsOf(meta), byName: meta.fnByName });
-		return bound?.id ?? null;
+		const bound = await this.bind(target, {
+			condition: meta.condition,
+			hitCount: "hitCount" in meta ? meta.hitCount : undefined,
+			log: "template" in meta ? meta.template : undefined,
+			byName: meta.fnByName,
+		});
+		return bound.id;
 	}
 
 	async remove(id: string): Promise<void> {
@@ -150,8 +161,6 @@ export class FunctionBreakpoints {
 
 	/** Before disconnecting: take every wrapper out of the process. Engine breakpoints go by themselves. */
 	async detach(): Promise<void> {
-		if (this.retryTimer) clearTimeout(this.retryTimer);
-		this.retryTimer = null;
 		for (const binding of this.bindings.values()) {
 			if (binding.mechanism !== "wrapper") continue;
 			try {
@@ -163,34 +172,17 @@ export class FunctionBreakpoints {
 		this.bindings.clear();
 	}
 
-	/**
-	 * A pending path binds once it exists: soon after a script loads, and by
-	 * polling while anything is pending, since running code defines paths too.
-	 */
-	retryPendingSoon(delayMs = FUNCTION_BREAKPOINT_RETRY_MS): void {
-		if (this.retryTimer || !this.hasPending()) return;
-		this.retryTimer = setTimeout(async () => {
-			this.retryTimer = null;
-			if (!this.session.cdp) return;
-			await this.retryPending();
-			this.retryPendingSoon(PENDING_FUNCTION_POLL_MS);
-		}, delayMs);
-	}
-
 	/** The reason to report for a pause caused by a function breakpoint, if it was one. */
 	pauseReason(pause: {
 		reason?: string;
 		hitBreakpoints?: string[];
-		data?: Record<string, unknown>;
 		topUrl?: string;
 		topFunction?: string;
 	}): string | undefined {
 		if (pause.topUrl?.startsWith(WRAPPER_URL)) {
 			return `Function breakpoint ${pause.topUrl.slice(WRAPPER_URL.length)}`;
 		}
-		const hit =
-			pause.hitBreakpoints ?? [pause.data?.breakpointId].filter((id) => typeof id === "string");
-		for (const id of hit as string[]) {
+		for (const id of pause.hitBreakpoints ?? []) {
 			const entry = this.session.refs.findByRemoteId(id);
 			if (entry && (entry.type === "BP" || entry.type === "LP") && entry.meta.fn) {
 				return `Function breakpoint ${entry.meta.fn}`;
@@ -210,31 +202,24 @@ export class FunctionBreakpoints {
 	private async bind(
 		target: string,
 		options: FunctionBreakpointOptions,
-	): Promise<{ id: string; mechanism: Mechanism } | null> {
-		const condition = compileCondition(options);
-		if (options.byName) return this.bindByName(target, condition);
+	): Promise<{ id: string; mechanism: Mechanism }> {
+		if (options.byName) return this.bindByName(target, options);
 
-		const fn = await this.resolve(target);
-		if (!fn) return null;
+		const objectId = await this.resolve(target);
+		const id = await this.session.dialect.breakOnFunctionCall(objectId, options);
+		if (id) return this.keep(id, "call", () => this.removeEngineBreakpoint(id));
 
-		if (!(fn.isArrow && readsArgs(condition))) {
-			const id = await this.session.dialect.breakOnFunctionCall(fn.objectId, forEngine(condition));
-			if (id) return this.keep(id, "call", () => this.removeEngineBreakpoint(id));
-		}
 		if (isRef(target)) {
-			const why = fn.isArrow
-				? "is an arrow function, whose condition cannot read args"
-				: "is native";
 			throw new Error(
-				`${target} ${why}, and an object ref has no path to wrap it at -> Try: dbg break-fn <path.to.function>`,
+				`${target} is native, and an object ref has no path to wrap it at -> Try: dbg break-fn <path.to.function>`,
 			);
 		}
-		const id = await this.installWrapper(target, condition, options);
-		return this.keep(id, "wrapper", () => this.uninstallWrapper(id));
+		const wrapperId = await this.installWrapper(target, options);
+		return this.keep(wrapperId, "wrapper", () => this.uninstallWrapper(wrapperId));
 	}
 
-	private async bindByName(pattern: string, condition: string | undefined) {
-		const remove = await this.session.dialect.breakOnFunctionName(pattern, forEngine(condition));
+	private async bindByName(pattern: string, behavior: BreakpointBehavior) {
+		const remove = await this.session.dialect.breakOnFunctionName(pattern, behavior);
 		if (!remove) {
 			throw new Error(
 				`Matching functions by name is not supported on ${this.session.runtime} -> Try: dbg break-fn <path.to.function> or dbg break-fn @vN`,
@@ -248,40 +233,41 @@ export class FunctionBreakpoints {
 		return { id, mechanism };
 	}
 
-	/** The function object behind a target; null when a path is not defined yet. */
-	private async resolve(target: string): Promise<{ objectId: string; isArrow: boolean } | null> {
-		const cdp = this.session.cdp;
-		if (!cdp) throw new Error("No active debug session");
-
-		let objectId: string | undefined;
+	/** The function object behind a target */
+	private async resolve(target: string): Promise<string> {
 		if (isRef(target)) {
-			objectId = this.session.refs.resolveId(target);
-			if (!objectId)
+			const objectId = this.session.refs.resolveId(target);
+			if (!objectId) {
 				throw new Error(
 					`Unknown ref ${target} -> Try: dbg vars or dbg eval <expr> to get a fresh ref`,
 				);
-		} else {
-			const r = (await cdp.send("Runtime.evaluate", { expression: target })) as {
-				result: { type: string; objectId?: string; description?: string };
-				exceptionDetails?: unknown;
-				wasThrown?: boolean;
-			};
-			if (r.exceptionDetails || r.wasThrown || r.result.type === "undefined") return null;
-			if (r.result.type !== "function" || !r.result.objectId) {
-				throw new Error(
-					`${target} is ${r.result.description ?? r.result.type}, not a function -> Try: dbg eval '${target}'`,
-				);
 			}
-			objectId = r.result.objectId;
+			return objectId;
 		}
 
-		const shape = (await cdp.send("Runtime.callFunctionOn", {
-			objectId,
-			functionDeclaration: functionShape.toString(),
-			returnByValue: true,
-		})) as { result: { value?: { isFunction: boolean; isArrow?: boolean } } };
-		if (!shape.result.value?.isFunction) throw new Error(`${target} is not a function`);
-		return { objectId, isArrow: shape.result.value.isArrow ?? false };
+		const cdp = this.session.cdp;
+		if (!cdp) throw new Error("No active debug session");
+		const r = (await cdp.send("Runtime.evaluate", { expression: target })) as {
+			result: { type: string; objectId?: string; description?: string };
+			exceptionDetails?: unknown;
+			wasThrown?: boolean;
+		};
+		if (r.exceptionDetails || r.wasThrown || r.result.type === "undefined") {
+			throw new Error(`${target} is not defined -> Try: ${this.whenUndefined(target)}`);
+		}
+		if (r.result.type !== "function" || !r.result.objectId) {
+			throw new Error(
+				`${target} is ${r.result.description ?? r.result.type}, not a function -> Try: dbg eval '${target}'`,
+			);
+		}
+		return r.result.objectId;
+	}
+
+	/** No protocol event reports a path becoming defined; point at what the protocol can wait for. */
+	private whenUndefined(target: string): string {
+		const name = target.split(".").pop() ?? target;
+		const byName = this.session.runtime === "bun" ? `dbg break-fn '^${name}$' --name, ` : "";
+		return `${byName}dbg break <file>:<line> where it is assigned, or set it once it exists`;
 	}
 
 	private async removeEngineBreakpoint(id: string): Promise<void> {
@@ -291,14 +277,10 @@ export class FunctionBreakpoints {
 	// ── Wrapper strategy ──────────────────────────────────────────────
 
 	/** The registry entry records what the user asked for, so a later session can list it. */
-	private async installWrapper(
-		path: string,
-		condition: string | undefined,
-		asked: FunctionBreakpointOptions,
-	): Promise<string> {
+	private async installWrapper(path: string, behavior: BreakpointBehavior): Promise<string> {
 		const id = `fn:${crypto.randomUUID()}`;
 		const { holder, key } = splitPath(path);
-		const record = { path, condition: asked.condition, template: asked.log };
+		const record = { path, condition: behavior.condition, template: behavior.log };
 		await this.evaluate(`(() => {
 	const holder = ${holder};
 	const key = ${JSON.stringify(key)};
@@ -310,7 +292,7 @@ export class FunctionBreakpoints {
 	const name = original.name || key;
 	const wrapped = {
 		[name](...args) {
-			if (${condition ?? "true"}) {
+			if (${asCondition(behavior) ?? "true"}) {
 				debugger;
 			}
 			return original.apply(this, args);
@@ -352,32 +334,6 @@ export class FunctionBreakpoints {
 		}
 	}
 
-	// ── Pending ───────────────────────────────────────────────────────
-
-	private pendingEntries() {
-		return this.session.refs
-			.listBreakpoints({ pending: true })
-			.filter(
-				(e): e is typeof e & { meta: FunctionMeta } =>
-					e.meta.fn !== undefined && e.meta.fnPath !== undefined,
-			);
-	}
-
-	private hasPending(): boolean {
-		return this.pendingEntries().length > 0;
-	}
-
-	private async retryPending(): Promise<void> {
-		for (const entry of this.pendingEntries()) {
-			try {
-				const id = await this.rebind(entry.meta);
-				if (id) this.session.refs.bind(entry.ref, id);
-			} catch {
-				// Still not bindable; a later script may change that
-			}
-		}
-	}
-
 	private async describeRef(ref: string): Promise<string> {
 		const objectId = this.session.refs.resolveId(ref);
 		if (!objectId || !this.session.cdp) return ref;
@@ -390,56 +346,8 @@ export class FunctionBreakpoints {
 	}
 }
 
-/** Runs in the target with the function as `this`; sent as source text, so it must stay self-contained. */
-function functionShape(this: unknown): { isFunction: boolean; isArrow?: boolean } {
-	if (typeof this !== "function") return { isFunction: false };
-	let source = "";
-	try {
-		source = Function.prototype.toString.call(this);
-	} catch {
-		// Some host functions refuse toString; they are not arrows
-	}
-	return {
-		isFunction: true,
-		isArrow: !("prototype" in this) && /^(async\s*)?(\(|[\w$]+\s*=>)/.test(source),
-	};
-}
-
-// ── Conditions ────────────────────────────────────────────────────────
-
-function optionsOf(meta: FunctionMeta): FunctionBreakpointOptions {
-	return {
-		condition: meta.condition,
-		hitCount: "hitCount" in meta ? meta.hitCount : undefined,
-		log: "template" in meta ? meta.template : undefined,
-	};
-}
-
-/** The condition users wrote, plus hit count and log, still in terms of `args` and `this` */
-function compileCondition(options: FunctionBreakpointOptions): string | undefined {
-	const gated = buildBreakpointCondition({
-		condition: options.condition,
-		hitCount: options.hitCount,
-	});
-	return options.log !== undefined ? buildLogpointCondition(options.log, gated) : gated;
-}
-
-/** Engine breakpoints evaluate in the function's own frame, which has `arguments` but no `args` */
-function forEngine(condition: string | undefined): string | undefined {
-	if (!condition || !readsArgs(condition)) return condition;
-	return `(() => { const args = (() => { try { return Array.prototype.slice.call(arguments); } catch { return []; } })(); return (${condition}); })()`;
-}
-
-function readsArgs(condition: string | undefined): boolean {
-	return condition !== undefined && /\bargs\b/.test(condition);
-}
-
 function isRef(target: string): boolean {
 	return /^@[vo]\d+$/.test(target);
-}
-
-function pendingNote(target: string): string {
-	return `pending: ${target} is not defined yet; binds when it appears`;
 }
 
 /** "a.b.c" → holder "a.b", key "c"; a bare name lives on globalThis. */

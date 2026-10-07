@@ -34,7 +34,7 @@ import {
 	removeBlackbox as removeBlackboxImpl,
 } from "./session-blackbox.ts";
 import {
-	buildEntryCondition,
+	behaviorOf,
 	type DisabledBreakpoint,
 	getBreakableLocations as getBreakableLocationsImpl,
 	listBreakpoints as listBreakpointsImpl,
@@ -103,6 +103,8 @@ export class CdpSession extends BaseSession {
 		resolve: () => void;
 	}> = [];
 	private _pendingRebinds = new Set<Promise<void>>();
+	/** Counts reported pauses, so a wait can tell a new pause from the one it started in */
+	private pauseCount = 0;
 	launchCommand: string[] | null = null;
 	readonly functionBreakpoints = new FunctionBreakpoints(this);
 	launchOptions: { brk?: boolean; port?: number } | null = null;
@@ -704,9 +706,27 @@ export class CdpSession extends BaseSession {
 	 * miss events. Does NOT check current state — the caller is about to
 	 * send a resume/step command.
 	 */
+	/**
+	 * Resolves once the engine reports execution resumed, or the target is gone.
+	 * The reply to a resume command can arrive before that event, and until
+	 * then the session still looks paused.
+	 */
+	waitUntilResumed(): Promise<void> {
+		return new Promise<void>((resolve) => {
+			const done = () => {
+				this.onProcessExit.delete(done);
+				resolve();
+			};
+			if (!this.cdp) return done();
+			this.onProcessExit.add(done);
+			this.cdp.waitFor("Debugger.resumed", { timeoutMs: WAIT_PAUSE_TIMEOUT_MS }).then(done, done);
+		});
+	}
+
 	async waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
 		const timeoutMs = options?.timeoutMs ?? WAIT_PAUSE_TIMEOUT_MS;
 		const throwOnTimeout = options?.throwOnTimeout ?? false;
+		const pausesBefore = this.pauseCount;
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
@@ -739,8 +759,9 @@ export class CdpSession extends BaseSession {
 			// Poll as a fallback in case the event/callback is missed
 			// (e.g., process exits and monitorProcessExit runs before
 			// onProcessExit is set, or CDP disconnects clearing listeners)
+			// Only a pause newer than the one this wait started in counts.
 			const pollTimer = setInterval(() => {
-				if (this.isPaused() || this.state === "idle" || !this.cdp) {
+				if (this.pauseCount > pausesBefore || this.state === "idle" || !this.cdp) {
 					settle();
 				}
 			}, 100);
@@ -793,6 +814,27 @@ export class CdpSession extends BaseSession {
 	 * Uses resolveToRuntime() to translate source line → compiled line,
 	 * which requires the source map to be loaded first.
 	 */
+	/** Keeps the engine pausing before new scripts exactly while a file breakpoint waits for its script. */
+	async guardPendingBreakpoints(): Promise<void> {
+		if (!this._dialect) return;
+		const waiting = this.refs
+			.listBreakpoints({ pending: true })
+			.some((e) => e.meta.fn === undefined);
+		await this._dialect.pauseBeforeNewScripts(waiting);
+	}
+
+	private async bindPendingThenResume(): Promise<void> {
+		try {
+			// scriptParsed for this script came first and started its rebind (source map included)
+			await this.drainPendingRebinds();
+			await this.guardPendingBreakpoints();
+		} finally {
+			await this.cdp?.send("Debugger.resume").catch(() => {
+				// Disconnected meanwhile
+			});
+		}
+	}
+
 	private async rebindPendingBreakpoints(scriptId: string, scriptUrl: string): Promise<void> {
 		if (!this.cdp) return;
 
@@ -806,13 +848,11 @@ export class CdpSession extends BaseSession {
 			const resolved = this.resolveToRuntime(meta.url, meta.line, 0);
 			const compiledLine = resolved?.runtime.line ?? meta.line;
 
-			const condition = buildEntryCondition(entry);
-
 			try {
-				const r = await this.cdp.send("Debugger.setBreakpoint", {
-					location: { scriptId, lineNumber: compiledLine - 1 },
-					condition,
-				});
+				const r = await this.dialect.setBreakpoint(
+					{ kind: "location", scriptId },
+					{ line: compiledLine, ...behaviorOf(entry) },
+				);
 
 				this.refs.bind(entry.ref, r.breakpointId);
 
@@ -856,6 +896,12 @@ export class CdpSession extends BaseSession {
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
 		cdp.on("Debugger.paused", (p) => {
+			// Our own pause before a new script: bind what waits for it, then go on.
+			if (p.reason === "instrumentation") {
+				void this.bindPendingThenResume();
+				return;
+			}
+			this.pauseCount++;
 			this.state = "paused";
 			this._notifyStateWaiters();
 			const callFrames = p.callFrames;
@@ -865,17 +911,22 @@ export class CdpSession extends BaseSession {
 			const scriptId = location?.scriptId;
 			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
 
+			// V8 lists hit breakpoints; JSC names the one it hit in its pause data
+			const data = (p as { data?: Record<string, unknown> }).data;
+			const hitBreakpoints =
+				p.hitBreakpoints ??
+				(typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
 			this.pauseInfo = {
 				reason:
 					this.functionBreakpoints.pauseReason({
 						reason: p.reason,
-						hitBreakpoints: p.hitBreakpoints,
-						data: (p as { data?: Record<string, unknown> }).data,
+						hitBreakpoints,
 						topUrl: url,
 						topFunction: topFrame?.functionName,
 					}) ??
 					p.reason ??
 					"unknown",
+				hitBreakpoints,
 				scriptId,
 				url,
 				line: location?.lineNumber,
@@ -893,7 +944,6 @@ export class CdpSession extends BaseSession {
 		});
 
 		cdp.on("Debugger.scriptParsed", (p) => {
-			this.functionBreakpoints.retryPendingSoon();
 			const scriptId = p.scriptId;
 			if (scriptId) {
 				const info: ScriptInfo = {
@@ -1081,17 +1131,29 @@ export class CdpSession extends BaseSession {
 		);
 	}
 
+	/** Inspectors bound to "localhost" may listen on one loopback only: Bun picks ::1, Node 127.0.0.1. */
 	private async discoverWsUrl(port: number): Promise<string> {
-		const url = `http://127.0.0.1:${port}/json`;
-		let response: Response;
-		try {
-			response = await fetch(url);
-		} catch (err) {
-			throw new Error(
-				`Cannot connect to inspector at port ${port}: ${err instanceof Error ? err.message : String(err)}`,
-			);
+		let response: Response | undefined;
+		let lastError: unknown;
+		for (const host of ["127.0.0.1", "[::1]"]) {
+			try {
+				response = await fetch(`http://${host}:${port}/json`);
+				break;
+			} catch (err) {
+				lastError = err;
+			}
+		}
+		if (!response) {
+			const reason = lastError instanceof Error ? lastError.message : String(lastError);
+			throw new Error(`Cannot connect to inspector at port ${port}: ${reason}`);
 		}
 
+		if (response.status === 404) {
+			// Bun's inspector serves no target list; its WebSocket path is whatever the process chose
+			throw new Error(
+				`Inspector at port ${port} lists no targets (Bun does not) -> Try: dbg attach ws://localhost:${port}/<path from BUN_INSPECT or --inspect>`,
+			);
+		}
 		if (!response.ok) {
 			throw new Error(`Inspector at port ${port} returned HTTP ${response.status}`);
 		}

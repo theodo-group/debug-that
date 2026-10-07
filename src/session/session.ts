@@ -136,7 +136,6 @@ export interface BreakableLocation {
 
 export interface FunctionBreakpointResult {
 	ref: string;
-	pending?: boolean;
 	/** How the breakpoint is held, when that matters to the user */
 	note?: string;
 }

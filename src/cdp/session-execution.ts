@@ -14,9 +14,11 @@ export async function continueExecution(
 	}
 	// Wait briefly for an immediate re-pause (breakpoint hit right away),
 	// but don't block for 30s waiting for the next pause like step does.
+	const resumed = session.waitUntilResumed();
 	const waiter =
 		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
 	await session.cdp.send("Debugger.resume");
+	await resumed;
 	await waiter;
 }
 
