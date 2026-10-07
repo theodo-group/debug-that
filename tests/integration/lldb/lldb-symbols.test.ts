@@ -2,12 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { $ } from "bun";
 import { DapSession } from "../../../src/dap/session.ts";
+import { HAS_LLDB } from "./has-lldb.ts";
 
 const WAIT_FOR_STOP_TIMEOUT = 500;
-
-const HAS_LLDB =
-	(await $`which lldb-dap`.nothrow().quiet()).exitCode === 0 ||
-	(await $`/opt/homebrew/opt/llvm/bin/lldb-dap --version`.nothrow().quiet()).exitCode === 0;
 
 const HAS_CC = (await $`which cc`.nothrow().quiet()).exitCode === 0;
 
