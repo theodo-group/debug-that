@@ -431,10 +431,9 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				await activeSession.stop();
 				activeSession = null;
 			}
-			setTimeout(() => {
-				server.stop();
-				process.exit(0);
-			}, 50);
+			// Free the session name now; exit once this reply has been written.
+			server.release({ closeConnections: false });
+			setTimeout(() => process.exit(0), 50);
 			return { ok: true, data: "stopped" };
 		}
 	}

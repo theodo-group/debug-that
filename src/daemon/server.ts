@@ -213,13 +213,22 @@ export class DaemonServer {
 	}
 
 	async stop(): Promise<void> {
+		this.release({ closeConnections: true });
+	}
+
+	/**
+	 * Frees the session name: no new connections, socket and lock removed, so
+	 * the next command starts a fresh daemon instead of reaching this one.
+	 * Without closeConnections, replies already in flight still go out.
+	 */
+	release(options: { closeConnections: boolean }): void {
 		if (this.idleTimer) {
 			clearTimeout(this.idleTimer);
 			this.idleTimer = null;
 		}
 
 		if (this.listener) {
-			this.listener.stop(true);
+			this.listener.stop(options.closeConnections);
 			this.listener = null;
 		}
 

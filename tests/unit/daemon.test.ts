@@ -172,6 +172,24 @@ describe("DaemonClient", () => {
 	});
 });
 
+describe("release", () => {
+	test("frees the session name at once so a new daemon can take it", async () => {
+		const session = testSession("rel");
+		const first = new DaemonServer(session, { idleTimeout: 60, logger });
+		first.onRequest(async () => ({ ok: true, data: "first" }));
+		await first.start();
+
+		first.release({ closeConnections: false });
+		expect(existsSync(getSocketPath(session))).toBe(false);
+
+		const second = new DaemonServer(session, { idleTimeout: 60, logger });
+		second.onRequest(async () => ({ ok: true, data: "second" }));
+		await second.start();
+		expect(existsSync(getSocketPath(session))).toBe(true);
+		await second.stop();
+	});
+});
+
 describe("idle timeout", () => {
 	test("auto-terminates after idle timeout", async () => {
 		const session = testSession("idle");
