@@ -17,6 +17,11 @@ defineCommand({
 		file: z.string().optional().meta({ description: "Script ID or file path" }),
 		all: z.boolean().optional().meta({ description: "Show all source" }),
 		generated: z.boolean().optional().meta({ description: "Show generated code" }),
+		width: z.coerce
+			.number()
+			.optional()
+			.meta({ description: "Characters shown around the current column" }),
+		reflow: z.boolean().optional().meta({ description: "One statement per line (minified code)" }),
 	}),
 	handler: async (ctx) => {
 		const data = await daemonRequest(ctx.global.session, "source", {
@@ -38,8 +43,16 @@ defineCommand({
 			lineNumber: l.line,
 			content: l.text,
 			isCurrent: l.current,
+			currentColumn: l.column,
 		}));
-		console.log(formatSource(sourceLines, { color, language: detectLanguage(data.url) }));
+		console.log(
+			formatSource(sourceLines, {
+				color,
+				language: detectLanguage(data.url),
+				width: ctx.flags.width,
+				reflow: ctx.flags.reflow,
+			}),
+		);
 
 		return 0;
 	},

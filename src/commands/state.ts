@@ -21,6 +21,11 @@ defineCommand({
 		lines: z.coerce.number().optional().meta({ description: "Source lines to show" }),
 		frame: z.string().optional().meta({ description: "Stack frame ref (@fN)" }),
 		generated: z.boolean().optional().meta({ description: "Show generated code" }),
+		width: z.coerce
+			.number()
+			.optional()
+			.meta({ description: "Characters shown around the current column" }),
+		reflow: z.boolean().optional().meta({ description: "One statement per line (minified code)" }),
 	}),
 	handler: async (ctx) => {
 		const stateArgs: Record<string, unknown> = {};
@@ -44,7 +49,12 @@ defineCommand({
 			return 0;
 		}
 
-		printState(data, { color: shouldEnableColor(ctx.global.color), verbose: ctx.global.verbose });
+		printState(data, {
+			color: shouldEnableColor(ctx.global.color),
+			verbose: ctx.global.verbose,
+			width: ctx.flags.width,
+			reflow: ctx.flags.reflow,
+		});
 
 		return 0;
 	},

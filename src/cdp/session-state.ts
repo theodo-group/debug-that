@@ -3,6 +3,7 @@ import { formatValue } from "../formatter/values.ts";
 import type { StateOptions, StateSnapshot } from "../session/types.ts";
 import type { CdpSession } from "./session.ts";
 import { getStack } from "./session-inspection.ts";
+import { sourceWindow } from "./source-view.ts";
 
 export async function buildState(
 	session: CdpSession,
@@ -70,65 +71,15 @@ export async function buildState(
 	}
 
 	// Source code
-	if (showAll || options.code) {
+	if ((showAll || options.code) && frameScriptId) {
 		try {
-			if (frameScriptId) {
-				let scriptSource: string | null = null;
-				let useOriginalLines = false;
-
-				if (!options.generated) {
-					// Try to get original source from source map
-					const smOriginal = session.sourceMapResolver.toOriginal(
-						frameScriptId,
-						frameLine + 1,
-						frameColumn ?? 0,
-					);
-					if (smOriginal) {
-						scriptSource = session.sourceMapResolver.getOriginalSource(
-							frameScriptId,
-							smOriginal.source,
-						);
-						useOriginalLines = scriptSource !== null;
-					}
-					// Fallback: script has source map but line is unmapped — still show original source
-					if (!scriptSource) {
-						const primarySource = session.sourceMapResolver.getScriptOriginalUrl(frameScriptId);
-						if (primarySource) {
-							scriptSource = session.sourceMapResolver.getOriginalSource(
-								frameScriptId,
-								primarySource,
-							);
-							useOriginalLines = scriptSource !== null;
-						}
-					}
-				}
-
-				if (!scriptSource) {
-					const sourceResult = await session.cdp.send("Debugger.getScriptSource", {
-						scriptId: frameScriptId,
-					});
-					scriptSource = sourceResult.scriptSource;
-				}
-
-				const sourceLines = scriptSource.split("\n");
-				// Use original line for windowing if we have source-mapped content
-				const currentLine0 = useOriginalLines ? displayLine - 1 : frameLine;
-				const startLine = Math.max(0, currentLine0 - linesContext);
-				const endLine = Math.min(sourceLines.length - 1, currentLine0 + linesContext);
-
-				const lines: Array<{ line: number; text: string; current?: boolean }> = [];
-				for (let i = startLine; i <= endLine; i++) {
-					const entry: { line: number; text: string; current?: boolean } = {
-						line: i + 1, // 1-based
-						text: sourceLines[i] ?? "",
-					};
-					if (i === currentLine0) {
-						entry.current = true;
-					}
-					lines.push(entry);
-				}
-				snapshot.source = { lines };
-			}
+			const window = await sourceWindow(
+				session,
+				frameScriptId,
+				{ line: frameLine, column: frameColumn },
+				{ context: linesContext, generated: options.generated },
+			);
+			snapshot.source = { lines: window.lines };
 		} catch {
 			// Source not available
 		}

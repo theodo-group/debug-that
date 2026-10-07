@@ -106,7 +106,7 @@ export interface StackFrameEntry {
 
 export interface SourceResult {
 	url: string;
-	lines: Array<{ line: number; text: string; current?: boolean }>;
+	lines: Array<{ line: number; text: string; current?: boolean; column?: number }>;
 }
 
 export interface ScriptEntry {
@@ -252,6 +252,7 @@ export interface Session {
 			scriptId?: string;
 			isRegex?: boolean;
 			caseSensitive?: boolean;
+			width?: number;
 		},
 	): Promise<Array<{ url: string; line: number; column: number; content: string }>>;
 	getConsoleMessages(options?: {

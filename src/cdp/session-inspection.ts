@@ -1,8 +1,10 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
+import { windowAround } from "../formatter/window.ts";
 import type { CdpClient } from "./client.ts";
 import type { CdpSession } from "./session.ts";
+import { type SourceWindow, sourceWindow } from "./source-view.ts";
 
 export async function evalExpression(
 	session: CdpSession,
@@ -369,136 +371,44 @@ async function fetchPropsRecursive(
 export async function getSource(
 	session: CdpSession,
 	options: { file?: string; lines?: number; all?: boolean; generated?: boolean } = {},
-): Promise<{
-	url: string;
-	lines: Array<{ line: number; text: string; current?: boolean }>;
-}> {
+): Promise<SourceWindow> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
+	const paused = session.sessionState === "paused" ? session.pauseInfo : null;
 
 	let scriptId: string | undefined;
-	let url = "";
-	let currentLine: number | undefined;
-
+	let source: string | undefined;
 	if (options.file) {
-		// Find the script by file name
-		const scriptUrl = session.findScriptUrl(options.file);
-		if (!scriptUrl) {
-			throw new Error(`No loaded script matches "${options.file}"`);
-		}
-		url = scriptUrl;
-		// Find the scriptId for this URL
-		for (const [sid, info] of session.scripts) {
-			if (info.url === scriptUrl) {
-				scriptId = sid;
-				break;
-			}
-		}
-		// If we are paused in this file, mark the current line
-		if (
-			session.sessionState === "paused" &&
-			session.pauseInfo &&
-			session.pauseInfo.scriptId === scriptId
-		) {
-			currentLine = session.pauseInfo.line;
+		const mapped = options.generated
+			? null
+			: session.sourceMapResolver.findScriptForSource(options.file);
+		if (mapped) {
+			scriptId = mapped.scriptId;
+			source = options.file;
+		} else {
+			const url = session.findScriptUrl(options.file);
+			if (!url) throw new Error(`No loaded script matches "${options.file}"`);
+			scriptId = session.findScriptIdByUrl(url);
 		}
 	} else {
-		// Use current pause location
-		if (session.sessionState !== "paused" || !session.pauseInfo?.scriptId) {
-			throw new Error("Not paused; specify --file to view source");
-		}
-		scriptId = session.pauseInfo.scriptId;
-		url = session.scripts.get(scriptId)?.url ?? "";
-		currentLine = session.pauseInfo.line;
+		if (!paused?.scriptId) throw new Error("Not paused; specify --file to view source");
+		scriptId = paused.scriptId;
 	}
-
 	if (!scriptId) {
 		throw new Error("Could not determine script to show");
 	}
 
-	// Try to get original source from source map (unless --generated)
-	let scriptSource: string | null = null;
-	let useOriginalSource = false;
-	let originalCurrentLine: number | undefined;
-
-	if (!options.generated) {
-		// Check if this file is being requested by original source path
-		const smMatch = session.sourceMapResolver.findScriptForSource(options.file ?? "");
-		if (smMatch) {
-			scriptId = smMatch.scriptId;
-			const origSource = session.sourceMapResolver.getOriginalSource(scriptId, options.file ?? "");
-			if (origSource) {
-				scriptSource = origSource;
-				useOriginalSource = true;
-				url = options.file ?? url;
-			}
-		}
-
-		// Also try source map for the current scriptId (when paused at a .js file that has a .ts source)
-		if (!useOriginalSource) {
-			const smInfo = session.sourceMapResolver.getInfo(scriptId);
-			if (smInfo && smInfo.sources.length > 0) {
-				const primarySource = smInfo.sources[0];
-				if (primarySource) {
-					const origSource = session.sourceMapResolver.getOriginalSource(scriptId, primarySource);
-					if (origSource) {
-						scriptSource = origSource;
-						useOriginalSource = true;
-						url = primarySource;
-						// Translate current line to original
-						if (currentLine !== undefined) {
-							const original = session.sourceMapResolver.toOriginal(scriptId, currentLine + 1, 0);
-							if (original) {
-								originalCurrentLine = original.line - 1; // 0-based
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if (!scriptSource) {
-		const sourceResult = await session.cdp.send("Debugger.getScriptSource", {
-			scriptId,
-		});
-		scriptSource = sourceResult.scriptSource;
-	}
-
-	const sourceLines = scriptSource.split("\n");
-	const effectiveCurrentLine =
-		useOriginalSource && originalCurrentLine !== undefined ? originalCurrentLine : currentLine;
-
-	const linesContext = options.lines ?? 5;
-	let startLine: number;
-	let endLine: number;
-
-	if (options.all) {
-		startLine = 0;
-		endLine = sourceLines.length - 1;
-	} else if (effectiveCurrentLine !== undefined) {
-		startLine = Math.max(0, effectiveCurrentLine - linesContext);
-		endLine = Math.min(sourceLines.length - 1, effectiveCurrentLine + linesContext);
-	} else {
-		// No current line (viewing a different file while paused), show from the top
-		startLine = 0;
-		endLine = Math.min(sourceLines.length - 1, linesContext * 2);
-	}
-
-	const lines: Array<{ line: number; text: string; current?: boolean }> = [];
-	for (let i = startLine; i <= endLine; i++) {
-		const entry: { line: number; text: string; current?: boolean } = {
-			line: i + 1, // 1-based
-			text: sourceLines[i] ?? "",
-		};
-		if (effectiveCurrentLine !== undefined && i === effectiveCurrentLine) {
-			entry.current = true;
-		}
-		lines.push(entry);
-	}
-
-	return { url, lines };
+	const position =
+		paused?.scriptId === scriptId && paused.line !== undefined
+			? { line: paused.line, column: paused.column }
+			: null;
+	return sourceWindow(session, scriptId, position, {
+		context: options.lines ?? 5,
+		all: options.all,
+		generated: options.generated,
+		source,
+	});
 }
 
 export function getScripts(
@@ -618,51 +528,62 @@ export async function searchInScripts(
 		scriptId?: string;
 		isRegex?: boolean;
 		caseSensitive?: boolean;
+		/** Characters of context returned around each match */
+		width?: number;
 	} = {},
 ): Promise<Array<{ url: string; line: number; column: number; content: string }>> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
 
+	const scripts = options.scriptId
+		? [session.scripts.get(options.scriptId)].filter((s) => s !== undefined)
+		: [...session.scripts.values()].filter((s) => s.url);
+
 	const results: Array<{ url: string; line: number; column: number; content: string }> = [];
-
-	const scriptsToSearch: Array<{ scriptId: string; url: string }> = [];
-
-	if (options.scriptId) {
-		const info = session.scripts.get(options.scriptId);
-		if (info) {
-			scriptsToSearch.push({ scriptId: options.scriptId, url: info.url });
-		}
-	} else {
-		for (const [sid, info] of session.scripts) {
-			if (!info.url) continue;
-			scriptsToSearch.push({ scriptId: sid, url: info.url });
-		}
-	}
-
-	for (const script of scriptsToSearch) {
+	for (const script of scripts) {
+		let matches: Array<{ lineNumber: number; lineContent: string }>;
 		try {
-			const searchResult = await session.cdp.send("Debugger.searchInContent", {
+			const r = await session.cdp.send("Debugger.searchInContent", {
 				scriptId: script.scriptId,
 				query,
 				isRegex: options.isRegex ?? false,
 				caseSensitive: options.caseSensitive ?? false,
 			});
-			const matches = searchResult.result;
-			if (matches) {
-				for (const match of matches) {
-					results.push({
-						url: script.url,
-						line: (match.lineNumber ?? 0) + 1, // 1-based
-						column: 1, // SearchMatch doesn't provide column
-						content: match.lineContent ?? "",
-					});
-				}
-			}
+			matches = r.result ?? [];
 		} catch {
-			// Script may have been garbage collected, skip
+			continue; // Script may have been garbage collected
+		}
+		for (const match of matches) {
+			// The protocol reports the line only; locate the match ourselves for the column.
+			const column = matchColumn(match.lineContent, query, options);
+			results.push({
+				url: script.url,
+				line: match.lineNumber + 1,
+				column: column + 1,
+				content: windowAround(match.lineContent, column, options.width).text,
+			});
 		}
 	}
-
 	return results;
+}
+
+function matchColumn(
+	content: string,
+	query: string,
+	options: { isRegex?: boolean; caseSensitive?: boolean },
+): number {
+	let index = -1;
+	if (options.isRegex) {
+		try {
+			index = new RegExp(query, options.caseSensitive ? "" : "i").exec(content)?.index ?? -1;
+		} catch {
+			index = -1;
+		}
+	} else if (options.caseSensitive) {
+		index = content.indexOf(query);
+	} else {
+		index = content.toLowerCase().indexOf(query.toLowerCase());
+	}
+	return Math.max(0, index);
 }

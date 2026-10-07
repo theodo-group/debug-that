@@ -8,6 +8,7 @@ describe("Inspection commands", () => {
 			expect(result.url).toBeDefined();
 			expect(result.lines.length).toBeGreaterThan(0);
 			expect(result.lines.filter((l) => l.current === true).length).toBe(1);
+			expect(typeof result.lines.find((l) => l.current)?.column).toBe("number");
 			for (const line of result.lines) {
 				expect(typeof line.line).toBe("number");
 				expect(typeof line.text).toBe("string");
@@ -84,6 +85,10 @@ describe("Inspection commands", () => {
 			expect(match).toBeDefined();
 			expect(match?.line).toBeGreaterThan(0);
 			expect(match?.content).toContain("helper");
+			expect(match?.content.slice((match?.column ?? 1) - 1).startsWith("helper")).toBe(true);
+
+			const narrow = await session.searchInScripts("helper", { width: 12 });
+			expect(narrow[0]?.content.length).toBeLessThanOrEqual(14);
 		}));
 
 	test("searchInScripts with no matches returns empty array", () =>

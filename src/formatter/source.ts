@@ -1,3 +1,8 @@
+import { MAX_SOURCE_LINE_WIDTH } from "../constants.ts";
+import { colorize, highlightLine, type Language } from "./color.ts";
+import { reflow } from "./reflow.ts";
+import { windowAround } from "./window.ts";
+
 export interface SourceLine {
 	lineNumber: number;
 	content: string;
@@ -6,45 +11,13 @@ export interface SourceLine {
 	hasBreakpoint?: boolean;
 }
 
-import { MAX_SOURCE_LINE_WIDTH } from "../constants.ts";
-import { colorize, highlightLine, type Language } from "./color.ts";
-
 export interface FormatSourceOptions {
 	color?: boolean;
 	language?: Language;
-}
-
-/** Trim a long line to a window around the column, adding … on truncated sides. Returns trimmed content and adjusted column offset (0-based). */
-function trimLine(content: string, column?: number): { text: string; caretOffset?: number } {
-	const col = column !== undefined ? column - 1 : undefined; // 0-based index
-
-	if (content.length <= MAX_SOURCE_LINE_WIDTH) {
-		return { text: content, caretOffset: col };
-	}
-
-	const anchor = col ?? 0;
-	const half = Math.floor(MAX_SOURCE_LINE_WIDTH / 2);
-
-	let start = anchor - half;
-	let end = anchor + half;
-
-	if (start < 0) {
-		end -= start;
-		start = 0;
-	}
-	if (end > content.length) {
-		start -= end - content.length;
-		end = content.length;
-		if (start < 0) start = 0;
-	}
-
-	const hasPrefix = start > 0;
-	const hasSuffix = end < content.length;
-	const prefix = hasPrefix ? "\u2026" : "";
-	const suffix = hasSuffix ? "\u2026" : "";
-	const adjustedCaret = col !== undefined ? col - start + (hasPrefix ? 1 : 0) : undefined;
-
-	return { text: `${prefix}${content.slice(start, end)}${suffix}`, caretOffset: adjustedCaret };
+	/** Characters shown per line, centered on the current column */
+	width?: number;
+	/** Break each shown window into one statement per line */
+	reflow?: boolean;
 }
 
 export function formatSource(lines: SourceLine[], opts?: FormatSourceOptions): string {
@@ -52,50 +25,50 @@ export function formatSource(lines: SourceLine[], opts?: FormatSourceOptions): s
 
 	const color = opts?.color ?? false;
 	const lang = opts?.language ?? "unknown";
+	const width = opts?.width ?? MAX_SOURCE_LINE_WIDTH;
 	const cc = colorize(color);
 
-	// Determine the max line number width for alignment
-	const maxLineNum = Math.max(...lines.map((l) => l.lineNumber));
-	const numWidth = String(maxLineNum).length;
+	const numWidth = String(Math.max(...lines.map((l) => l.lineNumber))).length;
+	const continuationGutter = `${" ".repeat(numWidth + 3)}\u2502`;
+	const caretGutter = " ".repeat(numWidth + 4); // marker(2) + space(1) + numWidth + │(1)
 
 	const result: string[] = [];
 	for (const line of lines) {
-		const num = String(line.lineNumber).padStart(numWidth);
-		let marker = "  ";
-		if (line.isCurrent && line.hasBreakpoint) {
-			marker = "\u2192\u25CF";
-		} else if (line.isCurrent) {
-			marker = " \u2192";
-		} else if (line.hasBreakpoint) {
-			marker = " \u25CF";
-		}
+		const column =
+			line.isCurrent && line.currentColumn !== undefined ? line.currentColumn - 1 : undefined;
+		const window = windowAround(line.content, column, width);
+		const body = opts?.reflow
+			? reflow(window.text, window.caretOffset)
+			: { lines: [window.text], caret: toCaret(window.caretOffset) };
+		if (body.lines.length === 0) body.lines.push("");
 
-		const trimmed = line.isCurrent
-			? trimLine(line.content, line.currentColumn)
-			: trimLine(line.content);
-
-		// Apply color to marker
-		let coloredMarker = marker;
-		if (color) {
-			if (line.isCurrent) {
-				coloredMarker = cc(marker, "brightYellow");
-			} else if (line.hasBreakpoint) {
-				coloredMarker = cc(marker, "red");
+		body.lines.forEach((text, i) => {
+			const gutter = i === 0 ? firstGutter(line, numWidth, cc) : continuationGutter;
+			result.push(gutter + (color ? highlightLine(text, lang) : text));
+			if (line.isCurrent && body.caret?.line === i) {
+				// Preserve tabs from source so ^ aligns in terminal
+				const indent = text.slice(0, body.caret.column).replace(/[^\t]/g, " ");
+				result.push(`${caretGutter}${indent}${cc("^", "brightYellow")}`);
 			}
-		}
-
-		const coloredNum = cc(num, "gray");
-		const coloredContent = color ? highlightLine(trimmed.text, lang) : trimmed.text;
-
-		result.push(`${coloredMarker} ${coloredNum}\u2502${coloredContent}`);
-
-		// Add column indicator under current line
-		if (line.isCurrent && trimmed.caretOffset !== undefined && trimmed.caretOffset >= 0) {
-			const gutter = " ".repeat(numWidth + 4); // marker(2) + space(1) + numWidth + │(1)
-			// Preserve tabs from source so ^ aligns in terminal
-			const indent = trimmed.text.slice(0, trimmed.caretOffset).replace(/[^\t]/g, " ");
-			result.push(`${gutter}${indent}${cc("^", "brightYellow")}`);
-		}
+		});
 	}
 	return result.join("\n");
+}
+
+function toCaret(offset: number | undefined): { line: number; column: number } | undefined {
+	return offset !== undefined && offset >= 0 ? { line: 0, column: offset } : undefined;
+}
+
+function firstGutter(line: SourceLine, numWidth: number, cc: ReturnType<typeof colorize>): string {
+	let marker = "  ";
+	if (line.isCurrent && line.hasBreakpoint) marker = "\u2192\u25CF";
+	else if (line.isCurrent) marker = " \u2192";
+	else if (line.hasBreakpoint) marker = " \u25CF";
+
+	let coloredMarker = marker;
+	if (line.isCurrent) coloredMarker = cc(marker, "brightYellow");
+	else if (line.hasBreakpoint) coloredMarker = cc(marker, "red");
+
+	const num = String(line.lineNumber).padStart(numWidth);
+	return `${coloredMarker} ${cc(num, "gray")}\u2502`;
 }

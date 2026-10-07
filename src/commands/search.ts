@@ -12,6 +12,7 @@ defineCommand({
 		regex: z.boolean().optional().meta({ description: "Treat query as regex" }),
 		"case-sensitive": z.boolean().optional().meta({ description: "Case-sensitive match" }),
 		file: z.string().optional().meta({ description: "Script ID filter" }),
+		width: z.coerce.number().optional().meta({ description: "Characters shown around each match" }),
 	}),
 	handler: async (ctx) => {
 		const query = ctx.positional;
@@ -21,6 +22,7 @@ defineCommand({
 			isRegex: ctx.flags.regex || undefined,
 			caseSensitive: ctx.flags["case-sensitive"] || undefined,
 			scriptId: ctx.flags.file,
+			width: ctx.flags.width,
 		});
 		if (!data) return 1;
 
@@ -35,7 +37,7 @@ defineCommand({
 		}
 
 		for (const match of data) {
-			console.log(`${shortPath(match.url)}:${match.line}: ${match.content}`);
+			console.log(`${shortPath(match.url)}:${match.line}:${match.column}: ${match.content}`);
 		}
 
 		return 0;

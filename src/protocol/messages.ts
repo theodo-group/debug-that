@@ -144,6 +144,7 @@ const SearchRequest = z.object({
 		scriptId: z.optional(z.string()),
 		isRegex: z.optional(z.boolean()),
 		caseSensitive: z.optional(z.boolean()),
+		width: z.optional(z.number()),
 	}),
 });
 

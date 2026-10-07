@@ -189,6 +189,7 @@ See [references/commands.md](references/commands.md) for full command details an
 
 - `dbg state` after stepping always shows location + source + locals -- usually enough context
 - `dbg state -c` for source only, `-v` for vars only, `-s` for stack only -- save tokens
+- Minified/bundled code: `dbg source --width 600 --reflow` prints 600 chars around the paused column as one statement per line; `dbg search "text" --width 200` windows each match
 - `dbg eval` supports `await` -- useful for async inspection (JS/TS)
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)

@@ -50,7 +50,7 @@ export interface StateSnapshot {
 	status: string; // "paused" | "running" | "idle"
 	reason?: string;
 	location?: { url: string; line: number; column?: number };
-	source?: { lines: Array<{ line: number; text: string; current?: boolean }> };
+	source?: { lines: Array<{ line: number; text: string; current?: boolean; column?: number }> };
 	vars?: Array<{ ref: string; name: string; value: string; scope: string }>;
 	stack?: Array<{
 		ref: string;

@@ -506,6 +506,26 @@ describe("formatSource", () => {
 	test("empty lines array returns empty string", () => {
 		expect(formatSource([])).toBe("");
 	});
+
+	test("width windows a long current line around the column with the caret", () => {
+		const content = `${"a".repeat(200)}HERE${"b".repeat(200)}`;
+		const lines: SourceLine[] = [{ lineNumber: 1, content, isCurrent: true, currentColumn: 201 }];
+		const [text, caret] = formatSource(lines, { width: 30 }).split("\n");
+		expect(text).toContain("HERE");
+		expect(text?.length).toBeLessThan(60);
+		expect(text?.[caret?.indexOf("^") ?? -1]).toBe("H");
+	});
+
+	test("reflow prints one statement per line under one line number", () => {
+		const lines: SourceLine[] = [
+			{ lineNumber: 7, content: "a();b();if(c){d()}", isCurrent: true, currentColumn: 15 },
+		];
+		const out = formatSource(lines, { reflow: true }).split("\n");
+		expect(out[0]).toContain("7\u2502a();");
+		expect(out.filter((l) => l.includes("7\u2502"))).toHaveLength(1);
+		const caretRow = out.findIndex((l) => l.trim() === "^");
+		expect(out[caretRow - 1]).toContain("d()");
+	});
 });
 
 // =============================================================================

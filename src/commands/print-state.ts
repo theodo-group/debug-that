@@ -11,6 +11,8 @@ import type { StateSnapshot } from "../session/types.ts";
 export interface PrintStateOptions {
 	color?: boolean;
 	verbose?: boolean;
+	width?: number;
+	reflow?: boolean;
 }
 
 /**
@@ -59,9 +61,16 @@ export function printState(data: StateSnapshot, opts?: PrintStateOptions): void 
 			lineNumber: l.line,
 			content: l.text,
 			isCurrent: l.current,
-			currentColumn: l.current ? data.location?.column : undefined,
+			currentColumn: l.current ? (l.column ?? data.location?.column) : undefined,
 		}));
-		console.log(formatSource(sourceLines, { color, language: lang }));
+		console.log(
+			formatSource(sourceLines, {
+				color,
+				language: lang,
+				width: opts?.width,
+				reflow: opts?.reflow,
+			}),
+		);
 	}
 
 	// Variables section

@@ -190,14 +190,15 @@ BREAKPOINTS:
   dbg break-fn <name|obj.path.fn> [--condition expr]  Pause when called (JS: args/this usable in condition)
 
 INSPECTION:
-  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated]
+  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N] [--reflow]
   dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
   dbg stack [--async-depth N] [--generated] [--filter <keyword>]
   dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]  (works while running, global scope)
   dbg props @ref [--own] [--depth N] [--private] [--internal]
   dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
-  dbg source [--lines N] [--file path] [--all] [--generated]
-  dbg search "query" [--regex] [--case-sensitive] [--file id]
+  dbg source [--lines N] [--file path] [--all] [--generated] [--width N] [--reflow]
+  dbg search "query" [--regex] [--case-sensitive] [--file id] [--width N]
+  (minified code: --width N shows N chars around the column/match, --reflow prints one statement per line)
   dbg scripts [--filter pattern]
   dbg console [--since N] [--level type] [--clear]
   dbg exceptions [--since N]
