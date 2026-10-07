@@ -93,12 +93,10 @@ export async function setBreakpoint(
 		return { ref, location: { url: file, line }, pending: true };
 	}
 
-	const r = await session
-		.dialect()
-		.setBreakpoint(
-			breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url, urlRegex }),
-			{ line: actualLine, column: actualColumn, condition },
-		);
+	const r = await session.dialect.setBreakpoint(
+		breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url, urlRegex }),
+		{ line: actualLine, column: actualColumn, condition },
+	);
 
 	const loc = r.location;
 	if (!url) url = session.findScriptUrl(actualFile);
@@ -430,12 +428,13 @@ export async function setLogpoint(
 		return { ref, location: { url: file, line } };
 	}
 
-	const r = await session
-		.dialect()
-		.setBreakpoint(breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url }), {
+	const r = await session.dialect.setBreakpoint(
+		breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url }),
+		{
 			line: actualLine,
 			condition: logExpr,
-		});
+		},
+	);
 
 	const loc = r.location;
 	const sourceUrl = resolved?.source.file ?? url ?? file;
