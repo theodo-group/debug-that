@@ -1,5 +1,9 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import { ATTACH_SCRIPTS_SETTLE_MS, BRK_PAUSE_TIMEOUT_MS } from "../../constants.ts";
+import {
+	ATTACH_SCRIPTS_SETTLE_MS,
+	BRK_PAUSE_TIMEOUT_MS,
+	FUNCTION_BODY_SEARCH_LINES,
+} from "../../constants.ts";
 import { escapeRegex } from "../../util/escape-regex.ts";
 import { type CdpClient, isAlreadyEnabledError } from "../client.ts";
 import type {
@@ -30,6 +34,8 @@ export class BunDialect implements InspectorDialect {
 	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
 		await this.enableInspectorDomain();
 		await this.cdp.enableDomains();
+		// JSC starts with breakpoints inactive; nothing would pause after a plain attach.
+		await this.jsc.send("Debugger.setBreakpointsActive", { active: true });
 		// JSC reports console output on its own domain, not via Runtime.consoleAPICalled.
 		await this.jsc.send("Console.enable");
 
@@ -60,6 +66,56 @@ export class BunDialect implements InspectorDialect {
 			options: spec.condition ? { condition: spec.condition } : undefined,
 		});
 		return { breakpointId: r.breakpointId, location: r.actualLocation };
+	}
+
+	/** A location breakpoint on the first statement of the function's body. */
+	async breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null> {
+		const location = await this.firstStatementOf(functionObjectId);
+		if (!location) return null;
+		const r = await this.jsc.send("Debugger.setBreakpoint", {
+			location,
+			options: condition ? { condition } : undefined,
+		});
+		return r.breakpointId;
+	}
+
+	async breakOnFunctionName(pattern: string, condition?: string): Promise<() => Promise<void>> {
+		const symbol = { symbol: pattern, isRegex: true };
+		await this.jsc.send("Debugger.addSymbolicBreakpoint", {
+			...symbol,
+			options: condition ? { condition } : undefined,
+		});
+		return async () => {
+			await this.jsc.send("Debugger.removeSymbolicBreakpoint", symbol);
+		};
+	}
+
+	/** Null for native functions, which JSC cannot locate in any script. */
+	private async firstStatementOf(functionObjectId: string) {
+		let declared: { scriptId: string; lineNumber: number; columnNumber?: number };
+		try {
+			const r = await this.jsc.send("Debugger.getFunctionDetails", {
+				functionId: functionObjectId,
+			});
+			declared = r.details.location;
+		} catch {
+			return null;
+		}
+		const { locations = [] } = await this.jsc.send("Debugger.getBreakpointLocations", {
+			start: declared,
+			end: {
+				scriptId: declared.scriptId,
+				lineNumber: declared.lineNumber + FUNCTION_BODY_SEARCH_LINES,
+			},
+		});
+		const declaredColumn = declared.columnNumber ?? 0;
+		return (
+			locations.find(
+				(l) =>
+					l.lineNumber > declared.lineNumber ||
+					(l.lineNumber === declared.lineNumber && (l.columnNumber ?? 0) > declaredColumn),
+			) ?? null
+		);
 	}
 
 	async getBreakableLocations(
@@ -112,7 +168,6 @@ export class BunDialect implements InspectorDialect {
 	 * the first breakable statement (line 0 would silently fail).
 	 */
 	private async pauseAtEntryScript(target: ConnectTarget, entryScript: string | null) {
-		await this.jsc.send("Debugger.setBreakpointsActive", { active: true });
 		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
 		const entryBreakpoint = await this.setEntryBreakpoint(entryScript);
 		try {
@@ -137,7 +192,6 @@ export class BunDialect implements InspectorDialect {
 
 	/** Pausing before Inspector.initialized stops on the very first statement. */
 	private async releaseAndPause(target: ConnectTarget): Promise<void> {
-		await this.jsc.send("Debugger.setBreakpointsActive", { active: true });
 		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
 		const stopped = target.waitUntilStopped({
 			timeoutMs: BRK_PAUSE_TIMEOUT_MS,

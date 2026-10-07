@@ -3,11 +3,12 @@ import { defineCommand } from "../cli/command.ts";
 import { parseFileLine } from "../cli/parse-target.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { shortPath } from "../formatter/path.ts";
+import { requestFunctionBreakpoint } from "./break-fn.ts";
 
 defineCommand({
 	name: "logpoint",
 	description: "Set logpoint",
-	usage: "logpoint <file>:<line> <tpl>",
+	usage: "logpoint <file>:<line> | fn:<function> <tpl>",
 	category: "breakpoints",
 	positional: { kind: "required", name: "target", description: "file:line" },
 	flags: z.object({
@@ -16,6 +17,20 @@ defineCommand({
 	}),
 	handler: async (ctx) => {
 		const target = ctx.positional;
+
+		if (target.startsWith("fn:")) {
+			const template = ctx.raw.positionals[0];
+			if (!template) {
+				console.error("No log template specified");
+				console.error('  -> Try: dbg logpoint fn:fetch "fetch", args[0]');
+				return 1;
+			}
+			return requestFunctionBreakpoint(
+				ctx.global.session,
+				{ name: target.slice(3), log: template, condition: ctx.flags.condition },
+				{ json: ctx.global.json, color: ctx.global.color },
+			);
+		}
 
 		const parsed = parseFileLine(target);
 		if (!parsed) {

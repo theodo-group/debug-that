@@ -4,11 +4,12 @@ import { parseFileLineColumn } from "../cli/parse-target.ts";
 import { DaemonClient, daemonRequest } from "../daemon/client.ts";
 import { colorize, shouldEnableColor } from "../formatter/color.ts";
 import { shortPath } from "../formatter/path.ts";
+import { requestFunctionBreakpoint } from "./break-fn.ts";
 
 defineCommand({
 	name: "break",
 	description: "Set breakpoint",
-	usage: "break <file>:<line>",
+	usage: "break <file>:<line> | fn:<function>",
 	category: "breakpoints",
 	positional: { kind: "joined", name: "target" },
 	flags: z.object({
@@ -46,6 +47,21 @@ defineCommand({
 				console.error("No target specified");
 				console.error("  -> Try: dbg break src/app.ts:42");
 				return 1;
+			}
+			if (target.startsWith("fn:")) {
+				const code = await requestFunctionBreakpoint(
+					ctx.global.session,
+					{
+						name: target.slice(3),
+						condition: ctx.flags.condition,
+						hitCount: ctx.flags["hit-count"],
+						log: ctx.flags.log,
+					},
+					{ json: ctx.global.json, color: ctx.global.color },
+				);
+				if (code !== 0 || !shouldContinue) return code;
+				const contResponse = await new DaemonClient(ctx.global.session).request("continue");
+				return contResponse.ok ? 0 : 1;
 			}
 
 			const parsed = parseFileLineColumn(target);

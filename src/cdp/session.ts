@@ -5,7 +5,12 @@ import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
-import type { BreakpointListItem, SessionFeatures, SourceMapInfo } from "../session/session.ts";
+import type {
+	BreakpointListItem,
+	FunctionBreakpointResult,
+	SessionFeatures,
+	SourceMapInfo,
+} from "../session/session.ts";
 import type {
 	AttachResult,
 	ConsoleMessage,
@@ -21,6 +26,7 @@ import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { type CdpClient, TimeoutError } from "./client.ts";
 import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
 import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
+import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
 import {
 	addBlackbox as addBlackboxImpl,
@@ -46,11 +52,6 @@ import {
 	runToLocation,
 	stepExecution,
 } from "./session-execution.ts";
-import {
-	functionBreakpointReason,
-	reinstallFunctionBreakpoints,
-	setFunctionBreakpoint as setFunctionBreakpointImpl,
-} from "./session-function-breakpoints.ts";
 import {
 	evalExpression,
 	getProps as getPropsImpl,
@@ -103,7 +104,7 @@ export class CdpSession extends BaseSession {
 	}> = [];
 	private _pendingRebinds = new Set<Promise<void>>();
 	launchCommand: string[] | null = null;
-	functionBreakpointSeq = 0;
+	readonly functionBreakpoints = new FunctionBreakpoints(this);
 	launchOptions: { brk?: boolean; port?: number } | null = null;
 	private _dialect: InspectorDialect | null = null;
 	private log: Logger<"session">;
@@ -214,7 +215,6 @@ export class CdpSession extends BaseSession {
 			pauseAtEntry: brk,
 			entryScript: entryScriptOf(command),
 		});
-		await reinstallFunctionBreakpoints(this);
 
 		const result: LaunchResult = {
 			pid: proc.pid,
@@ -267,6 +267,7 @@ export class CdpSession extends BaseSession {
 
 		this.wsUrl = wsUrl;
 		await this.connect(wsUrl, this.runtimeHint, { mode: "attach" });
+		await this.functionBreakpoints.adoptLeftovers();
 
 		return { wsUrl };
 	}
@@ -317,6 +318,7 @@ export class CdpSession extends BaseSession {
 
 	async stop(): Promise<void> {
 		if (this.cdp) {
+			await this.functionBreakpoints.detach();
 			this.cdp.disconnect();
 			this.cdp = null;
 			this._dialect = null;
@@ -590,10 +592,10 @@ export class CdpSession extends BaseSession {
 	}
 
 	async setFunctionBreakpoint(
-		name: string,
-		options?: { condition?: string },
-	): Promise<{ ref: string }> {
-		return setFunctionBreakpointImpl(this, name, { condition: options?.condition });
+		target: string,
+		options?: FunctionBreakpointOptions,
+	): Promise<FunctionBreakpointResult> {
+		return this.functionBreakpoints.set(target, options);
 	}
 
 	async restartFrame(frameRef?: string): Promise<{ status: string }> {
@@ -796,6 +798,7 @@ export class CdpSession extends BaseSession {
 
 		for (const entry of this.refs.listBreakpoints({ pending: true })) {
 			const meta = entry.meta;
+			if (meta.fn !== undefined) continue; // bound by name or path, not by script
 			// Use findScriptUrl for consistent URL matching (suffix + basename)
 			const matchedUrl = this.findScriptUrl(meta.url);
 			if (matchedUrl !== scriptUrl) continue;
@@ -863,7 +866,16 @@ export class CdpSession extends BaseSession {
 			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
 
 			this.pauseInfo = {
-				reason: functionBreakpointReason(url) ?? p.reason ?? "unknown",
+				reason:
+					this.functionBreakpoints.pauseReason({
+						reason: p.reason,
+						hitBreakpoints: p.hitBreakpoints,
+						data: (p as { data?: Record<string, unknown> }).data,
+						topUrl: url,
+						topFunction: topFrame?.functionName,
+					}) ??
+					p.reason ??
+					"unknown",
 				scriptId,
 				url,
 				line: location?.lineNumber,
@@ -881,11 +893,13 @@ export class CdpSession extends BaseSession {
 		});
 
 		cdp.on("Debugger.scriptParsed", (p) => {
+			this.functionBreakpoints.retryPendingSoon();
 			const scriptId = p.scriptId;
 			if (scriptId) {
 				const info: ScriptInfo = {
 					scriptId,
-					url: p.url ?? "",
+					// JSC reports a //# sourceURL apart from the url, which is empty for evaluated code
+					url: p.url || ((p as { sourceURL?: string }).sourceURL ?? ""),
 				};
 				const sourceMapURL = p.sourceMapURL;
 				if (sourceMapURL) {

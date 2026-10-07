@@ -67,8 +67,10 @@ export interface BreakpointListItem {
 	pending?: boolean;
 	originalUrl?: string;
 	originalLine?: number;
-	/** Function breakpoint path (JS: wrapped function, DAP: symbol) */
+	/** Function breakpoint target (JS: path or object, DAP: symbol) */
 	fn?: string;
+	/** How the breakpoint is held, when that matters to the user */
+	note?: string;
 }
 
 export interface EvalResult {
@@ -134,6 +136,9 @@ export interface BreakableLocation {
 
 export interface FunctionBreakpointResult {
 	ref: string;
+	pending?: boolean;
+	/** How the breakpoint is held, when that matters to the user */
+	note?: string;
 }
 
 export interface ModuleEntry {
@@ -279,7 +284,7 @@ export interface Session {
 	// ── DAP-specific (optional, guarded by capabilities) ──────────
 	setFunctionBreakpoint?(
 		name: string,
-		options?: { condition?: string; hitCount?: number },
+		options?: { condition?: string; hitCount?: number; log?: string; byName?: boolean },
 	): Promise<FunctionBreakpointResult>;
 	getModules?(filter?: string): Promise<ModuleEntry[]>;
 

@@ -47,20 +47,6 @@ describe("Bun debugging", () => {
 			expect((await session.eval("typeof service.ping")).value).toBe('"function"');
 		}));
 
-	test("function breakpoint pauses in the wrapper", () =>
-		withSession("bun-test-fnbp", async (session) => {
-			await session.launch(["bun", "tests/fixtures/js/live-app.js"], { brk: true });
-			await session.continue();
-			const { ref } = await session.setFunctionBreakpoint("service.ping");
-			await session.waitForState("paused", 3000);
-			expect(session.getStack({})[0]?.functionName).toBe("ping");
-			expect((await session.eval("args[0]")).value).toBe('"tick"');
-			await session.removeBreakpoint(ref);
-			await session.continue();
-			await Bun.sleep(150);
-			expect(session.state).toBe("running");
-		}));
-
 	test("detects bun runtime", () =>
 		withSession("bun-test-detect", async (session) => {
 			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });

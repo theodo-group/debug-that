@@ -2,6 +2,7 @@ import type Protocol from "devtools-protocol/types/protocol.js";
 import {
 	BRK_PAUSE_TIMEOUT_MS,
 	BRK_PAUSED_EVENT_GRACE_MS,
+	MAX_BOUND_FUNCTION_DEPTH,
 	MAX_INTERNAL_PAUSE_SKIPS,
 } from "../../constants.ts";
 import type { CdpClient } from "../client.ts";
@@ -46,6 +47,36 @@ export class NodeDialect implements InspectorDialect {
 				? { scriptId: loc.scriptId, lineNumber: loc.lineNumber, columnNumber: loc.columnNumber }
 				: undefined,
 		};
+	}
+
+	async breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null> {
+		const target = await this.functionWithSource(functionObjectId);
+		if (!target) return null;
+		const r = await this.cdp.send("Debugger.setBreakpointOnFunctionCall", {
+			objectId: target,
+			...(condition ? { condition } : {}),
+		});
+		return r.breakpointId;
+	}
+
+	async breakOnFunctionName(): Promise<null> {
+		return null;
+	}
+
+	/** Follows bound functions to the one they call; null when that one is a builtin without source. */
+	private async functionWithSource(objectId: string): Promise<string | null> {
+		let id = objectId;
+		for (let depth = 0; depth < MAX_BOUND_FUNCTION_DEPTH; depth++) {
+			const { internalProperties = [] } = await this.cdp.send("Runtime.getProperties", {
+				objectId: id,
+				ownProperties: true,
+			});
+			if (internalProperties.some((p) => p.name === "[[FunctionLocation]]")) return id;
+			const next = internalProperties.find((p) => p.name === "[[TargetFunction]]")?.value?.objectId;
+			if (!next) return null;
+			id = next;
+		}
+		return null;
 	}
 
 	async getBreakableLocations(

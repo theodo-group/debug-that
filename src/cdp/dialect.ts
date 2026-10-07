@@ -54,6 +54,16 @@ export interface InspectorDialect {
 
 	setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding>;
 
+	/**
+	 * Pauses whenever this function object is called, with the condition
+	 * evaluated in its frame. Resolves the breakpoint id, or null when the
+	 * engine cannot: native functions have no frame to pause in.
+	 */
+	breakOnFunctionCall(functionObjectId: string, condition?: string): Promise<string | null>;
+
+	/** Pauses on calls of any function whose name matches the regex. Resolves its remover, or null when unsupported. */
+	breakOnFunctionName(pattern: string, condition?: string): Promise<(() => Promise<void>) | null>;
+
 	/** 1-based lines in, 1-based lines and columns out */
 	getBreakableLocations(
 		scriptId: string,

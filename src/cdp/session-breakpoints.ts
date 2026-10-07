@@ -7,11 +7,6 @@ import type {
 import type { BreakpointListItem } from "../session/session.ts";
 import type { BreakpointTarget } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
-import {
-	isFunctionBreakpoint,
-	reinstallFunctionBreakpoint,
-	removeFunctionBreakpoint,
-} from "./session-function-breakpoints.ts";
 
 // ── Condition builders ────────────────────────────────────────────
 
@@ -217,8 +212,10 @@ export function listBreakpoints(
 			item.originalUrl = meta.originalUrl;
 			item.originalLine = meta.originalLine;
 		}
-		if ("fn" in meta && meta.fn !== undefined) {
+		if (meta.fn !== undefined) {
 			item.fn = meta.fn;
+			const note = functionNote(session, entry);
+			if (note) item.note = note;
 		}
 
 		return item;
@@ -339,9 +336,16 @@ async function reEnableBreakpoint(
 		return;
 	}
 
-	if (entry.type === "BP" && entry.meta.fn !== undefined) {
-		const id = await reinstallFunctionBreakpoint(session, entry.meta.fn, entry.meta.condition);
-		session.refs.addBreakpoint(id, entry.meta);
+	if (entry.meta.fn !== undefined) {
+		const id = await session.functionBreakpoints.rebind({ ...entry.meta, fn: entry.meta.fn });
+		if (entry.type === "BP") {
+			if (id) session.refs.addBreakpoint(id, entry.meta);
+			else session.refs.addPendingBreakpoint(entry.meta);
+		} else if (id) {
+			session.refs.addLogpoint(id, entry.meta);
+		} else {
+			session.refs.addPendingLogpoint(entry.meta);
+		}
 		session.disabledBreakpoints.delete(ref);
 		return;
 	}
@@ -541,9 +545,20 @@ function breakpointTarget(
 /** Detaches a bound breakpoint from the target, whichever kind it is. */
 async function unbind(session: CdpSession, entry: BreakpointEntry | LogpointEntry): Promise<void> {
 	if (entry.pending) return;
-	if (isFunctionBreakpoint(entry)) {
-		await removeFunctionBreakpoint(session, entry.remoteId);
+	if (entry.meta.fn !== undefined) {
+		await session.functionBreakpoints.remove(entry.remoteId);
 		return;
 	}
 	await session.cdp?.send("Debugger.removeBreakpoint", { breakpointId: entry.remoteId });
+}
+
+/** What the user should know about how a function breakpoint is held */
+function functionNote(
+	session: CdpSession,
+	entry: BreakpointEntry | LogpointEntry,
+): string | undefined {
+	if (entry.meta.fn === undefined) return undefined;
+	if (entry.meta.fnFound) return "left in the process by an earlier session";
+	if (entry.pending) return "pending: not defined yet";
+	return session.functionBreakpoints.describe(entry.remoteId);
 }

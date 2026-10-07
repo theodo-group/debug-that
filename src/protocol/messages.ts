@@ -76,6 +76,9 @@ const BreakFnRequest = z.object({
 	args: z.object({
 		name: z.string(),
 		condition: z.optional(z.string()),
+		hitCount: z.optional(z.number()),
+		log: z.optional(z.string()),
+		byName: z.optional(z.boolean()),
 	}),
 });
 

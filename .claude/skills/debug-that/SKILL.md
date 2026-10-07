@@ -139,9 +139,11 @@ dbg state
 # holds the process until dbg attaches, then pauses on its first statement.
 BUN_INSPECT='ws://localhost:6499/app?break=1' ./my-bun-binary
 dbg attach ws://localhost:6499/app        # runtime auto-detected
-# Function breakpoint on anything reachable from the global scope (JS/TS)
+# Function breakpoint (JS/TS): a path from the global scope, an @ref, or --name <regex> (Bun)
 dbg break-fn fetch --condition 'String(args[0]).includes("/v1/messages")'
-dbg continue                              # pauses inside the wrapper; `dbg stack` @f1 is the caller
+dbg break-fn @v12                          # a function object you found in vars/props
+dbg logpoint fn:service.ping '"ping", args[0]'   # trace calls without pausing; dbg console
+dbg continue                              # pauses on the call; `dbg stack` @f1 is the caller
 ```
 
 ### Trace execution flow with logpoints (no pause)
@@ -193,7 +195,7 @@ See [references/commands.md](references/commands.md) for full command details an
 - `dbg eval` supports `await` -- useful for async inspection (JS/TS)
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)
-- `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes, by reachable path (`obj.method`) on JS where `args` and `this` are usable in `--condition`
+- `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes; on JS by path (`obj.method`), `@ref`, or `--name <regex>` (Bun). Conditions and `--log` see `args` and `this`. A path not defined yet stays pending and binds when it appears. Native functions (e.g. `fetch` on Bun) are wrapped in the process; `break-ls` says so, and `dbg stop` removes the wrapper
 - `dbg eval` works on a running target too (global scope); only `--frame` needs a pause
 - Python: `dbg launch --brk python3 app.py`, or attach to a `debugpy --listen <port>` server with `dbg attach <port> --runtime python`
 - Execution commands (`continue`, `step`, `pause`, `run-to`) auto-return status

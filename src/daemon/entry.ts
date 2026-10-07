@@ -163,9 +163,19 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 					suggestion: "Use 'break <file>:<line>'",
 				};
 			}
-			const { name, condition } = req.args;
-			const bpResult = await session.setFunctionBreakpoint(name, { condition });
-			return { ok: true, data: bpResult };
+			const { name, ...options } = req.args;
+			try {
+				return { ok: true, data: await session.setFunctionBreakpoint(name, options) };
+			} catch (err) {
+				const [error, suggestion] = (err instanceof Error ? err.message : String(err)).split(
+					" -> ",
+				);
+				return {
+					ok: false,
+					error: error ?? "",
+					suggestion: suggestion ? `-> ${suggestion}` : undefined,
+				};
+			}
 		}
 
 		case "break-rm": {

@@ -13,14 +13,23 @@ export interface BreakpointMeta {
 	generatedUrl?: string;
 	generatedLine?: number;
 	urlRegex?: string;
-	/** Function breakpoint: the wrapped path. url/line are placeholders. */
+	/** Function breakpoint label. url and line are placeholders for these. */
 	fn?: string;
+	/** Path the function was found at; absent when set on an object ref */
+	fnPath?: string;
+	fnByName?: boolean;
+	/** Left in the process by an earlier session and adopted on attach */
+	fnFound?: boolean;
 }
 
 export interface LogpointMeta {
 	url: string;
 	line: number;
 	template: string;
+	fn?: string;
+	fnPath?: string;
+	fnByName?: boolean;
+	fnFound?: boolean;
 	condition?: string;
 	maxEmissions?: number;
 	column?: number;

@@ -468,9 +468,14 @@ export class DapSession extends BaseSession {
 	 */
 	async setFunctionBreakpoint(
 		name: string,
-		options?: { condition?: string; hitCount?: number },
+		options?: { condition?: string; hitCount?: number; log?: string; byName?: boolean },
 	): Promise<{ ref: string }> {
 		this.requireConnected();
+		if (options?.log !== undefined) {
+			throw new Error(
+				"Function logpoints are only supported on JavaScript targets -> Try: break-fn <name> then continue, or a file logpoint",
+			);
+		}
 
 		const entry: DapFunctionBreakpoint = {
 			kind: "function",

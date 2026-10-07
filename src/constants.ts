@@ -20,6 +20,14 @@ export const SPAWN_POLL_INTERVAL_MS = 50;
 export const BRK_PAUSE_TIMEOUT_MS = 2_000;
 /** Grace period for older Node.js to emit the --inspect-brk Debugger.paused event on its own */
 export const BRK_PAUSED_EVENT_GRACE_MS = 100;
+/** Delay before retrying pending function breakpoints after a script loads (debounce) */
+export const FUNCTION_BREAKPOINT_RETRY_MS = 100;
+/** Poll interval for function breakpoints whose path is not defined yet */
+export const PENDING_FUNCTION_POLL_MS = 500;
+/** Lines after a function's declaration searched for the first statement of its body (Bun) */
+export const FUNCTION_BODY_SEARCH_LINES = 200;
+/** Bound functions followed to their target before giving up (Node) */
+export const MAX_BOUND_FUNCTION_DEPTH = 8;
 /** On attach, how long to wait for the runtime to replay already-parsed scripts before deciding it is still waiting for the inspector */
 export const ATTACH_SCRIPTS_SETTLE_MS = 100;
 

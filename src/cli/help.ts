@@ -187,7 +187,9 @@ BREAKPOINTS:
   dbg breakable file:start-end  Valid breakpoint locations
   dbg logpoint file:line "template \${var}" [--condition expr]
   dbg catch [all|uncaught|caught|none]
-  dbg break-fn <name|obj.path.fn> [--condition expr]  Pause when called (JS: args/this usable in condition)
+  dbg break-fn <path|@ref|name> [--condition expr] [--log args] [--name]  Pause when a function is called
+  dbg break fn:<path> / dbg logpoint fn:<path> <args>   Same, in location form (JS)
+    (JS: conditions and --log read the call as args/this; at the pause use the function's own parameters)
 
 INSPECTION:
   dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N] [--reflow]

@@ -33,6 +33,12 @@ defineCommand({
 					if (bp.hitCount) {
 						line += ` ${cc(`[hit-count: ${bp.hitCount}]`, "gray")}`;
 					}
+					if (bp.disabled) {
+						line += ` ${cc("(disabled)", "gray")}`;
+					}
+					if (bp.note) {
+						line += ` ${cc(`(${bp.note})`, "gray")}`;
+					}
 					console.log(line);
 				}
 			}
