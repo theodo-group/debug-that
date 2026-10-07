@@ -38,14 +38,17 @@ export async function reinstallFunctionBreakpoint(
 }
 
 export async function removeFunctionBreakpoint(session: CdpSession, id: string): Promise<void> {
-	await session.eval(`(() => {
+	await session.eval(
+		`(() => {
 	const registry = ${REGISTRY};
 	const entry = registry?.get(${JSON.stringify(id)});
 	if (!entry) return false;
 	entry.holder[entry.key] = entry.original;
 	registry.delete(${JSON.stringify(id)});
 	return true;
-})()`);
+})()`,
+		{ global: true },
+	);
 }
 
 /** Wrappers live in the old process; after a restart they must be installed again. */
@@ -80,7 +83,8 @@ async function installWrapper(
 	id = `fn:${++session.functionBreakpointSeq}`,
 ): Promise<string> {
 	const { holder, key } = splitPath(path);
-	await session.eval(`(() => {
+	await session.eval(
+		`(() => {
 	const holder = ${holder};
 	const key = ${JSON.stringify(key)};
 	const original = holder[key];
@@ -102,7 +106,9 @@ async function installWrapper(
 	holder[key] = wrapped;
 	return ${JSON.stringify(id)};
 })()
-//# sourceURL=${FUNCTION_BREAKPOINT_URL}${path}`);
+//# sourceURL=${FUNCTION_BREAKPOINT_URL}${path}`,
+		{ global: true },
+	);
 	return id;
 }
 

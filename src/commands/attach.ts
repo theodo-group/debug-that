@@ -12,7 +12,10 @@ defineCommand({
 	positional: { kind: "required", name: "target", description: "PID, WebSocket URL, or port" },
 	flags: z.object({
 		runtime: z.string().optional().meta({ description: "Runtime override" }),
-		timeout: z.coerce.number().optional().meta({ description: "Daemon startup timeout" }),
+		timeout: z.coerce.number().optional().meta({
+			description:
+				"Seconds without a command before the daemon exits (0 = never; never while a target is live)",
+		}),
 	}),
 	handler: async (ctx) => {
 		const session = ctx.global.session;

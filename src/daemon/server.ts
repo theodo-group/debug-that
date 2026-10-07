@@ -22,15 +22,25 @@ export class DaemonServer {
 	private session: string;
 	private idleTimeout: number;
 	private idleTimer: ReturnType<typeof setTimeout> | null = null;
+	private keepAlive: (() => boolean) | undefined;
 	private handler: RequestHandler | null = null;
 	private listener: ReturnType<typeof Bun.listen> | null = null;
 	private socketPath: string;
 	private lockPath: string;
 	private logger: Logger<"daemon">;
 
-	constructor(session: string, options: { idleTimeout: number; logger: Logger<"daemon"> }) {
+	constructor(
+		session: string,
+		options: {
+			idleTimeout: number;
+			logger: Logger<"daemon">;
+			/** While this returns true the idle timer re-arms instead of stopping the daemon */
+			keepAlive?: () => boolean;
+		},
+	) {
 		this.session = session;
 		this.idleTimeout = options.idleTimeout;
+		this.keepAlive = options.keepAlive;
 		this.socketPath = getSocketPath(session);
 		this.lockPath = getLockPath(session);
 		this.logger = options.logger;
@@ -192,6 +202,10 @@ export class DaemonServer {
 		}
 		if (this.idleTimeout > 0) {
 			this.idleTimer = setTimeout(() => {
+				if (this.keepAlive?.()) {
+					this.resetIdleTimer();
+					return;
+				}
 				this.logger.info("daemon.idle", { timeoutSec: this.idleTimeout });
 				this.stop();
 			}, this.idleTimeout * 1000);

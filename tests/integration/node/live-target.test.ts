@@ -28,6 +28,9 @@ describe("Running target (Node.js)", () => {
 			expect(session.getStack({})[0]?.functionName).toBe("ping");
 			expect((await session.eval("args[0]")).value).toBe('"tick"');
 			expect((await session.eval("typeof this.calls")).value).toBe('"number"');
+			// Installed in the global scope: nothing from the installer leaks into the pause.
+			const names = (await session.getVars({ allScopes: true })).map((v) => v.name);
+			expect(names).not.toContain("registry");
 			expect(session.listBreakpoints().find((b) => b.ref === ref)?.fn).toBe("service.ping");
 
 			await session.removeBreakpoint(ref);

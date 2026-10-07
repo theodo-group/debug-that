@@ -37,10 +37,16 @@ const rootLogger = createLogger(getLogPath(session));
 const logger = rootLogger.child("daemon");
 logger.info("daemon.start", { pid: process.pid, session, timeout });
 
-const server = new DaemonServer(session, { idleTimeout: timeout, logger: logger });
-
 // Session is created lazily on launch/attach. Null until then.
 let activeSession: Session | null = null;
+
+// The idle timeout only applies while nothing is being debugged: a paused or
+// running target must not lose its debugger because the user took a while.
+const server = new DaemonServer(session, {
+	idleTimeout: timeout,
+	logger,
+	keepAlive: () => activeSession !== null && activeSession.getStatus().state !== "idle",
+});
 
 // Config accumulated before launch (e.g. remaps set before DAP launch).
 // Flushed into the session on launch/attach, then cleared.

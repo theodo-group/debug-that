@@ -466,6 +466,7 @@ export class CdpSession extends BaseSession {
 			awaitPromise?: boolean;
 			throwOnSideEffect?: boolean;
 			timeout?: number;
+			global?: boolean;
 		} = {},
 	): Promise<{
 		ref: string;

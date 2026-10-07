@@ -189,6 +189,23 @@ describe("idle timeout", () => {
 		expect(existsSync(socketPath)).toBe(false);
 	});
 
+	test("stays alive while keepAlive reports a live target", async () => {
+		const session = testSession("keep");
+		let live = true;
+		const server = new DaemonServer(session, { idleTimeout: 0.05, logger, keepAlive: () => live });
+
+		server.onRequest(async () => ({ ok: true, data: "pong" }));
+		await server.start();
+		const socketPath = getSocketPath(session);
+
+		await Bun.sleep(130);
+		expect(existsSync(socketPath)).toBe(true);
+
+		live = false;
+		await Bun.sleep(130);
+		expect(existsSync(socketPath)).toBe(false);
+	});
+
 	test("resets idle timer on request", async () => {
 		const session = testSession("irst");
 		const server = new DaemonServer(session, { idleTimeout: 0.1, logger });

@@ -14,6 +14,8 @@ export async function evalExpression(
 		awaitPromise?: boolean;
 		throwOnSideEffect?: boolean;
 		timeout?: number;
+		/** Evaluate in the global scope even while paused */
+		global?: boolean;
 	} = {},
 ): Promise<{
 	ref: string;
@@ -33,7 +35,7 @@ export async function evalExpression(
 	}
 
 	// A running target evaluates in its global scope; only frames need a pause.
-	if (session.sessionState !== "paused") {
+	if (options.global || session.sessionState !== "paused") {
 		if (options.frame) {
 			throw new Error("Cannot eval in a frame: process is not paused");
 		}

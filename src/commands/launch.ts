@@ -14,7 +14,10 @@ defineCommand({
 	flags: z.object({
 		brk: z.boolean().optional().meta({ description: "Pause at first line" }),
 		port: z.coerce.number().optional().meta({ description: "Inspector port" }),
-		timeout: z.coerce.number().optional().meta({ description: "Daemon startup timeout" }),
+		timeout: z.coerce.number().optional().meta({
+			description:
+				"Seconds without a command before the daemon exits (0 = never; never while a target is live)",
+		}),
 		runtime: z.string().optional().meta({ description: "Runtime override" }),
 	}),
 	handler: async (ctx) => {
