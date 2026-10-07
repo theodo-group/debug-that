@@ -18,7 +18,7 @@ import type {
 	StateSnapshot,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
-import { createAdapter } from "./adapters/index.ts";
+import { createAdapter, detectAdapterOverWire } from "./adapters/index.ts";
 import { CdpClient, TimeoutError } from "./client.ts";
 import type { CdpDialect } from "./dialect.ts";
 import {
@@ -135,14 +135,19 @@ export class CdpSession extends BaseSession {
 		this.sourceMapResolver.setDisabled(true);
 	}
 
-	constructor(session: string, options?: { logger?: Logger<"daemon"> }) {
+	/** Runtime forced via --runtime; skips auto-detection on attach */
+	private readonly explicitRuntime: "node" | "bun" | undefined;
+
+	constructor(session: string, options?: { logger?: Logger<"daemon">; runtime?: "node" | "bun" }) {
 		super(session);
 		ensureSocketDir();
 		const rootLogger = options?.logger ?? createLogger(getLogPath(session));
 		this.log = rootLogger.child("session");
 		this.cdpLog = rootLogger.child("cdp");
-		// Default to NodeAdapter; overridden in launch() when command is known
-		this.adapter = createAdapter(["node"]);
+		this.explicitRuntime = options?.runtime;
+		// Default to NodeAdapter; overridden in launch() when the command is known
+		// and in attach() by probing the inspector when no runtime was forced.
+		this.adapter = createAdapter([options?.runtime ?? "node"]);
 	}
 
 	/** Detected runtime name — delegates to the adapter */
@@ -199,7 +204,7 @@ export class CdpSession extends BaseSession {
 		this.log.info("cdp.connected", { url: wsUrl });
 
 		// Connect CDP
-		await this.connectCdp(wsUrl);
+		const cdp = await this.connectCdp(wsUrl);
 
 		// If brk mode, ensure the session enters "paused" state.
 		// On older Node.js versions, Debugger.paused fires automatically after
@@ -210,6 +215,7 @@ export class CdpSession extends BaseSession {
 		if (brk) {
 			await this.waitForBrkPause();
 		}
+		await this.adapter.postConnect(cdp);
 
 		const result: LaunchResult = {
 			pid: proc.pid,
@@ -261,7 +267,12 @@ export class CdpSession extends BaseSession {
 		}
 
 		this.wsUrl = wsUrl;
-		await this.connectCdp(wsUrl);
+		const cdp = await this.connectCdp(wsUrl, { detectRuntime: this.explicitRuntime === undefined });
+
+		// Release runtimes that hold execution until the inspector handshake
+		// (Bun with BUN_INSPECT=...?break=1) and land them in a paused state.
+		await this.adapter.afterAttach(this);
+		await this.adapter.postConnect(cdp);
 
 		return { wsUrl };
 	}
@@ -815,7 +826,10 @@ export class CdpSession extends BaseSession {
 		return this.adapter.waitForBrkPause(this);
 	}
 
-	private async connectCdp(wsUrl: string): Promise<void> {
+	private async connectCdp(
+		wsUrl: string,
+		options?: { detectRuntime?: boolean },
+	): Promise<CdpClient> {
 		this.log.debug("cdp.connecting", { url: wsUrl });
 		const cdp = await CdpClient.connect(wsUrl, this.cdpLog);
 		this.cdp = cdp;
@@ -823,6 +837,12 @@ export class CdpSession extends BaseSession {
 
 		// Set up event handlers before enabling domains so we don't miss any events
 		this.setupCdpEventHandlers(cdp);
+
+		// On attach the command line is unknown: ask the inspector which runtime it is
+		if (options?.detectRuntime) {
+			this.adapter = await detectAdapterOverWire(cdp);
+			this.log.info("cdp.runtime-detected", { runtime: this.adapter.name });
+		}
 
 		// Runtime-specific pre-enable hook (e.g. Bun needs Inspector.enable first)
 		await this.adapter.preEnable(cdp);
@@ -839,6 +859,8 @@ export class CdpSession extends BaseSession {
 			this.state = "running";
 			this._notifyStateWaiters();
 		}
+
+		return cdp;
 	}
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {

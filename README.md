@@ -90,6 +90,11 @@ dbg launch --brk --runtime lldb ./my_program
 # Attach to a running process (any runtime with --inspect)
 dbg attach 9229
 
+# Attach to a Bun process (or a Bun-compiled binary) started with BUN_INSPECT.
+# `?break=1` holds the process until dbg attaches, then pauses on its first statement.
+BUN_INSPECT='ws://localhost:6499/app?break=1' ./my-bun-binary
+dbg attach ws://localhost:6499/app
+
 # Debug loop
 dbg break src/handler.ts:42
 dbg continue

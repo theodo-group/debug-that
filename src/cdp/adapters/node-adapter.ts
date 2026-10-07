@@ -12,6 +12,14 @@ export class NodeAdapter implements CdpDialect {
 		// Node.js doesn't need anything before enableDomains()
 	}
 
+	async postConnect(_cdp: CdpClient): Promise<void> {
+		// V8 pauses on `debugger` statements by default; nothing to configure.
+	}
+
+	async afterAttach(_session: CdpSession): Promise<void> {
+		// A Node.js process reachable via --inspect is already running; nothing to release.
+	}
+
 	async waitForBrkPause(session: CdpSession): Promise<void> {
 		// Give the Debugger.paused event a moment to arrive (older Node.js)
 		if (!session.isPaused()) {

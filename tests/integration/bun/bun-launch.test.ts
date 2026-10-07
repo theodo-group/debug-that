@@ -14,6 +14,16 @@ describe("Bun debugging", () => {
 			expect(session.runtime).toBe("bun");
 		}));
 
+	test("debugger statement pauses (JSC needs explicit opt-in)", () =>
+		withSession("bun-test-debugger-stmt", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });
+			// Same technique as hooking a function from the CLI: inject code containing `debugger`.
+			await session.eval("setTimeout(() => { debugger; }, 20)");
+			await session.continue();
+			await session.waitForState("paused");
+			expect(session.pauseInfo?.reason).toBe("DebuggerStatement");
+		}));
+
 	test("detects bun runtime", () =>
 		withSession("bun-test-detect", async (session) => {
 			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });

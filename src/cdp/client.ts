@@ -172,9 +172,18 @@ export class CdpClient {
 	/** Set of successfully enabled CDP domain names (e.g. "Debugger", "Runtime") */
 	enabledDomains = new Set<string>();
 
+	private async enableRequired(domain: "Debugger" | "Runtime"): Promise<void> {
+		try {
+			await this.send(`${domain}.enable`);
+		} catch (err) {
+			if (!(err instanceof Error) || !err.message.includes("already enabled")) throw err;
+		}
+	}
+
 	async enableDomains(): Promise<void> {
-		// Required domains — these must succeed
-		await Promise.all([this.send("Debugger.enable"), this.send("Runtime.enable")]);
+		// Required domains — these must succeed. A target that kept the domain
+		// on from a previous inspector connection (JSC does this) is fine too.
+		await Promise.all([this.enableRequired("Debugger"), this.enableRequired("Runtime")]);
 		this.enabledDomains.add("Debugger");
 		this.enabledDomains.add("Runtime");
 

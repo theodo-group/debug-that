@@ -1,4 +1,5 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
+import { ATTACH_SCRIPTS_SETTLE_MS, BRK_PAUSE_TIMEOUT_MS } from "../../constants.ts";
 import { escapeRegex } from "../../util/escape-regex.ts";
 import type { CdpClient } from "../client.ts";
 import type { CdpDialect } from "../dialect.ts";
@@ -56,6 +57,46 @@ export class BunAdapter implements CdpDialect {
 				}
 			}
 		}
+	}
+
+	/**
+	 * JSC ignores `debugger` statements until the inspector opts in, unlike V8
+	 * where they pause by default. Without this, hooks such as
+	 * `dbg eval "globalThis.fetch = (...a) => { debugger; ... }"` never fire.
+	 * Enabled only after the entry pause is established, because Bun's own
+	 * --inspect-brk fires through this mechanism at the module's first
+	 * instruction, ahead of our breakpoint on the first real statement.
+	 */
+	async postConnect(_cdp: CdpClient): Promise<void> {
+		await this.jsc?.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+	}
+
+	/**
+	 * Release a Bun process started with `BUN_INSPECT=ws://...?break=1` (or
+	 * `?wait=1`) and pause it on the first statement of the entry script.
+	 *
+	 * Such a process executes nothing until the inspector sends
+	 * Inspector.initialized. We detect that state by the absence of parsed
+	 * scripts: a process that is already running replays its whole script list
+	 * right after Debugger.enable, a waiting one has parsed nothing yet.
+	 * Scheduling Debugger.pause before Inspector.initialized makes JSC stop on
+	 * the very first statement, before any module code has run. A normally
+	 * running process is left untouched.
+	 */
+	async afterAttach(session: CdpSession): Promise<void> {
+		if (!this.jsc || session.isPaused()) return;
+		if (session.scripts.size === 0) await Bun.sleep(ATTACH_SCRIPTS_SETTLE_MS);
+		if (session.scripts.size > 0) return;
+
+		await this.jsc.send("Debugger.setBreakpointsActive", { active: true });
+		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
+		const waiter = session.waitUntilStopped({
+			timeoutMs: BRK_PAUSE_TIMEOUT_MS,
+			throwOnTimeout: false,
+		});
+		await this.jsc.send("Debugger.pause");
+		await this.jsc.send("Inspector.initialized");
+		await waiter;
 	}
 
 	async setBreakpointByLocation(

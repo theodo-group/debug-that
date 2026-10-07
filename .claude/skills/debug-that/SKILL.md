@@ -94,6 +94,14 @@ node --inspect app.js
 # Then attach
 dbg attach 9229
 dbg state
+
+# Bun process or Bun-compiled binary: BUN_INSPECT opens the inspector, `?break=1`
+# holds the process until dbg attaches, then pauses on its first statement.
+BUN_INSPECT='ws://localhost:6499/app?break=1' ./my-bun-binary
+dbg attach ws://localhost:6499/app        # runtime auto-detected
+# Function breakpoint on a global (JS/TS): wrap it with a `debugger` statement
+dbg eval 'const o=globalThis.fetch; globalThis.fetch=function(...a){debugger; return o.apply(this,a)}'
+dbg continue                              # pauses inside the hook; `dbg stack` shows the caller
 ```
 
 ### Trace execution flow with logpoints (no pause)
