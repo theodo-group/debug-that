@@ -21,7 +21,7 @@ async function withDapSession(
 async function launchAtMain(session: DapSession): Promise<void> {
 	await session.launch([HELLO_BINARY], { brk: true });
 	await session.setBreakpoint(HELLO_SOURCE, 4); // int x = 42;
-	await session.continue({ waitForStop: true, timeoutMs: 500 });
+	await session.continue({ waitForStop: true, throwOnTimeout: true });
 }
 
 describe.skipIf(!HAS_LLDB)("LLDB run-to", () => {

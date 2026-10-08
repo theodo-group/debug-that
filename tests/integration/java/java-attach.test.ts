@@ -1,28 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Subprocess } from "bun";
 import { DapSession } from "../../../src/dap/session.ts";
-import { HAS_JAVA, waitForPort } from "./helpers.ts";
+import { HAS_JAVA } from "./helpers.ts";
 
 const FIXTURES_DIR = resolve("tests/fixtures/java");
 const HELLO_JAVA = resolve(FIXTURES_DIR, "Hello.java");
 
+/**
+ * Hello, held by JDWP on a port the JVM picks and announces on stdout as
+ * "Listening for transport dt_socket at address: <port>".
+ */
+async function spawnHeldByJdwp(): Promise<{ proc: Subprocess; port: number }> {
+	const proc = Bun.spawn(
+		["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=localhost:0", "Hello"],
+		{ cwd: FIXTURES_DIR, stdout: "pipe", stderr: "pipe" },
+	);
+	const decoder = new TextDecoder();
+	let seen = "";
+	for await (const chunk of proc.stdout) {
+		seen += decoder.decode(chunk, { stream: true });
+		const port = /at address: (\d+)/.exec(seen)?.[1];
+		if (port) return { proc, port: Number(port) };
+	}
+	throw new Error(`The JVM ended before listening: ${seen}`);
+}
+
 describe.skipIf(!HAS_JAVA)("Java debugging (attach)", () => {
 	test("attach to JVM via JDWP port connects", async () => {
-		if (!existsSync(resolve(FIXTURES_DIR, "Hello.class"))) {
-			Bun.spawnSync(["javac", "-g", HELLO_JAVA], { cwd: FIXTURES_DIR });
-		}
-
-		const port = 15005 + Math.floor(Math.random() * 1000);
-		const jvmProcess = Bun.spawn(
-			["java", `-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=${port}`, "Hello"],
-			{ cwd: FIXTURES_DIR, stdout: "pipe", stderr: "pipe" },
-		);
-
+		await Bun.$`javac -g ${HELLO_JAVA}`.cwd(FIXTURES_DIR);
+		const { proc, port } = await spawnHeldByJdwp();
 		try {
-			const ready = await waitForPort(port);
-			expect(ready).toBe(true);
-
 			const session = new DapSession("java-attach-test", "java");
 			try {
 				const result = await session.attach(`localhost:${port}`);
@@ -31,31 +39,20 @@ describe.skipIf(!HAS_JAVA)("Java debugging (attach)", () => {
 				await session.stop();
 			}
 		} finally {
-			jvmProcess.kill();
+			proc.kill();
 		}
 	});
 
 	test("disconnect after attach exits cleanly without error", async () => {
-		if (!existsSync(resolve(FIXTURES_DIR, "Hello.class"))) {
-			Bun.spawnSync(["javac", "-g", HELLO_JAVA], { cwd: FIXTURES_DIR });
-		}
-
-		const port = 16005 + Math.floor(Math.random() * 1000);
-		const jvmProcess = Bun.spawn(
-			["java", `-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=${port}`, "Hello"],
-			{ cwd: FIXTURES_DIR, stdout: "pipe", stderr: "pipe" },
-		);
-
+		await Bun.$`javac -g ${HELLO_JAVA}`.cwd(FIXTURES_DIR);
+		const { proc, port } = await spawnHeldByJdwp();
 		try {
-			const ready = await waitForPort(port);
-			expect(ready).toBe(true);
-
 			const session = new DapSession("java-attach-disconnect", "java");
 			await session.attach(`localhost:${port}`);
 			await session.stop();
 			expect(session.getStatus().state).toBe("idle");
 		} finally {
-			jvmProcess.kill();
+			proc.kill();
 		}
 	});
 });

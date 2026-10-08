@@ -5,7 +5,8 @@ import {
 	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
 	WAIT_PAUSE_TIMEOUT_MS,
 } from "../constants.ts";
-import type { Logger } from "../logger/index.ts";
+import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
+import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type {
 	PendingConfig,
@@ -108,7 +109,7 @@ export class DapSession extends BaseSession {
 
 	readonly features: SessionFeatures;
 
-	private logger: Logger<"dap"> | undefined;
+	private readonly logger: Logger<"dap">;
 
 	constructor(session: string, runtime: string, options?: { logger?: Logger<"daemon"> }) {
 		super(session);
@@ -117,7 +118,9 @@ export class DapSession extends BaseSession {
 		this._runtime = resolveRuntime(runtime);
 		this._runtimeConfig = getRuntimeConfig(this._runtime);
 		this.features = { ...DEFAULT_DAP_FEATURES, ...this._runtimeConfig.features };
-		this.logger = options?.logger?.child("dap");
+		ensureSocketDir();
+		const rootLogger = options?.logger ?? createLogger(getLogPath(session));
+		this.logger = rootLogger.child("dap");
 	}
 
 	override applyPendingConfig(config: PendingConfig): void {
@@ -313,17 +316,8 @@ export class DapSession extends BaseSession {
 	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
-
-		this.state = "running";
-		this.pauseInfo = null;
-		this._stackFrames = [];
-		this.refs.clearVolatile();
-
-		const waiter =
-			options?.waitForStop === true ? this.waitUntilStopped(options) : Promise.resolve();
-		await this.client.send("continue", { threadId: this._threadId });
-		await waiter;
-		if (this.isPaused()) await this.fetchStackTrace();
+		const thread = { threadId: this._threadId };
+		await this.resume("continue", thread, options.waitForStop === true ? options : undefined);
 	}
 
 	async step(
@@ -336,17 +330,9 @@ export class DapSession extends BaseSession {
 	): Promise<void> {
 		this.requireConnected();
 		this.requirePaused();
-
-		this.state = "running";
-		this.pauseInfo = null;
-		this.refs.clearVolatile();
-
-		const waiter =
-			options?.waitForStop !== false ? this.waitUntilStopped(options) : Promise.resolve();
 		const command = mode === "into" ? "stepIn" : mode === "out" ? "stepOut" : "next";
-		await this.client.send(command, { threadId: this._threadId });
-		await waiter;
-		if (this.isPaused()) await this.fetchStackTrace();
+		const thread = { threadId: this._threadId };
+		await this.resume(command, thread, options.waitForStop === false ? undefined : options);
 	}
 
 	async pause(): Promise<void> {
@@ -357,6 +343,27 @@ export class DapSession extends BaseSession {
 
 		const waiter = this.waitUntilStopped();
 		await this.client.send("pause", { threadId: this._threadId });
+		await waiter;
+		if (this.isPaused()) await this.fetchStackTrace();
+	}
+
+	/**
+	 * Sends a request that sets the current thread moving, and waits for its
+	 * next stop when asked to. The session counts as running from the moment
+	 * the request goes out, so the wait is for a stop that has not happened yet.
+	 */
+	private async resume(
+		command: string,
+		args: Record<string, unknown>,
+		waitFor?: WaitForStopOptions,
+	): Promise<void> {
+		this.state = "running";
+		this.pauseInfo = null;
+		this._stackFrames = [];
+		this.refs.clearVolatile();
+
+		const waiter = waitFor ? this.waitUntilStopped(waitFor) : Promise.resolve();
+		await this.client.send(command, args);
 		await waiter;
 		if (this.isPaused()) await this.fetchStackTrace();
 	}
@@ -934,11 +941,8 @@ export class DapSession extends BaseSession {
 		await this.ensureStack();
 
 		const frameId = this.resolveFrameId(frameRef);
-
-		const waiter = this.waitUntilStopped({ throwOnTimeout: true });
-		await this.client.send("restartFrame", { frameId });
-		await waiter;
-
+		// The adapter pops the frame and steps into it again, stopping on its first line
+		await this.resume("restartFrame", { frameId }, { throwOnTimeout: true });
 		return { status: "restarted" };
 	}
 

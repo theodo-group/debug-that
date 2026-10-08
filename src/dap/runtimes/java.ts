@@ -9,8 +9,15 @@ function javaAdapterCommand(): string[] {
 		throw new Error("Java debug adapter not installed. Run `dbg install java` first.");
 	}
 	const cp = getJavaAdapterClasspath();
-	return ["java", "-cp", cp, "com.debugthat.adapter.Main"];
+	return ["java", ...ADAPTER_JVM_FLAGS, "-cp", cp, "com.debugthat.adapter.Main"];
 }
+
+/**
+ * The adapter relays requests and compiles the odd expression, so it never
+ * gets hot: stopping the JIT at C1 halves its CPU use, nearly all of which
+ * the default tier-up to C2 spends on compiler threads at start.
+ */
+const ADAPTER_JVM_FLAGS = ["-XX:TieredStopAtLevel=1"];
 
 function buildJavaLaunchArgs({ program, args, cwd }: UserLaunchInput): {
 	requestArgs: Record<string, unknown>;

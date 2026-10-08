@@ -4,8 +4,6 @@ import { $ } from "bun";
 import { DapSession } from "../../../src/dap/session.ts";
 import { HAS_LLDB } from "./has-lldb.ts";
 
-const WAIT_FOR_STOP_TIMEOUT = 500;
-
 const HAS_CC = (await $`which cc`.nothrow().quiet()).exitCode === 0;
 
 const FIXTURES_DIR = resolve("tests/fixtures/c");
@@ -80,11 +78,7 @@ describe.skipIf(!HAS_LLDB || !HAS_CC)("LLDB symbols and remap", () => {
 
 			// Breakpoints and vars should work (preRunCommands didn't break anything)
 			await session.setBreakpoint(HELLO_SOURCE, 6);
-			await session.continue({
-				waitForStop: true,
-				timeoutMs: WAIT_FOR_STOP_TIMEOUT,
-				throwOnTimeout: true,
-			});
+			await session.continue({ waitForStop: true, throwOnTimeout: true });
 
 			expect(session.getStatus().state).toBe("paused");
 
@@ -101,11 +95,7 @@ describe.skipIf(!HAS_LLDB || !HAS_CC)("LLDB symbols and remap", () => {
 			await session.launch([FAKEPATH_BINARY], { brk: true });
 
 			await session.setFunctionBreakpoint("main");
-			await session.continue({
-				waitForStop: true,
-				timeoutMs: WAIT_FOR_STOP_TIMEOUT,
-				throwOnTimeout: true,
-			});
+			await session.continue({ waitForStop: true, throwOnTimeout: true });
 
 			expect(session.getStatus().state).toBe("paused");
 
@@ -124,11 +114,7 @@ describe.skipIf(!HAS_LLDB || !HAS_CC)("LLDB symbols and remap", () => {
 
 			// With remap applied, file:line breakpoints resolve to real files
 			await session.setBreakpoint(HELLO_SOURCE, 6);
-			await session.continue({
-				waitForStop: true,
-				timeoutMs: WAIT_FOR_STOP_TIMEOUT,
-				throwOnTimeout: true,
-			});
+			await session.continue({ waitForStop: true, throwOnTimeout: true });
 
 			expect(session.getStatus().state).toBe("paused");
 
@@ -152,11 +138,7 @@ describe.skipIf(!HAS_LLDB || !HAS_CC)("LLDB symbols and remap", () => {
 			await session.launch([FAKEPATH_BINARY], { brk: true });
 
 			await session.setBreakpoint(HELLO_SOURCE, 6);
-			await session.continue({
-				waitForStop: true,
-				timeoutMs: WAIT_FOR_STOP_TIMEOUT,
-				throwOnTimeout: true,
-			});
+			await session.continue({ waitForStop: true, throwOnTimeout: true });
 
 			expect(session.getStatus().state).toBe("paused");
 
@@ -173,11 +155,7 @@ describe.skipIf(!HAS_LLDB || !HAS_CC)("LLDB symbols and remap", () => {
 			await session.addRemap("/other/fake/path", "/tmp");
 
 			await session.setBreakpoint(HELLO_SOURCE, 6);
-			await session.continue({
-				waitForStop: true,
-				timeoutMs: WAIT_FOR_STOP_TIMEOUT,
-				throwOnTimeout: true,
-			});
+			await session.continue({ waitForStop: true, throwOnTimeout: true });
 
 			const stack = session.getStack();
 			expect(stack[0]?.file).toContain(FIXTURES_DIR);

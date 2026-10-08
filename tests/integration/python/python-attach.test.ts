@@ -45,42 +45,36 @@ async function findFreePort(): Promise<number> {
 }
 
 /**
- * Wait for debugpy to start listening. We can't probe-connect because
- * `debugpy --wait-for-client` treats the first TCP connection as THE client
- * and stops accepting further connections once that probe hangs up. So we
- * watch debugpy's stderr for its "waiting for connection" message instead.
+ * debugpy announces on stderr, when asked to log there, the moment its adapter
+ * listens. Probing the port instead would make the probe the client: with
+ * --wait-for-client the first connection is the one debugpy serves.
  */
-async function waitForDebugpyReady(proc: Subprocess, timeoutMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	const reader = proc.stderr.getReader();
-	const decoder = new TextDecoder();
-	let seen = "";
-	while (Date.now() < deadline) {
-		const { done, value } = await Promise.race([
-			reader.read(),
-			new Promise<{ done: true; value: undefined }>((res) =>
-				setTimeout(() => res({ done: true, value: undefined }), 250),
-			),
-		]);
-		if (done) continue;
-		seen += decoder.decode(value, { stream: true });
-		if (/waiting for (?:a )?(?:debug )?client/i.test(seen)) {
-			reader.releaseLock();
-			return;
-		}
-	}
-	reader.releaseLock();
-	// Fallback: if we never saw the message, give it a final sleep and hope.
-	await Bun.sleep(500);
-}
-
-async function spawnDebugpyListener(port: number): Promise<Subprocess> {
+async function spawnDebugpyListener(port: number): Promise<Subprocess<"ignore", "pipe", "pipe">> {
 	const proc = Bun.spawn(
-		["python3", "-m", "debugpy", "--listen", `127.0.0.1:${port}`, "--wait-for-client", LOOP_SCRIPT],
+		[
+			"python3",
+			"-m",
+			"debugpy",
+			"--log-to-stderr",
+			"--listen",
+			`127.0.0.1:${port}`,
+			"--wait-for-client",
+			LOOP_SCRIPT,
+		],
 		{ stdout: "pipe", stderr: "pipe" },
 	);
-	await waitForDebugpyReady(proc, 5_000);
+	await untilStderrShows(proc.stderr, /accepting incoming client connections/);
 	return proc;
+}
+
+async function untilStderrShows(stream: ReadableStream<Uint8Array>, pattern: RegExp) {
+	const decoder = new TextDecoder();
+	let seen = "";
+	for await (const chunk of stream) {
+		seen += decoder.decode(chunk, { stream: true });
+		if (pattern.test(seen)) return;
+	}
+	throw new Error(`debugpy ended before listening: ${seen.slice(-500)}`);
 }
 
 describe.skipIf(!HAS_DEBUGPY)("Python (debugpy) TCP attach", () => {

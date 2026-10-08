@@ -10,6 +10,10 @@ export const JAVA_VERSION = (() => {
 
 export const HAS_JAVA = JAVA_VERSION >= 17 && isJavaAdapterInstalled();
 
+// The fixtures run for a second each, so the C2 compiler threads the JVM starts
+// by default only burn CPU: with dozens of JVMs at once, half of the test's time
+process.env.JAVA_TOOL_OPTIONS = "-XX:TieredStopAtLevel=1";
+
 export async function withJavaSession(
 	name: string,
 	fn: (session: DapSession) => Promise<void>,
@@ -20,33 +24,4 @@ export async function withJavaSession(
 	} finally {
 		await session.stop();
 	}
-}
-
-/**
- * Poll until a TCP port accepts connections (JDWP ready).
- * Returns true if ready, false on timeout.
- */
-export async function waitForPort(port: number, timeoutMs = 5000): Promise<boolean> {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		try {
-			const socket = await Bun.connect({
-				hostname: "localhost",
-				port,
-				socket: {
-					data() {},
-					open(socket) {
-						socket.end();
-					},
-					error() {},
-					close() {},
-				},
-			});
-			socket.end();
-			return true;
-		} catch {
-			await Bun.sleep(10);
-		}
-	}
-	return false;
 }
