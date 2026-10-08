@@ -21,12 +21,17 @@ export class NodeDialect implements InspectorDialect {
 	constructor(private readonly cdp: CdpClient) {}
 
 	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
-		// dbg started a launched process with --inspect-brk, so it knows it is held;
-		// an attached process says so itself
-		const waited = intent.mode === "attach" ? await this.watchWaitingForDebugger() : null;
+		if (intent.mode === "launch") {
+			// dbg launches with --inspect-brk, holding the program until it connects
+			await this.cdp.enableDomains();
+			if (intent.pauseAtEntry) await this.pauseAtEntry(target);
+			else await this.release(target);
+			return;
+		}
+		// An attached process says itself whether it is held
+		const waited = await this.watchWaitingForDebugger();
 		await this.cdp.enableDomains();
-		const held = intent.mode === "launch" ? intent.pauseAtEntry : (waited?.() ?? false);
-		if (held) await this.pauseAtEntry(target);
+		if (waited()) await this.pauseAtEntry(target);
 	}
 
 	/**
@@ -165,6 +170,23 @@ export class NodeDialect implements InspectorDialect {
 			await stopped;
 		}
 		await this.resumePastInternalScripts(target);
+	}
+
+	/**
+	 * --inspect-brk stops the program once released ("Break on start"), and
+	 * older Node.js already on Debugger.enable: run on from that stop.
+	 * (--inspect-wait would not stop, but then ignores Debugger.pause too.)
+	 */
+	private async release(target: ConnectTarget): Promise<void> {
+		if (!target.isPaused()) {
+			const stopped = target.waitUntilStopped({ timeoutMs: BRK_PAUSE_TIMEOUT_MS });
+			await this.cdp.send("Runtime.runIfWaitingForDebugger");
+			await stopped;
+		}
+		if (!target.isPaused()) return;
+		const resumed = target.waitUntilResumed();
+		await this.cdp.send("Debugger.resume");
+		await resumed;
 	}
 
 	private async resumePastInternalScripts(target: ConnectTarget): Promise<void> {

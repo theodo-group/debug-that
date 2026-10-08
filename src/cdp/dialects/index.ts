@@ -10,11 +10,6 @@ export interface Inspector {
 	dialect: InspectorDialect;
 }
 
-export function runtimeFromCommand(command: string[]): RuntimeName {
-	const bin = command[0]?.split("/").pop();
-	return bin === "bun" || bin === "bunx" ? "bun" : "node";
-}
-
 /**
  * Opens the inspector socket and pairs it with the dialect of the runtime
  * behind it. Without a hint the runtime is probed over the wire.

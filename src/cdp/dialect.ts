@@ -3,7 +3,11 @@ import type { WaitForStopOptions } from "../session/base-session.ts";
 
 export type RuntimeName = "node" | "bun";
 
-/** Why the session is connecting; decides which initial state the dialect must reach. */
+/**
+ * Why the session is connecting; decides which initial state the dialect must
+ * reach. A launched program is held until dbg connects (see startInspected), then
+ * paused at entry or let run; an attached one may or may not be held.
+ */
 export type ConnectIntent = { mode: "launch"; pauseAtEntry: boolean } | { mode: "attach" };
 
 /** The slice of session state a dialect may observe while reaching the initial state. */
@@ -12,6 +16,7 @@ export interface ConnectTarget {
 	readonly pauseInfo: { reason: string; url?: string } | null;
 	readonly scripts: ReadonlyMap<string, unknown>;
 	waitUntilStopped(options?: WaitForStopOptions): Promise<void>;
+	waitUntilResumed(): Promise<void>;
 }
 
 /** Where a breakpoint binds. The session resolves this; the dialect never looks scripts up. */

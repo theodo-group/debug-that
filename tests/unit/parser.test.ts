@@ -116,3 +116,21 @@ describe("parseArgs", () => {
 		expect(args.positionals).toEqual(["app.js"]);
 	});
 });
+
+describe("launch command line", () => {
+	test("flags after the program's first word are the program's", () => {
+		const args = parseArgs(
+			["launch", "--brk", "--session", "s", "claude", "-p", "say hi", "--json"],
+			config,
+		);
+		expect(args.flags.brk).toBe(true);
+		expect(args.global.session).toBe("s");
+		expect(args.global.json).toBe(false);
+		expect([args.subcommand, ...args.positionals]).toEqual(["claude", "-p", "say hi", "--json"]);
+	});
+
+	test("-- still works before the program", () => {
+		const args = parseArgs(["launch", "--", "node", "-e", "1"], config);
+		expect([args.subcommand, ...args.positionals]).toEqual(["node", "-e", "1"]);
+	});
+});

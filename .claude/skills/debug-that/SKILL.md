@@ -25,11 +25,12 @@ description: >
 | Node.js | JavaScript | `dbg launch --brk node app.js` |
 | tsx / ts-node | TypeScript | `dbg launch --brk tsx src/app.ts` |
 | Bun | JavaScript / TypeScript | `dbg launch --brk bun app.ts` |
+| Bun executable (`bun build --compile`) | JavaScript / TypeScript | `dbg launch --brk ./my-cli --its-flags` |
 | debugpy | Python | `dbg launch --brk python3 app.py` (or attach -- see Python section) |
 | LLDB | C / C++ / Rust / Swift | `dbg launch --brk --runtime lldb ./program` |
 | JDWP | Java | `dbg launch --brk --runtime java ./program` |
 
-The runtime is auto-detected from the launch command for JS and Python runtimes. For native code, use `--runtime lldb`. Python can also attach to a running `debugpy` listener over TCP (`--runtime python`).
+The runtime is auto-detected from the launch command for JS and Python runtimes, including executables compiled by Bun (else pass `--runtime bun`). Everything after the program's name goes to it unchanged. For native code, use `--runtime lldb`. Python can also attach to a running `debugpy` listener over TCP (`--runtime python`).
 
 ## Core Debug Loop
 

@@ -10,7 +10,7 @@ defineCommand({
 	description: "Start + attach debugger",
 	usage: "launch [--brk] <command...>",
 	category: "session",
-	positional: { kind: "variadic", name: "command", required: true },
+	positional: { kind: "variadic", name: "command", required: true, commandLine: true },
 	flags: z.object({
 		brk: z.boolean().optional().meta({ description: "Pause at first line" }),
 		port: z.coerce.number().optional().meta({ description: "Inspector port" }),

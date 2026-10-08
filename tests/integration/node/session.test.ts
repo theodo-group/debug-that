@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CdpSession } from "../../../src/cdp/session.ts";
+import { INSPECTOR_TIMEOUT_MS } from "../../../src/constants.ts";
 import { withSession } from "../../helpers.ts";
 
 async function readStderrUntilInspector(stderr: ReadableStream<Uint8Array>): Promise<string> {
@@ -39,6 +40,24 @@ describe("CdpSession integration", () => {
 			expect(result.pid).toBeGreaterThan(0);
 			expect(result.paused).toBe(false);
 			expect(session.sessionState).toBe("running");
+		}));
+
+	test("launch without brk holds the program until dbg connects, then lets it run", () =>
+		withSession("test-nobrk-runs", async (session) => {
+			await session.launch(["node", "-e", 'console.log("ran")'], { brk: false });
+			await session.waitForState("idle");
+			expect(session.getConsoleMessages().map((m) => m.text)).toContain('"ran"');
+		}));
+
+	test("a process that exits before its inspector opens fails at once, with its stderr", () =>
+		withSession("test-exits-early", async (session) => {
+			const started = Date.now();
+			await expect(
+				session.launch(["tests/fixtures/exits-early.sh"], { brk: true }),
+			).rejects.toThrow(
+				"exits-early.sh exited with code 3 before its inspector opened: no inspector here",
+			);
+			expect(Date.now() - started).toBeLessThan(INSPECTOR_TIMEOUT_MS);
 		}));
 
 	test("getStatus returns correct info after launch", () =>

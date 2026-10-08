@@ -37,9 +37,11 @@ export class BunDialect implements InspectorDialect {
 		// JSC reports console output on its own domain, not via Runtime.consoleAPICalled.
 		await this.jsc.send("Console.enable");
 
-		if (intent.mode === "launch" && intent.pauseAtEntry) {
-			await this.stepPastOwnEntryStop(target);
-		} else if (intent.mode === "attach" && (await this.isHeldByInspector(target))) {
+		if (intent.mode === "launch") {
+			// dbg launches Bun held until it connects (see startInspected)
+			if (intent.pauseAtEntry) await this.releaseAndPause(target);
+			else await this.jsc.send("Inspector.initialized");
+		} else if (await this.isHeldByInspector(target)) {
 			await this.releaseAndPause(target);
 		}
 
@@ -148,28 +150,6 @@ export class BunDialect implements InspectorDialect {
 		} catch (err) {
 			if (!isAlreadyEnabledError(err)) throw err;
 		}
-	}
-
-	/**
-	 * Bun evaluates node:/bun: dependencies before the entry script. Skip those
-	 * and catch the entry script with a line-1 breakpoint, which JSC resolves to
-	 * the first breakable statement (line 0 would silently fail).
-	 */
-	/**
-	 * Bun's --inspect-brk puts a `debugger` statement ahead of the entry
-	 * script's code, which pauses once such statements do. One step over it
-	 * stops on the script's first statement, whatever kind of module it is.
-	 */
-	private async stepPastOwnEntryStop(target: ConnectTarget): Promise<void> {
-		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-		await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
-		const stopped = target.waitUntilStopped({ timeoutMs: BRK_PAUSE_TIMEOUT_MS });
-		await this.jsc.send("Inspector.initialized");
-		await stopped;
-		if (target.pauseInfo?.reason !== "DebuggerStatement") return;
-		const stepped = target.waitUntilStopped();
-		await this.jsc.send("Debugger.stepOver");
-		await stepped;
 	}
 
 	/**

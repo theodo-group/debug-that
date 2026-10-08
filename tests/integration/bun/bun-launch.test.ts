@@ -1,17 +1,41 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { withSession } from "../../helpers.ts";
 
 describe("Bun debugging", () => {
-	test("launches and pauses with --inspect-brk", () =>
+	test("launches and pauses at entry, over a socket file only dbg knows", () =>
 		withSession("bun-test-launch", async (session) => {
 			const result = await session.launch(["bun", "tests/fixtures/js/simple-app.js"], {
 				brk: true,
 			});
 			expect(result.paused).toBe(true);
 			expect(result.pid).toBeGreaterThan(0);
-			expect(result.wsUrl).toContain("ws://");
+			expect(result.wsUrl).toStartWith("ws+unix://");
 			expect(session.state).toBe("paused");
 			expect(session.runtime).toBe("bun");
+		}));
+
+	test("launches an executable built by bun build --compile, which takes no Bun flags", async () => {
+		const exe = join(mkdtempSync(join(tmpdir(), "dbg-exe-")), "simple-app");
+		await Bun.$`bun build --compile tests/fixtures/js/simple-app.js --outfile ${exe}`.quiet();
+		await withSession("bun-test-launch-exe", async (session) => {
+			const result = await session.launch([exe], { brk: true });
+			expect(session.runtime).toBe("bun");
+			expect(result.paused).toBe(true);
+			expect((await session.eval("typeof greet")).value).toBe('"function"');
+			const child = session.childProcess;
+			await session.continue();
+			expect(await child?.exited).toBe(0);
+		});
+	});
+
+	test("without --brk, the program is held until dbg connects, then runs", () =>
+		withSession("bun-test-launch-nobrk", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: false });
+			await session.waitForState("idle");
+			expect(session.getConsoleMessages().some((m) => m.text.includes("Hello, World!"))).toBe(true);
 		}));
 
 	test("launches a CommonJS file paused on its first statement", () =>

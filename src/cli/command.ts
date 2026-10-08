@@ -28,6 +28,8 @@ export type PositionalVariadic = {
 	name: string;
 	required?: boolean;
 	description?: string;
+	/** A command line of its own: what follows its first word is its, not dbg's flags */
+	commandLine?: boolean;
 };
 
 export type PositionalSpec =
@@ -185,6 +187,8 @@ export function defineCommand<const P extends PositionalSpec, F extends z.ZodObj
 export interface ParserConfig {
 	booleanFlags: Set<string>;
 	shortMap: Record<string, string>;
+	/** Commands whose positional is a command line to pass through untouched */
+	commandLines: Set<string>;
 }
 
 /**
@@ -194,8 +198,12 @@ export interface ParserConfig {
 export function deriveParserConfig(): ParserConfig {
 	const booleanFlags = new Set<string>();
 	const shortMap: Record<string, string> = {};
+	const commandLines = new Set<string>();
 
 	for (const spec of commandDefs.values()) {
+		if (spec.positional.kind === "variadic" && spec.positional.commandLine) {
+			commandLines.add(spec.name);
+		}
 		const shape = spec.flags.shape;
 		for (const [key, schema] of Object.entries(shape)) {
 			if (isBooleanSchema(schema as z.ZodType)) {
@@ -208,5 +216,5 @@ export function deriveParserConfig(): ParserConfig {
 		}
 	}
 
-	return { booleanFlags, shortMap };
+	return { booleanFlags, shortMap, commandLines };
 }

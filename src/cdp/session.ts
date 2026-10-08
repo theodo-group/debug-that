@@ -33,10 +33,11 @@ import type {
 	InspectorDialect,
 	RuntimeName,
 } from "./dialect.ts";
-import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
+import { openInspector } from "./dialects/index.ts";
 import { EntryBreakpoints } from "./entry-breakpoints.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
+import { startInspected } from "./launcher.ts";
 import { pinLoopback } from "./loopback.ts";
 import {
 	addBlackbox as addBlackboxImpl,
@@ -87,16 +88,10 @@ export interface ScriptInfo {
 // Node.js: "Debugger listening on ws://..."
 // Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
 import {
-	INSPECTOR_TIMEOUT_MS,
 	STATE_WAIT_TIMEOUT_MS,
 	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
 	WAIT_PAUSE_TIMEOUT_MS,
 } from "../constants.ts";
-
-const INSPECTOR_URL_REGEX = /(?:Debugger listening on\s+)?(wss?:\/\/\S+)/;
-// Bun wraps the inspector URL in ANSI bold codes — strip them from the captured URL
-const ESC = String.fromCharCode(0x1b);
-const ANSI_RE = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
 
 export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
@@ -210,38 +205,17 @@ export class CdpSession extends BaseSession {
 		this.launchOptions = options;
 
 		const brk = options.brk ?? true;
-		const port = options.port ?? 0;
-
-		// Both Bun and Node.js support --inspect-brk (Bun also has --inspect-wait
-		// but --inspect-brk works better for our pause strategy)
-		const inspectFlag = brk ? `--inspect-brk=${port}` : `--inspect=${port}`;
-
-		// Build the args: inject inspect flag after the runtime (first element)
-		const runtimeBin = command[0] as string;
-		const rest = command.slice(1);
-		const spawnArgs = [runtimeBin, inspectFlag, ...rest];
-
-		const proc = Bun.spawn(spawnArgs, {
-			stdin: "ignore",
-			stdout: "ignore",
-			stderr: "pipe",
+		const { proc, wsUrl, runtime } = await startInspected(command, {
+			runtime: this.runtimeHint,
+			port: options.port,
+			log: this.cdpLog,
 		});
 		this.childProcess = proc;
-
-		this.log.info("child.spawn", { pid: proc.pid ?? 0, command: spawnArgs });
-
-		// Monitor child process exit in the background
 		this.monitorProcessExit(proc);
-
-		// Read stderr to find the inspector URL
-		const wsUrl = await this.readInspectorUrl(proc.stderr);
 		this.wsUrl = wsUrl;
 		this.targetIdentity = { pid: proc.pid, command: command.join(" ") };
 
-		await this.connect(wsUrl, runtimeFromCommand(command), {
-			mode: "launch",
-			pauseAtEntry: brk,
-		});
+		await this.connect(wsUrl, runtime, { mode: "launch", pauseAtEntry: brk });
 
 		const result: LaunchResult = {
 			pid: proc.pid,
@@ -1184,53 +1158,6 @@ export class CdpSession extends BaseSession {
 			});
 	}
 
-	private async readInspectorUrl(stderr: ReadableStream<Uint8Array>): Promise<string> {
-		const reader = stderr.getReader();
-		const decoder = new TextDecoder();
-		let accumulated = "";
-
-		const timeout = setTimeout(() => {
-			reader.cancel().catch(() => {
-				// Reader cancellation errors are expected during timeout
-			});
-		}, INSPECTOR_TIMEOUT_MS);
-
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) {
-					break;
-				}
-				const chunk = decoder.decode(value, { stream: true });
-				accumulated += chunk;
-				this.log.debug("child.stderr", { text: chunk.trimEnd() });
-
-				const match = INSPECTOR_URL_REGEX.exec(accumulated);
-				if (match?.[1]) {
-					clearTimeout(timeout);
-					// Continue draining stderr in the background so proc.exited
-					// can resolve (Bun requires all piped streams to be consumed).
-					this.drainReader(reader);
-					return match[1].replace(ANSI_RE, "");
-				}
-			}
-		} catch {
-			// Reader was cancelled (timeout) or stream errored
-		}
-
-		clearTimeout(timeout);
-		this.log.error("inspector.failed", {
-			stderr: accumulated.slice(0, 2000),
-			timeoutMs: INSPECTOR_TIMEOUT_MS,
-		});
-		// Kill the child process to avoid zombies when inspector detection fails
-		this.childProcess?.kill();
-		this.childProcess = null;
-		throw new Error(
-			`Failed to detect inspector URL within ${INSPECTOR_TIMEOUT_MS}ms. Stderr: ${accumulated.slice(0, 500)}`,
-		);
-	}
-
 	private async discoverWsUrl(port: number): Promise<string> {
 		const host = await pinLoopback("localhost", port);
 		let response: Response;
@@ -1263,20 +1190,6 @@ export class CdpSession extends BaseSession {
 		}
 
 		return wsUrl;
-	}
-
-	private drainReader(reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> }): void {
-		const pump = (): void => {
-			reader
-				.read()
-				.then(({ done }) => {
-					if (!done) pump();
-				})
-				.catch(() => {
-					// Stream closed or errored — expected during process exit
-				});
-		};
-		pump();
 	}
 }
 

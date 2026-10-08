@@ -89,6 +89,7 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 		? new Set([...DEFAULT_BOOLEAN_FLAGS, ...config.booleanFlags])
 		: DEFAULT_BOOLEAN_FLAGS;
 	const shortMap = config ? { ...DEFAULT_SHORT_MAP, ...config.shortMap } : DEFAULT_SHORT_MAP;
+	const commandLines = config?.commandLines ?? new Set<string>();
 
 	const tokens = tokenize(argv);
 	const flags: Record<string, string | boolean> = {};
@@ -103,6 +104,11 @@ export function parseArgs(argv: string[], config?: ParserConfig): ParsedArgs {
 			case "operand": {
 				operands.push(tok.value);
 				i++;
+				// One token per argument, so the rest of argv is the command line as typed
+				if (operands.length === 2 && commandLines.has(operands[0] ?? "")) {
+					operands.push(...argv.slice(i));
+					i = tokens.length;
+				}
 				break;
 			}
 
