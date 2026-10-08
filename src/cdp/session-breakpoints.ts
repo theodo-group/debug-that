@@ -58,7 +58,8 @@ export async function setBreakpoint(
 	// line numbers (ignoring source maps), which causes breakpoints to snap
 	// to wrong lines in vm.compileFunction() contexts (Jest/Vitest).
 	// rebindPendingBreakpoints() will set it by scriptId with the correct
-	// source-map-translated line when the script loads.
+	// source-map-translated line when the script loads, which stops before
+	// its first statement until then (guardPendingBreakpoints).
 	if (!url && !resolved?.runtime.scriptId && !urlRegex) {
 		const meta: BreakpointMeta = { url: file, line };
 		if (options?.condition) meta.condition = options.condition;
@@ -138,6 +139,7 @@ export async function removeBreakpoint(session: CdpSession, ref: string): Promis
 
 	if (!entry.pending) await unbind(session, entry);
 	session.refs.remove(ref);
+	if (entry.pending) await session.guardPendingBreakpoints();
 }
 
 export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
@@ -153,6 +155,7 @@ export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 	for (const entry of session.refs.listBreakpoints({ pending: true })) {
 		session.refs.remove(entry.ref);
 	}
+	await session.guardPendingBreakpoints();
 }
 
 export function listBreakpoints(
@@ -255,6 +258,7 @@ export async function toggleBreakpoint(
 				session.disabledBreakpoints.set(entry.ref, toDisabled(entry, "", true));
 				session.refs.remove(entry.ref);
 			}
+			await session.guardPendingBreakpoints();
 			return { ref: "all", state: "disabled" };
 		}
 		// Re-enable all disabled breakpoints
@@ -282,6 +286,7 @@ export async function toggleBreakpoint(
 			),
 		);
 		session.refs.remove(ref);
+		if (activeEntry.pending) await session.guardPendingBreakpoints();
 		return { ref, state: "disabled" };
 	}
 
@@ -310,6 +315,7 @@ async function reEnableBreakpoint(
 			session.refs.addPendingLogpoint(entry.meta);
 		}
 		session.disabledBreakpoints.delete(ref);
+		await session.guardPendingBreakpoints();
 		return;
 	}
 

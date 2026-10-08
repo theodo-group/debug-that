@@ -42,6 +42,7 @@ export async function stepExecution(
 
 	const waiter =
 		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
+	session.stopRequested = "step";
 	await session.cdp.send(methodMap[mode]);
 	await waiter;
 }
@@ -54,6 +55,7 @@ export async function pauseExecution(session: CdpSession): Promise<void> {
 		throw new Error("Cannot pause: no CDP connection");
 	}
 	const waiter = session.waitUntilStopped({ throwOnTimeout: true });
+	session.stopRequested = "pause";
 	await session.cdp.send("Debugger.pause");
 	await waiter;
 }

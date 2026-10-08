@@ -68,8 +68,9 @@ export interface InspectorDialect {
 	/**
 	 * While enabled, newly loaded scripts pause before their first statement
 	 * (reason "instrumentation"), so breakpoints waiting for them can bind
-	 * before they run. V8 does this for ES modules and classic scripts, not for
-	 * CommonJS or vm.compileFunction (Jest). A no-op where the engine has none.
+	 * before they run, including bundles that map to them. V8 does this for ES
+	 * modules and classic scripts only; entry breakpoints cover the rest. A
+	 * no-op where the engine has none.
 	 */
 	pauseBeforeNewScripts(enabled: boolean): Promise<void>;
 

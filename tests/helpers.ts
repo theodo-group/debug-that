@@ -38,8 +38,9 @@ export async function withPausedSession(
 	name: string,
 	fixture: string,
 	fn: (session: CdpSession) => Promise<void>,
+	runtime = "node",
 ): Promise<void> {
-	const session = await launchPaused(name, fixture);
+	const session = await launchPaused(name, fixture, runtime);
 	try {
 		await fn(session);
 	} finally {

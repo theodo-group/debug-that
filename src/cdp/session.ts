@@ -23,9 +23,16 @@ import type {
 	StateSnapshot,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
-import { type CdpClient, TimeoutError } from "./client.ts";
-import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
+import type { CdpClient } from "./client.ts";
+import { asCondition } from "./condition.ts";
+import type {
+	BreakpointBehavior,
+	ConnectIntent,
+	InspectorDialect,
+	RuntimeName,
+} from "./dialect.ts";
 import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
+import { EntryBreakpoints } from "./entry-breakpoints.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
 import {
@@ -105,6 +112,19 @@ export class CdpSession extends BaseSession {
 	private _pendingRebinds = new Set<Promise<void>>();
 	/** Counts reported pauses, so a wait can tell a new pause from the one it started in */
 	private pauseCount = 0;
+	/** Called on every state change, including the process going away */
+	private stateListeners = new Set<() => void>();
+	private readonly entryBreakpoints = new EntryBreakpoints(() =>
+		this.cdp && this._dialect ? { cdp: this.cdp, dialect: this._dialect } : null,
+	);
+	/** Waiting breakpoints bound since the last entry pause, to tell whether one sits where it stopped */
+	private boundWhileLoading: Array<{
+		breakpointId: string;
+		location?: { scriptId: string; lineNumber: number; columnNumber?: number };
+		behavior: BreakpointBehavior;
+	}> = [];
+	/** A step or pause that was sent and has not stopped yet */
+	stopRequested: "step" | "pause" | null = null;
 	launchCommand: string[] | null = null;
 	readonly functionBreakpoints = new FunctionBreakpoints(this);
 	launchOptions: { brk?: boolean; port?: number } | null = null;
@@ -341,6 +361,9 @@ export class CdpSession extends BaseSession {
 		this.scripts.clear();
 		this.disabledBreakpoints.clear();
 		this._pendingRebinds.clear();
+		this.entryBreakpoints.reset();
+		this.boundWhileLoading = [];
+		this.stopRequested = null;
 		this.sourceMapResolver.clear();
 	}
 
@@ -394,6 +417,7 @@ export class CdpSession extends BaseSession {
 	}
 
 	private _notifyStateWaiters(): void {
+		for (const listener of this.stateListeners) listener();
 		const pending = this._stateWaiters;
 		this._stateWaiters = [];
 		for (const w of pending) {
@@ -700,13 +724,6 @@ export class CdpSession extends BaseSession {
 	}
 
 	/**
-	 * Creates a promise that resolves when the next `Debugger.paused` event
-	 * fires, the process exits, or the timeout expires. Must be created
-	 * BEFORE sending the CDP command that triggers execution so we don't
-	 * miss events. Does NOT check current state — the caller is about to
-	 * send a resume/step command.
-	 */
-	/**
 	 * Resolves once the engine reports execution resumed, or the target is gone.
 	 * The reply to a resume command can arrive before that event, and until
 	 * then the session still looks paused.
@@ -723,51 +740,31 @@ export class CdpSession extends BaseSession {
 		});
 	}
 
+	/**
+	 * Resolves on the next reported pause, or once the target is gone; our
+	 * own entry pauses do not count. Call it before sending the command that
+	 * runs the target, so its pause cannot be missed.
+	 */
 	async waitUntilStopped(options?: WaitForStopOptions): Promise<void> {
 		const timeoutMs = options?.timeoutMs ?? WAIT_PAUSE_TIMEOUT_MS;
-		const throwOnTimeout = options?.throwOnTimeout ?? false;
 		const pausesBefore = this.pauseCount;
+		const stopped = () => this.pauseCount > pausesBefore || this.state === "idle" || !this.cdp;
 
 		return new Promise<void>((resolve, reject) => {
-			let settled = false;
-
-			const settle = () => {
-				if (settled) return;
-				settled = true;
-				clearInterval(pollTimer);
-				this.onProcessExit.delete(settle);
-				resolve();
-			};
-
-			const timeout = () => {
-				if (settled) return;
-				settled = true;
-				clearInterval(pollTimer);
-				this.onProcessExit.delete(settle);
-				if (throwOnTimeout) {
+			const finish = (timedOut: boolean) => {
+				clearTimeout(timer);
+				this.stateListeners.delete(onChange);
+				if (timedOut && options?.throwOnTimeout) {
 					reject(`Timed out waiting for paused event (after ${timeoutMs}ms)`);
+				} else {
+					resolve();
 				}
-				resolve();
 			};
-
-			// Use waitFor for the event subscription + timeout
-			this.cdp
-				?.waitFor("Debugger.paused", { timeoutMs })
-				.then(() => settle())
-				.catch((error) => (error instanceof TimeoutError ? timeout() : reject(error)));
-
-			// Poll as a fallback in case the event/callback is missed
-			// (e.g., process exits and monitorProcessExit runs before
-			// onProcessExit is set, or CDP disconnects clearing listeners)
-			// Only a pause newer than the one this wait started in counts.
-			const pollTimer = setInterval(() => {
-				if (this.pauseCount > pausesBefore || this.state === "idle" || !this.cdp) {
-					settle();
-				}
-			}, 100);
-
-			// Also resolve if the process exits during execution
-			this.onProcessExit.add(settle);
+			const onChange = () => {
+				if (stopped()) finish(false);
+			};
+			const timer = setTimeout(() => finish(true), timeoutMs);
+			this.stateListeners.add(onChange);
 		});
 	}
 
@@ -809,32 +806,95 @@ export class CdpSession extends BaseSession {
 		return null;
 	}
 
-	/**
-	 * Re-bind pending breakpoints/logpoints by scriptId for a newly parsed script.
-	 * Uses resolveToRuntime() to translate source line → compiled line,
-	 * which requires the source map to be loaded first.
-	 */
-	/** Keeps the engine pausing before new scripts exactly while a file breakpoint waits for its script. */
+	/** Keeps every script that file breakpoints wait for stopping before its first statement. */
 	async guardPendingBreakpoints(): Promise<void> {
 		if (!this._dialect) return;
-		const waiting = this.refs
-			.listBreakpoints({ pending: true })
-			.some((e) => e.meta.fn === undefined);
-		await this._dialect.pauseBeforeNewScripts(waiting);
+		const files = new Set(
+			this.refs
+				.listBreakpoints({ pending: true })
+				.filter((e) => e.meta.fn === undefined)
+				.map((e) => e.meta.url),
+		);
+		// Entry breakpoints cover files loaded under their own name; the
+		// instrumentation pause (V8, ES modules) also covers bundles
+		await Promise.all([
+			this.entryBreakpoints.sync(files),
+			this._dialect.pauseBeforeNewScripts(files.size > 0),
+		]);
 	}
 
-	private async bindPendingThenResume(): Promise<void> {
+	/**
+	 * Our own pause before a script that breakpoints wait for: bind them (its
+	 * scriptParsed came first and started that), then go on. Stays paused
+	 * when one of them sits right here, or when a step or pause is under way:
+	 * the engine ended that in this pause.
+	 */
+	private async bindPendingThenResume(p: Protocol.Debugger.PausedEvent): Promise<void> {
+		let reported = false;
 		try {
-			// scriptParsed for this script came first and started its rebind (source map included)
 			await this.drainPendingRebinds();
 			await this.guardPendingBreakpoints();
+			const hits = await this.breakpointsThatPauseAt(p.callFrames[0]);
+			if (hits.length > 0) {
+				this.reportPause(p, hits);
+				reported = true;
+			} else if (this.stopRequested) {
+				this.reportPause(
+					{ ...p, reason: this.stopRequested === "step" ? "step" : "other" },
+					undefined,
+				);
+				reported = true;
+			}
 		} finally {
-			await this.cdp?.send("Debugger.resume").catch(() => {
-				// Disconnected meanwhile
-			});
+			if (!reported) {
+				await this.cdp?.send("Debugger.resume").catch(() => {
+					// Disconnected meanwhile
+				});
+			}
 		}
 	}
 
+	/**
+	 * Breakpoints just bound at the frame's location whose behavior asks to
+	 * pause. The engine evaluates them on the next arrival only, so this one is
+	 * evaluated here. A hit count above 1 counts from the next arrival.
+	 */
+	private async breakpointsThatPauseAt(
+		frame: Protocol.Debugger.CallFrame | undefined,
+	): Promise<string[]> {
+		const bound = this.boundWhileLoading;
+		this.boundWhileLoading = [];
+		if (!frame || !this.cdp) return [];
+		const here = frame.location;
+		const hits: string[] = [];
+		for (const { breakpointId, location, behavior } of bound) {
+			if (
+				location?.scriptId !== here.scriptId ||
+				location.lineNumber !== here.lineNumber ||
+				(location.columnNumber ?? 0) !== (here.columnNumber ?? 0)
+			) {
+				continue;
+			}
+			const condition = asCondition(behavior);
+			if (!condition) {
+				hits.push(breakpointId);
+				continue;
+			}
+			const r = await this.cdp
+				.send("Debugger.evaluateOnCallFrame", {
+					callFrameId: frame.callFrameId,
+					expression: `!!(${condition})`,
+				})
+				.catch(() => null);
+			if (r?.result.value === true) hits.push(breakpointId);
+		}
+		return hits;
+	}
+
+	/**
+	 * Binds the breakpoints waiting for a newly parsed script by its id, on the
+	 * compiled line its source map gives, so the source map must be loaded.
+	 */
 	private async rebindPendingBreakpoints(scriptId: string, scriptUrl: string): Promise<void> {
 		if (!this.cdp) return;
 
@@ -855,6 +915,11 @@ export class CdpSession extends BaseSession {
 				);
 
 				this.refs.bind(entry.ref, r.breakpointId);
+				this.boundWhileLoading.push({
+					breakpointId: r.breakpointId,
+					location: r.location,
+					behavior: behaviorOf(entry),
+				});
 
 				this.log.info("breakpoint.rebound", { file: scriptUrl, line: compiledLine });
 			} catch (err) {
@@ -864,6 +929,39 @@ export class CdpSession extends BaseSession {
 				});
 			}
 		}
+	}
+
+	private reportPause(
+		p: Protocol.Debugger.PausedEvent,
+		hitBreakpoints: string[] | undefined,
+	): void {
+		this.stopRequested = null;
+		this.pauseCount++;
+		this.state = "paused";
+		const callFrames = p.callFrames;
+		this.pausedCallFrames = callFrames ?? [];
+		const topFrame = callFrames?.[0];
+		const location = topFrame?.location;
+		const scriptId = location?.scriptId;
+		const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
+		this.pauseInfo = {
+			reason:
+				this.functionBreakpoints.pauseReason({
+					reason: p.reason,
+					hitBreakpoints,
+					topUrl: url,
+					topFunction: topFrame?.functionName,
+				}) ??
+				p.reason ??
+				"unknown",
+			hitBreakpoints,
+			scriptId,
+			url,
+			line: location?.lineNumber,
+			column: location?.columnNumber,
+			callFrameCount: callFrames?.length,
+		};
+		this._notifyStateWaiters();
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────
@@ -896,43 +994,16 @@ export class CdpSession extends BaseSession {
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
 		cdp.on("Debugger.paused", (p) => {
-			// Our own pause before a new script: bind what waits for it, then go on.
-			if (p.reason === "instrumentation") {
-				void this.bindPendingThenResume();
-				return;
-			}
-			this.pauseCount++;
-			this.state = "paused";
-			this._notifyStateWaiters();
-			const callFrames = p.callFrames;
-			this.pausedCallFrames = callFrames ?? [];
-			const topFrame = callFrames?.[0];
-			const location = topFrame?.location;
-			const scriptId = location?.scriptId;
-			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
-
 			// V8 lists hit breakpoints; JSC names the one it hit in its pause data
 			const data = (p as { data?: Record<string, unknown> }).data;
 			const hitBreakpoints =
 				p.hitBreakpoints ??
 				(typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
-			this.pauseInfo = {
-				reason:
-					this.functionBreakpoints.pauseReason({
-						reason: p.reason,
-						hitBreakpoints,
-						topUrl: url,
-						topFunction: topFrame?.functionName,
-					}) ??
-					p.reason ??
-					"unknown",
-				hitBreakpoints,
-				scriptId,
-				url,
-				line: location?.lineNumber,
-				column: location?.columnNumber,
-				callFrameCount: callFrames?.length,
-			};
+			if (p.reason === "instrumentation" || this.entryBreakpoints.isEntryPause(hitBreakpoints)) {
+				void this.bindPendingThenResume(p);
+				return;
+			}
+			this.reportPause(p, hitBreakpoints);
 		});
 
 		cdp.on("Debugger.resumed", () => {

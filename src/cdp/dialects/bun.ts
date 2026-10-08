@@ -50,11 +50,16 @@ export class BunDialect implements InspectorDialect {
 		await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
 	}
 
-	/** JSC binds by script id, so only a loaded script can take a breakpoint. */
+	/** A loaded script binds by id; a URL binds every matching script as it compiles. */
 	async setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding> {
-		if (target.kind !== "script" && target.kind !== "location") {
-			const what = target.kind === "url" ? target.url : target.pattern;
-			throw new Error(`Cannot find a loaded script for "${what}" — ensure the script is loaded`);
+		if (target.kind === "url" || target.kind === "urlRegex") {
+			const r = await this.jsc.send("Debugger.setBreakpointByUrl", {
+				...(target.kind === "url" ? { url: target.url } : { urlRegex: target.pattern }),
+				lineNumber: spec.line - 1,
+				columnNumber: spec.column,
+				options: breakpointOptions(spec),
+			});
+			return { breakpointId: r.breakpointId, location: r.locations[0] };
 		}
 		const r = await this.jsc.send("Debugger.setBreakpoint", {
 			location: {
