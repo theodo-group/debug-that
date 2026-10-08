@@ -1,5 +1,5 @@
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { SPAWN_POLL_INTERVAL_MS, SPAWN_TIMEOUT_MS, WS_HANDSHAKE_TIMEOUT_S } from "../constants.ts";
+import { SPAWN_POLL_INTERVAL_MS, SPAWN_TIMEOUT_MS } from "../constants.ts";
 import { DaemonClient } from "./client.ts";
 import { ensureSocketDir, getLogPath, getSocketPath } from "./paths.ts";
 
@@ -35,11 +35,6 @@ export async function spawnDaemon(
 	const logFd = openSync(getLogPath(session), "a");
 
 	const proc = Bun.spawn(spawnArgs, {
-		env: {
-			...process.env,
-			BUN_CONFIG_WS_HANDSHAKE_TIMEOUT:
-				process.env.BUN_CONFIG_WS_HANDSHAKE_TIMEOUT ?? String(WS_HANDSHAKE_TIMEOUT_S),
-		},
 		detached: true,
 		stdin: "ignore",
 		stdout: logFd,

@@ -1,12 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { Subprocess } from "bun";
-import { INSPECTOR_TIMEOUT_MS } from "../constants.ts";
+import { INSPECTOR_TIMEOUT_MS, STDERR_POLL_MS } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
 import type { RuntimeName } from "./dialect.ts";
 
-export type InspectedProcess = Subprocess<"ignore", "ignore", "pipe">;
+export type InspectedProcess = ReturnType<typeof spawn>["proc"];
 
 export interface Inspected {
 	proc: InspectedProcess;
@@ -20,6 +19,12 @@ interface StartOptions {
 	log: Logger<"session">;
 }
 
+/** What a launcher gets from startInspected on top of the options */
+interface LaunchContext extends StartOptions {
+	/** A directory of this launch's own, removed once the program has exited */
+	dir: string;
+}
+
 /**
  * How one runtime starts a program for dbg: with its inspector open and the
  * program held until dbg connects, so nothing runs unobserved. Whether it
@@ -30,7 +35,7 @@ interface Launcher {
 	/** Whether this runtime runs the executable, known by its name or its contents */
 	runs(executable: string): Promise<boolean>;
 	/** Resolves with where to connect once the inspector accepts connections */
-	start(command: string[], options: StartOptions): Promise<Omit<Inspected, "runtime">>;
+	start(command: string[], context: LaunchContext): Promise<Omit<Inspected, "runtime">>;
 }
 
 /** Node.js takes --inspect-brk after its binary and prints the URL on stderr. */
@@ -41,10 +46,9 @@ class NodeLauncher implements Launcher {
 		return /^(node\d*|tsx|ts-node)$/.test(basename(executable));
 	}
 
-	async start(command: string[], { port = 0, log }: StartOptions) {
+	async start(command: string[], { port = 0, dir, log }: LaunchContext) {
 		const [bin = "", ...rest] = command;
-		const proc = spawn([bin, `--inspect-brk=${port}`, ...rest], process.env, log);
-		const stderr = new StderrTap(proc.stderr, log);
+		const { proc, stderr } = spawn([bin, `--inspect-brk=${port}`, ...rest], process.env, dir, log);
 		const url = await untilInspectorOpens(
 			stderr.firstMatch(INSPECTOR_URL_REGEX),
 			proc,
@@ -72,8 +76,7 @@ class BunLauncher implements Launcher {
 		);
 	}
 
-	async start(command: string[], { port, log }: StartOptions) {
-		const dir = mkdtempSync(join(tmpdir(), "dbg-"));
+	async start(command: string[], { port, dir, log }: LaunchContext) {
 		const notifyPath = join(dir, "ready.sock");
 		const wsUrl = port
 			? `ws://127.0.0.1:${port}/${crypto.randomUUID()}`
@@ -91,10 +94,9 @@ class BunLauncher implements Launcher {
 			BUN_INSPECT: `${wsUrl}?wait=1`,
 			BUN_INSPECT_NOTIFY: `unix://${notifyPath}`,
 		};
-		const proc = spawn(command, env, log);
-		void proc.exited.then(() => rmSync(dir, { recursive: true, force: true }));
+		const { proc, stderr } = spawn(command, env, dir, log);
 		try {
-			await untilInspectorOpens(ready.promise, proc, new StderrTap(proc.stderr, log), command);
+			await untilInspectorOpens(ready.promise, proc, stderr, command);
 		} finally {
 			notify.stop(true);
 		}
@@ -112,7 +114,14 @@ export async function startInspected(
 	options: StartOptions & { runtime?: RuntimeName },
 ): Promise<Inspected> {
 	const launcher = await launcherFor(command, options.runtime);
-	return { ...(await launcher.start(command, options)), runtime: launcher.runtime };
+	const dir = mkdtempSync(join(tmpdir(), "dbg-"));
+	try {
+		const started = await launcher.start(command, { ...options, dir });
+		return { ...started, runtime: launcher.runtime };
+	} catch (err) {
+		rmSync(dir, { recursive: true, force: true });
+		throw err;
+	}
 }
 
 /**
@@ -144,10 +153,32 @@ async function isBunExecutable(path: string): Promise<boolean> {
 	}
 }
 
-function spawn(args: string[], env: Record<string, string | undefined>, log: Logger<"session">) {
-	const proc = Bun.spawn(args, { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+/**
+ * Starts the process with its stderr in a file of `dir`, tapped, and removes
+ * `dir` once it has exited and been read. A pipe would be the obvious choice,
+ * but on macOS Bun 1.4 now and then leaves a fresh pipe without any event
+ * from the loop under heavy launch/exit churn, and Node's inspector URL would
+ * never arrive. A file cannot go deaf.
+ */
+function spawn(
+	args: string[],
+	env: Record<string, string | undefined>,
+	dir: string,
+	log: Logger<"session">,
+) {
+	const path = join(dir, "stderr");
+	const stderrFd = openSync(path, "w");
+	const proc = (() => {
+		try {
+			return Bun.spawn(args, { env, stdin: "ignore", stdout: "ignore", stderr: stderrFd });
+		} finally {
+			closeSync(stderrFd); // The child holds its own
+		}
+	})();
 	log.info("child.spawn", { pid: proc.pid ?? 0, command: args });
-	return proc;
+	const stderr = new StderrTap(path, proc.exited, log);
+	void stderr.ended.then(() => rmSync(dir, { recursive: true, force: true }));
+	return { proc, stderr };
 }
 
 /** Settles with `opened`, or fails as soon as the process exits or takes too long. */
@@ -186,44 +217,75 @@ async function untilInspectorOpens<T>(
 }
 
 /**
- * Reads a child's stderr to its end, which Bun requires of piped streams,
- * keeping the start of it for finding the inspector URL and for errors.
+ * A child's stderr file: read while its first lines are awaited, and once
+ * the child has exited. The start of it is kept for finding the inspector
+ * URL and for errors; all of it is logged.
  */
 class StderrTap {
 	private text = "";
-	/** Settles each time more output arrives, then is replaced */
-	private grew = Promise.withResolvers<void>();
+	private offset = 0;
+	private exited = false;
+	private readonly decoder = new TextDecoder();
 	readonly ended: Promise<void>;
 
-	constructor(stream: ReadableStream<Uint8Array>, log: Logger<"session">) {
-		this.ended = (async () => {
-			const decoder = new TextDecoder();
-			try {
-				for await (const chunk of stream) {
-					const piece = decoder.decode(chunk, { stream: true });
-					log.debug("child.stderr", { text: piece.trimEnd() });
-					if (this.text.length < MAX_KEPT_STDERR) this.text += piece;
-					this.grew.resolve();
-					this.grew = Promise.withResolvers();
-				}
-			} catch {
-				// The process went away
-			}
-		})();
+	constructor(
+		private readonly path: string,
+		exited: Promise<unknown>,
+		private readonly log: Logger<"session">,
+	) {
+		this.ended = exited.then(() => {
+			this.exited = true;
+			this.readMore();
+		});
 	}
 
-	/** The pattern's first capture, once stderr shows it; waits forever if it never does */
+	/**
+	 * The pattern's first capture, once the child has written it; never
+	 * settles if it never does, which the caller's exit race reports better.
+	 * Nothing tells dbg when a file grows (Bun's fs.watch reports a first
+	 * change only), so this looks every few milliseconds until the child exits.
+	 */
 	async firstMatch(pattern: RegExp): Promise<string> {
-		for (;;) {
+		while (!this.exited) {
+			this.readMore();
 			const match = pattern.exec(this.text)?.[1];
 			if (match !== undefined) return match;
-			await this.grew.promise;
+			await Bun.sleep(STDERR_POLL_MS);
 		}
+		return new Promise(() => {});
 	}
 
 	excerpt(): string {
+		this.readMore();
 		const text = this.text.replace(ANSI_RE, "").trim();
 		return text ? `: ${text.slice(0, 500)}` : "";
+	}
+
+	private readMore(): void {
+		const bytes = this.readFrom(this.offset);
+		if (bytes.length === 0) return;
+		this.offset += bytes.length;
+		const piece = this.decoder.decode(bytes, { stream: true });
+		this.log.debug("child.stderr", { text: piece.trimEnd() });
+		if (this.text.length < MAX_KEPT_STDERR) this.text += piece;
+	}
+
+	private readFrom(offset: number): Uint8Array {
+		if (!existsSync(this.path)) return new Uint8Array(); // Removed with its directory
+		const fd = openSync(this.path, "r");
+		try {
+			const chunks: Buffer[] = [];
+			for (;;) {
+				const chunk = Buffer.alloc(64 * 1024);
+				const n = readSync(fd, chunk, 0, chunk.length, offset + chunks.length * chunk.length);
+				if (n === 0) break;
+				chunks.push(chunk.subarray(0, n));
+				if (n < chunk.length) break;
+			}
+			return Buffer.concat(chunks);
+		} finally {
+			closeSync(fd);
+		}
 	}
 }
 

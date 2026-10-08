@@ -17,7 +17,6 @@
 import { mkdtempSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
-import { WS_HANDSHAKE_TIMEOUT_S } from "../src/constants.ts";
 
 const DEFAULT_PATHS = ["tests/unit/", "tests/integration/node/", "tests/integration/bun/"];
 
@@ -79,7 +78,6 @@ async function runBunTest(
 ): Promise<string> {
 	const command = ["bun", "test", "--timeout", String(timeout), ...(concurrent ? ["--concurrent"] : []), ...paths];
 	const proc = Bun.spawn(background ? ["taskpolicy", "-b", ...command] : command, {
-		env: { ...process.env, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: String(WS_HANDSHAKE_TIMEOUT_S) },
 		stdout: "pipe",
 		stderr: "pipe",
 	});

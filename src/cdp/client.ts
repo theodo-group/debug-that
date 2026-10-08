@@ -1,5 +1,5 @@
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.js";
-import { REQUEST_TIMEOUT_MS } from "../constants.ts";
+import { CONNECT_ATTEMPTS, CONNECT_SILENCE_MS, REQUEST_TIMEOUT_MS } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
 import type { CdpEvent, CdpRequest, CdpResponse } from "./types.ts";
 
@@ -51,38 +51,16 @@ export class CdpClient {
 	}
 
 	static async connect(wsUrl: string, logger?: Logger<"cdp">): Promise<CdpClient> {
-		return new Promise<CdpClient>((resolve, reject) => {
-			// Asks Bun not to stay alive for this connection, so a program ends
-			// as it would without a debugger (Node already does); Node ignores it
-			const ws = new WebSocket(wsUrl, { headers: { "Ref-Event-Loop": "0" } });
-
-			const settle = () => {
-				ws.removeEventListener("open", onOpen);
-				ws.removeEventListener("error", onError);
-				ws.removeEventListener("close", onClose);
-			};
-			const onOpen = () => {
-				settle();
-				resolve(new CdpClient(ws, logger));
-			};
-			const onError = (event: Event) => {
-				settle();
-				const message = event instanceof ErrorEvent ? event.message : "WebSocket connection failed";
-				// Bun's handshake timeout: the inspector accepted the socket and would
-				// answer a new one; this one is stuck
-				const hint = message.endsWith("Timeout") ? " -> Try: the same command again" : "";
-				reject(new Error(message + hint));
-			};
-			// A refused upgrade may only close, with no error event
-			const onClose = (event: CloseEvent) => {
-				settle();
-				reject(new Error(`WebSocket closed before opening (code ${event.code} ${event.reason})`));
-			};
-
-			ws.addEventListener("open", onOpen, { once: true });
-			ws.addEventListener("error", onError, { once: true });
-			ws.addEventListener("close", onClose, { once: true });
-		});
+		for (let attempt = 1; ; attempt++) {
+			const ws = await openSocket(wsUrl);
+			if (ws) return new CdpClient(ws, logger);
+			logger?.warn("connect.silent", { url: wsUrl, attempt });
+			if (attempt === CONNECT_ATTEMPTS) {
+				throw new Error(
+					`The inspector at ${wsUrl} did not answer ${attempt} connections -> Try: the same command again`,
+				);
+			}
+		}
 	}
 
 	/**
@@ -337,4 +315,48 @@ export class CdpClient {
 /** A target that kept a domain on from a previous inspector connection reports this. */
 export function isAlreadyEnabledError(err: unknown): boolean {
 	return err instanceof Error && err.message.includes("already enabled");
+}
+
+/**
+ * A socket to the inspector, open; a refused connection rejects. Resolves
+ * with nothing when the socket stays silent, neither opening nor failing,
+ * which is dropped as the loop's doing, not the inspector's.
+ */
+function openSocket(wsUrl: string): Promise<WebSocket | undefined> {
+	return new Promise<WebSocket | undefined>((resolve, reject) => {
+		// Asks Bun not to stay alive for this connection, so a program ends
+		// as it would without a debugger (Node already does); Node ignores it
+		const ws = new WebSocket(wsUrl, { headers: { "Ref-Event-Loop": "0" } });
+
+		const settle = () => {
+			clearTimeout(silence);
+			ws.removeEventListener("open", onOpen);
+			ws.removeEventListener("error", onError);
+			ws.removeEventListener("close", onClose);
+		};
+		const onOpen = () => {
+			settle();
+			resolve(ws);
+		};
+		const onError = (event: Event) => {
+			settle();
+			reject(
+				new Error(event instanceof ErrorEvent ? event.message : "WebSocket connection failed"),
+			);
+		};
+		// A refused upgrade may only close, with no error event
+		const onClose = (event: CloseEvent) => {
+			settle();
+			reject(new Error(`WebSocket closed before opening (code ${event.code} ${event.reason})`));
+		};
+		const silence = setTimeout(() => {
+			settle();
+			ws.close();
+			resolve(undefined);
+		}, CONNECT_SILENCE_MS);
+
+		ws.addEventListener("open", onOpen, { once: true });
+		ws.addEventListener("error", onError, { once: true });
+		ws.addEventListener("close", onClose, { once: true });
+	});
 }

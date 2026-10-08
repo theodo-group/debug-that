@@ -15,13 +15,17 @@ export const REQUEST_TIMEOUT_MS = 30_000;
 export const INSPECTOR_TIMEOUT_MS = 20_000;
 
 /**
- * Seconds Bun's WebSocket client waits for an inspector to answer the upgrade
- * (BUN_CONFIG_WS_HANDSHAKE_TIMEOUT, read once at process start; Bun's own
- * default is 120). On macOS Bun 1.4 rarely leaves a fresh socket deaf to the
- * loop under heavy launch/exit churn; the inspector is fine and a new socket
- * opens at once. This turns such a connect into an error within seconds.
+ * How long a connecting inspector socket may stay silent before dbg drops
+ * it and opens another. An inspector answers an upgrade within milliseconds.
+ * On macOS Bun 1.4 now and then leaves a fresh socket without any event
+ * from the loop under heavy launch/exit churn, while a new one opens at once.
  */
-export const WS_HANDSHAKE_TIMEOUT_S = 10;
+export const CONNECT_SILENCE_MS = 1_000;
+/** Connect attempts before giving up on an inspector that never answers */
+export const CONNECT_ATTEMPTS = 3;
+
+/** How often a launcher reads a child's stderr file while waiting for Node's inspector URL */
+export const STDERR_POLL_MS = 10;
 
 /** Time to wait for the daemon socket file to appear after spawning the daemon process. */
 export const SPAWN_TIMEOUT_MS = 5_000;

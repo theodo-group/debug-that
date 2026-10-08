@@ -1,4 +1,3 @@
-import type { Subprocess } from "bun";
 import type Protocol from "devtools-protocol/types/protocol.js";
 import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
 import { fromShortPath } from "../formatter/path.ts";
@@ -42,7 +41,7 @@ import { EntryBreakpoints } from "./entry-breakpoints.ts";
 import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
-import { startInspected } from "./launcher.ts";
+import { type InspectedProcess, startInspected } from "./launcher.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -100,7 +99,7 @@ import {
 export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
 	readonly sourceMapResolver: SourceMapResolver = new SourceMapResolver();
-	childProcess: Subprocess<"ignore", "ignore", "pipe"> | null = null;
+	childProcess: InspectedProcess | null = null;
 	pausedCallFrames: Protocol.Debugger.CallFrame[] = [];
 	scripts: Map<string, ScriptInfo> = new Map();
 	wsUrl: string | null = null;
@@ -1195,7 +1194,7 @@ export class CdpSession extends BaseSession {
 		this.onProcessExit.clear();
 	}
 
-	private monitorProcessExit(proc: Subprocess<"ignore", "ignore", "pipe">): void {
+	private monitorProcessExit(proc: InspectedProcess): void {
 		proc.exited
 			.then((exitCode) => {
 				this.log.info("child.exit", { code: exitCode ?? null });
