@@ -33,7 +33,7 @@
   "scripts": {
     "dev": "bun run src/main.ts",
     "build": "bun run build.ts",
-    "test": "bun test tests/unit/ && bun test --concurrent tests/integration/",
+    "test": "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=10 bun test tests/unit/ && BUN_CONFIG_WS_HANDSHAKE_TIMEOUT=10 bun test --concurrent tests/integration/",
     "test:stress": "bun scripts/stress-tests.ts",
     "lint": "biome check .",
     "format": "biome check --write .",

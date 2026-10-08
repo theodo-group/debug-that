@@ -67,9 +67,11 @@ export class CdpClient {
 			};
 			const onError = (event: Event) => {
 				settle();
-				reject(
-					new Error(event instanceof ErrorEvent ? event.message : "WebSocket connection failed"),
-				);
+				const message = event instanceof ErrorEvent ? event.message : "WebSocket connection failed";
+				// Bun's handshake timeout: the inspector accepted the socket and would
+				// answer a new one; this one is stuck
+				const hint = message.endsWith("Timeout") ? " -> Try: the same command again" : "";
+				reject(new Error(message + hint));
 			};
 			// A refused upgrade may only close, with no error event
 			const onClose = (event: CloseEvent) => {

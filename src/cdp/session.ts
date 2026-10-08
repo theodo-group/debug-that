@@ -217,7 +217,10 @@ export class CdpSession extends BaseSession {
 		const { proc, wsUrl, runtime } = await startInspected(command, {
 			runtime: this.runtimeHint,
 			port: options.port,
-			log: this.cdpLog,
+			log: this.log,
+		}).catch((err: Error) => {
+			this.log.error("inspector.failed", { error: err.message });
+			throw err;
 		});
 		this.childProcess = proc;
 		this.monitorProcessExit(proc);

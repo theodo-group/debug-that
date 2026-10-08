@@ -17,7 +17,7 @@ export interface Inspected {
 interface StartOptions {
 	/** TCP port for the inspector; by default each runtime picks how to listen */
 	port?: number;
-	log: Logger<"cdp">;
+	log: Logger<"session">;
 }
 
 /**
@@ -144,7 +144,7 @@ async function isBunExecutable(path: string): Promise<boolean> {
 	}
 }
 
-function spawn(args: string[], env: Record<string, string | undefined>, log: Logger<"cdp">) {
+function spawn(args: string[], env: Record<string, string | undefined>, log: Logger<"session">) {
 	const proc = Bun.spawn(args, { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
 	log.info("child.spawn", { pid: proc.pid ?? 0, command: args });
 	return proc;
@@ -169,7 +169,7 @@ async function untilInspectorOpens<T>(
 		timer = setTimeout(() => {
 			reject(
 				new Error(
-					`No inspector opened within ${INSPECTOR_TIMEOUT_MS}ms${stderr.excerpt()} -> Try: dbg launch --runtime bun (or node) to say which runtime runs it`,
+					`No inspector opened within ${INSPECTOR_TIMEOUT_MS}ms${stderr.excerpt()} -> Try: the same command again, or dbg launch --runtime bun (or node) if dbg assumed the wrong runtime`,
 				),
 			);
 		}, INSPECTOR_TIMEOUT_MS);
@@ -191,10 +191,11 @@ async function untilInspectorOpens<T>(
  */
 class StderrTap {
 	private text = "";
-	private readonly listeners = new Set<() => void>();
+	/** Settles each time more output arrives, then is replaced */
+	private grew = Promise.withResolvers<void>();
 	readonly ended: Promise<void>;
 
-	constructor(stream: ReadableStream<Uint8Array>, log: Logger<"cdp">) {
+	constructor(stream: ReadableStream<Uint8Array>, log: Logger<"session">) {
 		this.ended = (async () => {
 			const decoder = new TextDecoder();
 			try {
@@ -202,7 +203,8 @@ class StderrTap {
 					const piece = decoder.decode(chunk, { stream: true });
 					log.debug("child.stderr", { text: piece.trimEnd() });
 					if (this.text.length < MAX_KEPT_STDERR) this.text += piece;
-					for (const listener of this.listeners) listener();
+					this.grew.resolve();
+					this.grew = Promise.withResolvers();
 				}
 			} catch {
 				// The process went away
@@ -210,17 +212,13 @@ class StderrTap {
 		})();
 	}
 
-	firstMatch(pattern: RegExp): Promise<string> {
-		return new Promise((resolve) => {
-			const check = () => {
-				const match = pattern.exec(this.text)?.[1];
-				if (match === undefined) return;
-				this.listeners.delete(check);
-				resolve(match);
-			};
-			this.listeners.add(check);
-			check();
-		});
+	/** The pattern's first capture, once stderr shows it; waits forever if it never does */
+	async firstMatch(pattern: RegExp): Promise<string> {
+		for (;;) {
+			const match = pattern.exec(this.text)?.[1];
+			if (match !== undefined) return match;
+			await this.grew.promise;
+		}
 	}
 
 	excerpt(): string {

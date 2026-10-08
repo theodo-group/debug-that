@@ -80,7 +80,7 @@ describe("Unified logger integration", () => {
 		const logPath = getLogPath(sessionName);
 		try {
 			await expect(session.launch(["echo", "hello"], { brk: true })).rejects.toThrow(
-				"Failed to detect inspector URL",
+				"before its inspector opened",
 			);
 			const entries = readEntries(logPath);
 			expect(hasEntry(entries, "session", "child.spawn")).toBe(true);
