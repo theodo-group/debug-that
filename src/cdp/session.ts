@@ -43,7 +43,6 @@ import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
 import { startInspected } from "./launcher.ts";
-import { pinLoopback } from "./loopback.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -247,9 +246,7 @@ export class CdpSession extends BaseSession {
 		let wsUrl: string;
 
 		if (target.startsWith("ws://") || target.startsWith("wss://")) {
-			const url = new URL(target);
-			url.hostname = await pinLoopback(url.hostname, Number(url.port || 80));
-			wsUrl = url.href;
+			wsUrl = target;
 		} else {
 			// Treat as a port number
 			const port = parseInt(target, 10);
@@ -1214,13 +1211,20 @@ export class CdpSession extends BaseSession {
 			});
 	}
 
+	/** Inspectors bound to "localhost" may listen on one loopback only: Bun picks ::1, Node 127.0.0.1. */
 	private async discoverWsUrl(port: number): Promise<string> {
-		const host = await pinLoopback("localhost", port);
-		let response: Response;
-		try {
-			response = await fetch(`http://${host}:${port}/json`);
-		} catch (err) {
-			const reason = err instanceof Error ? err.message : String(err);
+		let response: Response | undefined;
+		let lastError: unknown;
+		for (const host of ["127.0.0.1", "[::1]"]) {
+			try {
+				response = await fetch(`http://${host}:${port}/json`);
+				break;
+			} catch (err) {
+				lastError = err;
+			}
+		}
+		if (!response) {
+			const reason = lastError instanceof Error ? lastError.message : String(lastError);
 			throw new Error(`Cannot connect to inspector at port ${port}: ${reason}`);
 		}
 

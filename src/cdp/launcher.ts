@@ -106,18 +106,22 @@ const node = new NodeLauncher();
 /** Asked first: a compiled Bun executable can have any name */
 const LAUNCHERS: Launcher[] = [new BunLauncher(), node];
 
-/** Starts `command` held for dbg, with the given runtime's launcher or the one that runs it. */
+/** Starts `command` held for dbg, by the launcher of the runtime that runs it. */
 export async function startInspected(
 	command: string[],
 	options: StartOptions & { runtime?: RuntimeName },
 ): Promise<Inspected> {
-	const launcher =
-		LAUNCHERS.find((l) => l.runtime === options.runtime) ?? (await launcherFor(command));
+	const launcher = await launcherFor(command, options.runtime);
 	return { ...(await launcher.start(command, options)), runtime: launcher.runtime };
 }
 
-/** Anything not recognised, such as a script with a shebang, is taken for Node.js. */
-async function launcherFor(command: string[]): Promise<Launcher> {
+/**
+ * The runtime named with --runtime, else the one recognising the executable.
+ * Anything not recognised, such as a script with a shebang, is taken for Node.js.
+ */
+async function launcherFor(command: string[], runtime?: RuntimeName): Promise<Launcher> {
+	const named = LAUNCHERS.find((l) => l.runtime === runtime);
+	if (named) return named;
 	for (const launcher of LAUNCHERS) {
 		if (await launcher.runs(command[0] ?? "")) return launcher;
 	}

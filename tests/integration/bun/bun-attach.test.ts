@@ -34,8 +34,7 @@ describe("Bun attach", () => {
 		withInspectedBun(["tests/fixtures/js/simple-app.js"], "?break=1", (wsUrl, pid) =>
 			withSession("bun-attach-break", async (session) => {
 				const result = await session.attach(wsUrl);
-				// localhost is pinned to the one loopback address the process listens on
-				expect(result.wsUrl).toMatch(/^ws:\/\/(127\.0\.0\.1|\[::1\]):\d+\/dbg-test$/);
+				expect(result.wsUrl).toBe(wsUrl);
 				expect(result.target?.pid).toBe(pid);
 				expect(session.runtime).toBe("bun");
 				expect(session.state).toBe("paused");
