@@ -168,7 +168,7 @@ Breakpoints:
   break-rm <BP#|all>               Remove breakpoint
   break-ls                         List breakpoints
   break-toggle <BP#|all>           Enable/disable breakpoints
-  breakable <file>:<start>-<end>   List valid breakpoint locations
+  breakable <file>:<line>[-<end>]  List valid breakpoint locations
   logpoint <file>:<line> <tpl>     Set logpoint
     [--condition <expr>]
   catch [all|uncaught|caught|none] Pause on exceptions

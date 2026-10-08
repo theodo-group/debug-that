@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { colorize, shouldEnableColor } from "../formatter/color.ts";
-import { shortPath } from "../formatter/path.ts";
+import { formatLocation } from "../formatter/path.ts";
 
 defineCommand({
 	name: "break-ls",
@@ -22,7 +22,7 @@ defineCommand({
 				console.log("No breakpoints or logpoints set");
 			} else {
 				for (const bp of data) {
-					const loc = bp.fn ? `fn:${bp.fn}` : `${shortPath(bp.url)}:${bp.line}`;
+					const loc = bp.fn ? `fn:${bp.fn}` : formatLocation(bp);
 					let line = `${cc(bp.ref, "magenta")} ${cc(loc, "cyan")}`;
 					if (bp.type === "LP" && bp.template) {
 						line += ` ${cc(`(log: ${bp.template})`, "green")}`;

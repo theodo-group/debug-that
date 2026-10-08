@@ -3,7 +3,7 @@ import { defineCommand } from "../cli/command.ts";
 import { parseFileLineColumn } from "../cli/parse-target.ts";
 import { DaemonClient, daemonRequest } from "../daemon/client.ts";
 import { colorize, shouldEnableColor } from "../formatter/color.ts";
-import { shortPath } from "../formatter/path.ts";
+import { formatLocation, shortPath } from "../formatter/path.ts";
 import { requestFunctionBreakpoint } from "./break-fn.ts";
 
 defineCommand({
@@ -114,7 +114,7 @@ defineCommand({
 		if (ctx.global.json) {
 			console.log(JSON.stringify(data, null, 2));
 		} else {
-			const loc = `${shortPath(data.location.url)}:${data.location.line}`;
+			const loc = formatLocation(data.location);
 			let msg = `${cc(data.ref, "magenta")} set at ${cc(loc, "cyan")}`;
 			if (condition) {
 				msg += ` ${cc(`(condition: ${condition})`, "gray")}`;

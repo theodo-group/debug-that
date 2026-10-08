@@ -126,7 +126,8 @@ dbg break-rm all                    # Remove all breakpoints
 dbg break-ls                        # List all breakpoints
 dbg break-toggle BP#1               # Disable/enable one breakpoint
 dbg break-toggle all                # Disable/enable all
-dbg breakable src/app.ts:10-50      # List valid breakpoint locations
+dbg breakable src/app.ts:10-50      # List valid breakpoint locations (or one line: app.ts:10)
+dbg break dist/chunk.js:13:687      # Pin a column in minified code, even before the file loads
 dbg logpoint src/app.ts:20 "x=${x}" # Log without pausing
 dbg logpoint src/app.ts:20 "x=${x}" --condition "x > 0"
 dbg break-fn <name>                  # Function breakpoint (DAP: symbol, JS: path such as service.ping)

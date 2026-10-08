@@ -185,7 +185,7 @@ BREAKPOINTS:
   dbg break-rm <BP#|all>    Remove breakpoints
   dbg break-ls              List breakpoints
   dbg break-toggle <BP#|all>  Enable/disable breakpoints
-  dbg breakable file:start-end  Valid breakpoint locations
+  dbg breakable file:line[-end] Valid breakpoint locations (break file:line:col)
   dbg logpoint file:line "template \${var}" [--condition expr]
   dbg catch [all|uncaught|caught|none]
   dbg break-fn <path|@ref|name> [--condition expr] [--log args] [--name]  Pause when a function is called

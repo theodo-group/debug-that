@@ -62,12 +62,13 @@ export async function setBreakpoint(
 	// its first statement until then (guardPendingBreakpoints).
 	if (!url && !resolved?.runtime.scriptId && !urlRegex) {
 		const meta: BreakpointMeta = { url: file, line };
+		if (options?.column !== undefined) meta.column = options.column;
 		if (options?.condition) meta.condition = options.condition;
 		if (options?.hitCount) meta.hitCount = options.hitCount;
 
 		const ref = session.refs.addPendingBreakpoint(meta);
 		await session.guardPendingBreakpoints();
-		return { ref, location: { url: file, line }, pending: true };
+		return { ref, location: { url: file, line, column: meta.column }, pending: true };
 	}
 
 	const r = await session.dialect.setBreakpoint(
@@ -85,7 +86,13 @@ export async function setBreakpoint(
 
 	const sourceUrl = resolved?.source.file ?? url ?? file;
 	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
-	const resolvedColumn = loc?.columnNumber;
+	// A pinned column is shown where it bound; mapped code shows the column asked for
+	const resolvedColumn =
+		options?.column === undefined
+			? undefined
+			: resolved || loc?.columnNumber === undefined
+				? options.column
+				: loc.columnNumber + 1;
 
 	const meta: BreakpointMeta = {
 		url: sourceUrl,
@@ -415,16 +422,12 @@ export async function setLogpoint(
 	const loc = r.location;
 	const sourceUrl = resolved?.source.file ?? url ?? file;
 	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
-	const resolvedColumn = loc?.columnNumber;
 
 	const meta: LogpointMeta = {
 		url: sourceUrl,
 		line: sourceLine,
 		template,
 	};
-	if (resolvedColumn !== undefined) {
-		meta.column = resolvedColumn;
-	}
 	if (options?.condition) {
 		meta.condition = options.condition;
 	}
@@ -433,16 +436,7 @@ export async function setLogpoint(
 	}
 
 	const ref = session.refs.addLogpoint(r.breakpointId, meta);
-
-	const location: { url: string; line: number; column?: number } = {
-		url: sourceUrl,
-		line: sourceLine,
-	};
-	if (resolvedColumn !== undefined) {
-		location.column = resolvedColumn;
-	}
-
-	return { ref, location };
+	return { ref, location: { url: sourceUrl, line: sourceLine } };
 }
 
 export async function setExceptionPause(

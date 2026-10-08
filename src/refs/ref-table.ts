@@ -7,6 +7,7 @@ export interface BreakpointMeta {
 	line: number;
 	condition?: string;
 	hitCount?: number;
+	/** Counted from 1, set only when the breakpoint was pinned to a column */
 	column?: number;
 	originalUrl?: string;
 	originalLine?: number;
@@ -32,7 +33,6 @@ export interface LogpointMeta {
 	fnFound?: boolean;
 	condition?: string;
 	maxEmissions?: number;
-	column?: number;
 	originalUrl?: string;
 	originalLine?: number;
 }

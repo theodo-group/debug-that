@@ -5,9 +5,9 @@ import { daemonRequest } from "../daemon/client.ts";
 defineCommand({
 	name: "breakable",
 	description: "List valid breakpoint locations",
-	usage: "breakable <file>:<start>-<end>",
+	usage: "breakable <file>:<line> | <file>:<start>-<end>",
 	category: "breakpoints",
-	positional: { kind: "required", name: "target", description: "file:start-end" },
+	positional: { kind: "required", name: "target", description: "file:line or file:start-end" },
 	flags: z.object({}),
 	handler: async (ctx) => {
 		const target = ctx.positional;
@@ -16,24 +16,18 @@ defineCommand({
 		const lastColon = target.lastIndexOf(":");
 		if (lastColon === -1 || lastColon === 0) {
 			console.error(`Invalid target format: "${target}"`);
-			console.error("  -> Expected: <file>:<start>-<end>");
+			console.error("  -> Expected: <file>:<line> or <file>:<start>-<end>");
 			return 1;
 		}
 
 		const file = target.slice(0, lastColon);
 		const range = target.slice(lastColon + 1);
-		const dashIdx = range.indexOf("-");
-		if (dashIdx === -1) {
-			console.error(`Invalid range format: "${range}"`);
-			console.error("  -> Expected: <start>-<end>");
-			return 1;
-		}
-
-		const startLine = parseInt(range.slice(0, dashIdx), 10);
-		const endLine = parseInt(range.slice(dashIdx + 1), 10);
+		const [start = "", end = start] = range.split("-");
+		const startLine = parseInt(start, 10);
+		const endLine = parseInt(end, 10);
 		if (Number.isNaN(startLine) || Number.isNaN(endLine) || startLine <= 0 || endLine <= 0) {
-			console.error(`Invalid line numbers in "${range}"`);
-			console.error("  -> Expected: <start>-<end>");
+			console.error(`Invalid line or range: "${range}"`);
+			console.error("  -> Expected: <file>:<line> or <file>:<start>-<end>");
 			return 1;
 		}
 

@@ -35,6 +35,15 @@ export function describePendingBreakpoints(runtime: "node" | "bun"): void {
 				expect(session.listBreakpoints()[0]?.pending).toBeFalsy();
 			}));
 
+		test("a breakpoint pinned to a column fires there, not on the line's first statement", () =>
+			withLoader("pending-column", async (session) => {
+				const bp = await session.setBreakpoint(TARGET, 2, { column: 27 }); // exports.second
+				expect(bp.location).toMatchObject({ line: 2, column: 27 });
+				await session.continue();
+				await session.waitForState("paused");
+				expect(session.getStack()[0]).toMatchObject({ line: 2, column: 27 });
+			}));
+
 		test("fires on the file's first statement", () =>
 			withLoader("pending-first", async (session) => {
 				const bp = await session.setBreakpoint(TARGET, 1);

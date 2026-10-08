@@ -923,13 +923,16 @@ export class CdpSession extends BaseSession {
 			const matchedUrl = this.findScriptUrl(meta.url);
 			if (matchedUrl !== scriptUrl) continue;
 
-			const resolved = this.resolveToRuntime(meta.url, meta.line, 0);
+			const column = "column" in meta ? meta.column : undefined;
+			const resolved = this.resolveToRuntime(meta.url, meta.line, (column ?? 1) - 1);
 			const compiledLine = resolved?.runtime.line ?? meta.line;
+			const compiledColumn =
+				column === undefined ? undefined : (resolved?.runtime.column ?? column - 1);
 
 			try {
 				const r = await this.dialect.setBreakpoint(
 					{ kind: "location", scriptId },
-					{ line: compiledLine, ...behaviorOf(entry) },
+					{ line: compiledLine, column: compiledColumn, ...behaviorOf(entry) },
 				);
 
 				this.refs.bind(entry.ref, r.breakpointId);
