@@ -306,8 +306,8 @@ describe("CdpClient", () => {
 			await p2;
 
 			expect(errors).toHaveLength(2);
-			expect(errors[0]).toBe("CDP client disconnected");
-			expect(errors[1]).toBe("CDP client disconnected");
+			expect(errors[0]).toBe("CDP client disconnected before Debugger.enable was answered");
+			expect(errors[1]).toBe("CDP client disconnected before Runtime.enable was answered");
 		});
 
 		test("disconnect() sets connected to false", () => {

@@ -199,7 +199,8 @@ INSPECTION:
   dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]  (works while running, global scope)
   dbg props @ref [--own] [--depth N] [--private] [--internal]
   dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
-  dbg source [--lines N] [--file path] [--all] [--generated] [--width N] [--reflow]
+  dbg source [file:line[:col]] [--lines N] [--all] [--generated] [--width N] [--reflow]
+    (a search result's file:line:col pastes in as is)
   dbg search "query" [--regex] [--case-sensitive] [--file id] [--width N]
   (minified code: --width N shows N chars around the column/match, --reflow prints one statement per line)
   dbg scripts [--filter pattern]

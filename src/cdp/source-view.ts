@@ -27,6 +27,8 @@ export interface SourceWindowOptions {
 	generated?: boolean;
 	/** Original source to show when the script's map declares several */
 	source?: string;
+	/** Where to center in the text shown, counted from 1, in place of the position */
+	at?: { line: number; column?: number };
 }
 
 interface SourceView {
@@ -51,14 +53,17 @@ export async function sourceWindow(
 		(options.generated ? null : originalView(session, scriptId, position, options.source)) ??
 		(await scriptView(session, scriptId, position));
 
+	const focus = options.at
+		? { line: options.at.line - 1, column: options.at.column }
+		: view.position;
 	const lines = view.text.split("\n");
 	const last = lines.length - 1;
 	let start = 0;
 	let end = last;
 	if (!options.all) {
-		if (view.position) {
-			start = Math.max(0, view.position.line - options.context);
-			end = Math.min(last, view.position.line + options.context);
+		if (focus) {
+			start = Math.max(0, focus.line - options.context);
+			end = Math.min(last, focus.line + options.context);
 		} else {
 			end = Math.min(last, options.context * 2);
 		}
@@ -67,9 +72,9 @@ export async function sourceWindow(
 	const out: SourceWindowLine[] = [];
 	for (let i = start; i <= end; i++) {
 		const entry: SourceWindowLine = { line: i + 1, text: lines[i] ?? "" };
-		if (view.position && i === view.position.line) {
+		if (focus && i === focus.line) {
 			entry.current = true;
-			if (view.position.column !== undefined) entry.column = view.position.column;
+			if (focus.column !== undefined) entry.column = focus.column;
 		}
 		out.push(entry);
 	}

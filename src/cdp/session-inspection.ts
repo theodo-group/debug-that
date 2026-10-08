@@ -2,7 +2,7 @@ import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { windowAround } from "../formatter/window.ts";
-import type { EvalResult } from "../session/session.ts";
+import type { EvalResult, SourceOptions } from "../session/session.ts";
 import type { CdpClient } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 import { type SourceWindow, sourceWindow } from "./source-view.ts";
@@ -439,7 +439,7 @@ async function fetchPropsRecursive(
 
 export async function getSource(
 	session: CdpSession,
-	options: { file?: string; lines?: number; all?: boolean; generated?: boolean } = {},
+	options: SourceOptions = {},
 ): Promise<SourceWindow> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
@@ -448,6 +448,8 @@ export async function getSource(
 
 	let scriptId: string | undefined;
 	let source: string | undefined;
+	// A position given in a script is in the script's own text, so show that text
+	let generated = options.generated;
 	if (options.file) {
 		const mapped = options.generated
 			? null
@@ -456,12 +458,19 @@ export async function getSource(
 			scriptId = mapped.scriptId;
 			source = options.file;
 		} else {
+			if (options.at) generated = true;
 			const url = session.findScriptUrl(options.file);
 			if (!url) throw new Error(`No loaded script matches "${options.file}"`);
 			scriptId = session.findScriptIdByUrl(url);
 		}
 	} else {
-		if (!paused?.scriptId) throw new Error("Not paused; specify --file to view source");
+		if (!paused?.scriptId) {
+			throw new Error(
+				"Not paused, so no current source -> Try: dbg source <file>:<line>[:<column>]",
+			);
+		}
+		if (options.at)
+			throw new Error("A position needs its file -> Try: dbg source <file>:<line>[:<column>]");
 		scriptId = paused.scriptId;
 	}
 	if (!scriptId) {
@@ -475,8 +484,9 @@ export async function getSource(
 	return sourceWindow(session, scriptId, position, {
 		context: options.lines ?? 5,
 		all: options.all,
-		generated: options.generated,
+		generated,
 		source,
+		at: options.at,
 	});
 }
 

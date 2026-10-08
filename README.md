@@ -169,9 +169,9 @@ Breakpoints:
   break-ls                         List breakpoints
   break-toggle <BP#|all>           Enable/disable breakpoints
   breakable <file>:<line>[-<end>]  List valid breakpoint locations
-  logpoint <file>:<line> <tpl>     Set logpoint
+  logpoint <file>:<line> <args>    Set logpoint (console.log's arguments, e.g. '"x =", x')
     [--condition <expr>]
-  catch [all|uncaught|caught|none] Pause on exceptions
+  catch [all|uncaught|caught|none|exit]  Pause on exceptions, or as the program exits
 
 Mutation:
   set <@ref|name> <value>          Change variable value

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatError } from "../../src/formatter/errors.ts";
+import { fromShortPath, shortPath } from "../../src/formatter/path.ts";
 import { formatSource, type SourceLine } from "../../src/formatter/source.ts";
 import { formatStack, type StackFrame } from "../../src/formatter/stack.ts";
 import type { RemoteObject } from "../../src/formatter/values.ts";
@@ -736,5 +737,16 @@ describe("formatVariables", () => {
 		// @v1 should be padded to match @v10 length
 		expect(lines[0]).toMatch(/^@v1\s+a\s+1$/);
 		expect(lines[1]).toMatch(/^@v10\s+b\s+2$/);
+	});
+});
+
+describe("fromShortPath", () => {
+	test("a shown path is a suffix of the full one again", () => {
+		const full = "/Users/someone/projects/debug-that/tests/fixtures/js/a-rather-long-name.js";
+		const shown = shortPath(full);
+		expect(shown.startsWith("…/")).toBe(true);
+		expect(full.endsWith(fromShortPath(shown))).toBe(true);
+		expect(fromShortPath("./src/app.ts")).toBe("src/app.ts");
+		expect(fromShortPath("../lib/app.ts")).toBe("../lib/app.ts");
 	});
 });

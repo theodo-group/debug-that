@@ -205,7 +205,19 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			const session = requireSession();
 			if (isError(session)) return session;
 			const { mode } = req.args;
+			if (mode === "exit") {
+				if (!session.features.exitPause || !session.setExitPause) {
+					return {
+						ok: false,
+						error: "catch exit is for JavaScript (Node.js, Bun) sessions",
+						suggestion: "-> Try: dbg catch uncaught",
+					};
+				}
+				await session.setExitPause(true);
+				return { ok: true, data: mode };
+			}
 			await session.setExceptionPause(mode);
+			if (mode === "none") await session.setExitPause?.(false);
 			return { ok: true, data: mode };
 		}
 

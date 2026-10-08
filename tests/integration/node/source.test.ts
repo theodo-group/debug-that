@@ -22,6 +22,26 @@ describe("Inspection commands", () => {
 			expect(result.lines.length).toBeGreaterThan(0);
 		}));
 
+	test("getSource at a position centers on it, in the file it names", () =>
+		withPausedSession("test-source-at", "tests/fixtures/js/step-app.js", async (session) => {
+			const result = await session.getSource({
+				file: "step-app.js",
+				at: { line: 11, column: 11 },
+				lines: 1,
+			});
+			expect(result.lines.map((l) => l.line)).toEqual([10, 11, 12]);
+			expect(result.lines[1]).toMatchObject({ current: true, column: 11 });
+			expect(result.lines[1]?.text).toBe("const c = helper(a);");
+		}));
+
+	test("getSource at a position in a mapped source uses that source's lines", () =>
+		withPausedSession("test-source-at-mapped", "tests/fixtures/ts/dist/app.js", async (session) => {
+			const inSource = await session.getSource({ file: "app.ts", at: { line: 8 }, lines: 0 });
+			expect(inSource.lines[0]?.text).toContain("const message: string");
+			const inScript = await session.getSource({ file: "app.js", at: { line: 2 }, lines: 0 });
+			expect(inScript.lines[0]?.text).toContain("const message = ");
+		}));
+
 	test("getSource with all option returns entire file", () =>
 		withPausedSession("test-source-all", "tests/fixtures/js/step-app.js", async (session) => {
 			const result = await session.getSource({ all: true });

@@ -127,10 +127,11 @@ dbg break-rm all                    # Remove all breakpoints
 dbg break-ls                        # List all breakpoints
 dbg break-toggle BP#1               # Disable/enable one breakpoint
 dbg break-toggle all                # Disable/enable all
+dbg source dist/chunk.js:484:13187 --width 300   # Window around any position; --reflow for minified code
 dbg breakable src/app.ts:10-50      # List valid breakpoint locations (or one line: app.ts:10)
 dbg break dist/chunk.js:13:687      # Pin a column in minified code, even before the file loads
-dbg logpoint src/app.ts:20 "x=${x}" # Log without pausing
-dbg logpoint src/app.ts:20 "x=${x}" --condition "x > 0"
+dbg logpoint src/app.ts:20 '"x =", x'   # Log without pausing: console.log's arguments
+dbg logpoint src/app.ts:20 '`x=${x}`' --condition "x > 0"
 dbg break-fn <name>                  # Function breakpoint (DAP: symbol, JS: path such as service.ping)
 dbg break-fn main --condition "argc > 1"
 dbg break-fn fetch --condition 'String(args[0]).includes("/api")'   # native (wrapped): args/this; JS functions: their parameters
@@ -140,7 +141,8 @@ dbg break fn:service.ping --hit-count 3   # location form; also: dbg logpoint fn
 dbg break-fn fetch --log '"fetch", args[0]'   # JS: log calls instead of pausing
 dbg catch all                       # Pause on all exceptions
 dbg catch uncaught                  # Pause on uncaught only
-dbg catch none                      # Don't pause on exceptions
+dbg catch none                      # Don't pause on exceptions, nor at exit
+dbg catch exit                      # JS: pause as the program exits, state alive (eval code = exit code)
 ```
 
 ## Mutation

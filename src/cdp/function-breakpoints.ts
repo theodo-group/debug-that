@@ -281,6 +281,7 @@ export class FunctionBreakpoints {
 		const id = `fn:${crypto.randomUUID()}`;
 		const { holder, key } = splitPath(path);
 		const record = { path, condition: behavior.condition, template: behavior.log };
+		const log = behavior.log === undefined ? undefined : await this.session.dialect.jsLogger();
 		await this.evaluate(`(() => {
 	const holder = ${holder};
 	const key = ${JSON.stringify(key)};
@@ -292,7 +293,7 @@ export class FunctionBreakpoints {
 	const name = original.name || key;
 	const wrapped = {
 		[name](...args) {
-			if (${asCondition(behavior) ?? "true"}) {
+			if (${asCondition(behavior, log) ?? "true"}) {
 				debugger;
 			}
 			return original.apply(this, args);

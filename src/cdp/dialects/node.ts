@@ -10,20 +10,28 @@ import type {
 	ConnectIntent,
 	ConnectTarget,
 	InspectorDialect,
+	JsLogger,
 } from "../dialect.ts";
 
 export class NodeDialect implements InspectorDialect {
 	readonly name = "node" as const;
 	readonly internalUrlPrefix = "node:";
+	readonly dropsMessagesAtExit = false;
 
 	private beforeScriptsBreakpoint: string | null = null;
 
 	constructor(private readonly cdp: CdpClient) {}
 
-	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
+	async connect(
+		target: ConnectTarget,
+		intent: ConnectIntent,
+		prepare: () => Promise<void>,
+	): Promise<void> {
+		await this.letEndedProgramsExit();
 		if (intent.mode === "launch") {
 			// dbg launches with --inspect-brk, holding the program until it connects
 			await this.cdp.enableDomains();
+			await prepare();
 			if (intent.pauseAtEntry) await this.pauseAtEntry(target);
 			else await this.release(target);
 			return;
@@ -31,6 +39,7 @@ export class NodeDialect implements InspectorDialect {
 		// An attached process says itself whether it is held
 		const waited = await this.watchWaitingForDebugger();
 		await this.cdp.enableDomains();
+		await prepare();
 		if (waited()) await this.pauseAtEntry(target);
 	}
 
@@ -39,7 +48,7 @@ export class NodeDialect implements InspectorDialect {
 	 * into it. A script target binds by URL, which survives script reloads.
 	 */
 	async setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding> {
-		const condition = asCondition(spec);
+		const condition = asCondition(spec, nodeLog);
 		if (target.kind === "location") {
 			const r = await this.cdp.send("Debugger.setBreakpoint", {
 				location: {
@@ -77,7 +86,7 @@ export class NodeDialect implements InspectorDialect {
 	): Promise<string | null> {
 		const target = await this.functionWithSource(functionObjectId);
 		if (!target) return null;
-		const condition = asCondition(behavior);
+		const condition = asCondition(behavior, nodeLog);
 		const r = await this.cdp.send("Debugger.setBreakpointOnFunctionCall", {
 			objectId: target,
 			...(condition ? { condition } : {}),
@@ -128,7 +137,24 @@ export class NodeDialect implements InspectorDialect {
 		await this.cdp.send("Debugger.setBlackboxPatterns", { patterns });
 	}
 
+	async jsLogger(): Promise<JsLogger> {
+		return nodeLog;
+	}
+
 	// ── Handshake steps ───────────────────────────────────────────────
+
+	/**
+	 * A program that ends stays alive while a debugger is connected, "Waiting
+	 * for the debugger to disconnect". Asking to hear of it lets dbg let go then
+	 * (NodeRuntime.waitingForDisconnect), so it exits as it would without dbg.
+	 */
+	private async letEndedProgramsExit(): Promise<void> {
+		try {
+			await this.cdp.sendRaw("NodeRuntime.notifyWhenWaitingForDisconnect", { enabled: true });
+		} catch {
+			// Runtimes without the NodeRuntime domain do not wait
+		}
+	}
 
 	/**
 	 * Whether the process is held until an inspector releases it (--inspect-brk,
@@ -213,3 +239,7 @@ export class NodeDialect implements InspectorDialect {
 		}
 	}
 }
+
+/** node:inspector's console reaches inspector clients only, where console.log also prints */
+const nodeLog: JsLogger = (expression) =>
+	`process.getBuiltinModule("node:inspector").console.log(${expression})`;

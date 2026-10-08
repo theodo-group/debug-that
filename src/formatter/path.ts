@@ -40,6 +40,14 @@ export function shortPath(path: string, opts?: { verbose?: boolean }): string {
 	return path;
 }
 
+/**
+ * A path as shortPath shows it, made findable again: what is left once "…/"
+ * or "./" goes is a suffix of the full path, and lookups match suffixes.
+ */
+export function fromShortPath(path: string): string {
+	return path.replace(/^(…|\.)\//, "");
+}
+
 /** "file:line:column" for a location whose line and column count from 1 */
 export function formatLocation(location: { url?: string; line?: number; column?: number }): string {
 	if (!location.url) return "unknown";

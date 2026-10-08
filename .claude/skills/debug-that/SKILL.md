@@ -149,10 +149,18 @@ dbg continue                              # pauses on the call; `dbg stack` @f1 
 
 ### Trace execution flow with logpoints (no pause)
 ```bash
-dbg logpoint src/auth.ts:20 "login attempt: ${username}"
-dbg logpoint src/auth.ts:45 "auth result: ${result}"
+dbg logpoint src/auth.ts:20 '"login attempt:", username'   # console.log's arguments
+dbg logpoint src/auth.ts:45 '`auth result: ${result}`'
 dbg continue
-dbg console    # see logged output
+dbg console    # see logged output; logpoints never print into the program's own output
+```
+
+### Inspect state as the program exits (JS)
+```bash
+dbg catch exit              # pause in the program's exit, state still alive
+dbg continue --wait 60      # runs until it exits
+dbg eval "code"             # the exit code; eval anything else that is still there
+dbg continue                # let it exit
 ```
 
 ### Exception debugging

@@ -5,6 +5,7 @@ import {
 	originalPositionFor,
 	TraceMap,
 } from "@jridgewell/trace-mapping";
+import { fromShortPath } from "../formatter/path.ts";
 
 export interface OriginalPosition {
 	source: string;
@@ -199,10 +200,10 @@ export class SourceMapResolver {
 		return ref ? (contents[ref.sourceIndex] ?? null) : null;
 	}
 
-	findScriptForSource(path: string): { scriptId: string; url: string } | null {
+	findScriptForSource(shown: string): { scriptId: string; url: string } | null {
 		if (this.disabled) return null;
 
-		const map = this.declarationsOf(path)[0]?.map;
+		const map = this.declarationsOf(fromShortPath(shown))[0]?.map;
 		return map ? { scriptId: map.scriptId, url: map.generatedUrl } : null;
 	}
 

@@ -116,6 +116,7 @@ const CatchRequest = z.object({
 			z.literal("uncaught"),
 			z.literal("caught"),
 			z.literal("none"),
+			z.literal("exit"),
 		]),
 	}),
 });
@@ -127,6 +128,7 @@ const SourceRequest = z.object({
 		lines: z.optional(z.number()),
 		all: z.optional(z.boolean()),
 		generated: z.optional(z.boolean()),
+		at: z.optional(z.object({ line: z.number(), column: z.optional(z.number()) })),
 	}),
 });
 

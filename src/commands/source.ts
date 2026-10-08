@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
+import { parseFileLineColumn } from "../cli/parse-target.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { detectLanguage, shouldEnableColor } from "../formatter/color.ts";
 import { shortPath } from "../formatter/path.ts";
@@ -9,9 +10,13 @@ import { formatSource } from "../formatter/source.ts";
 defineCommand({
 	name: "source",
 	description: "Show source code",
-	usage: "source [--lines N]",
+	usage: "source [<file>:<line>[:<column>]] [--lines N] [--width N]",
 	category: "inspection",
-	positional: { kind: "none" },
+	positional: {
+		kind: "joined",
+		name: "position",
+		description: "Where to look; the paused position by default",
+	},
 	flags: z.object({
 		lines: z.coerce.number().optional().meta({ description: "Number of lines to show" }),
 		file: z.string().optional().meta({ description: "Script ID or file path" }),
@@ -24,9 +29,22 @@ defineCommand({
 		reflow: z.boolean().optional().meta({ description: "One statement per line (minified code)" }),
 	}),
 	handler: async (ctx) => {
+		let file = ctx.flags.file;
+		let at: { line: number; column?: number } | undefined;
+		if (ctx.positional) {
+			const parsed = parseFileLineColumn(ctx.positional);
+			if (!parsed) {
+				console.error(`Invalid position: "${ctx.positional}"`);
+				console.error("  -> Try: dbg source dist/chunk.js:484:13187 --width 300");
+				return 1;
+			}
+			file = parsed.file;
+			at = { line: parsed.line, column: parsed.column };
+		}
 		const data = await daemonRequest(ctx.global.session, "source", {
 			lines: ctx.flags.lines,
-			file: ctx.flags.file,
+			file,
+			at,
 			all: ctx.flags.all || undefined,
 			generated: ctx.flags.generated || undefined,
 		});

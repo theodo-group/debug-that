@@ -56,20 +56,30 @@ export class CdpClient {
 			// as it would without a debugger (Node already does); Node ignores it
 			const ws = new WebSocket(wsUrl, { headers: { "Ref-Event-Loop": "0" } });
 
-			const onOpen = () => {
-				ws.removeEventListener("error", onError);
-				const client = new CdpClient(ws, logger);
-				resolve(client);
-			};
-
-			const onError = (event: Event) => {
+			const settle = () => {
 				ws.removeEventListener("open", onOpen);
-				const message = event instanceof ErrorEvent ? event.message : "WebSocket connection failed";
-				reject(new Error(message));
+				ws.removeEventListener("error", onError);
+				ws.removeEventListener("close", onClose);
+			};
+			const onOpen = () => {
+				settle();
+				resolve(new CdpClient(ws, logger));
+			};
+			const onError = (event: Event) => {
+				settle();
+				reject(
+					new Error(event instanceof ErrorEvent ? event.message : "WebSocket connection failed"),
+				);
+			};
+			// A refused upgrade may only close, with no error event
+			const onClose = (event: CloseEvent) => {
+				settle();
+				reject(new Error(`WebSocket closed before opening (code ${event.code} ${event.reason})`));
 			};
 
 			ws.addEventListener("open", onOpen, { once: true });
 			ws.addEventListener("error", onError, { once: true });
+			ws.addEventListener("close", onClose, { once: true });
 		});
 	}
 
@@ -87,7 +97,7 @@ export class CdpClient {
 	): Promise<ProtocolMapping.Commands[T]["returnType"]>;
 	async send(method: string, ...args: unknown[]): Promise<unknown> {
 		if (!this.isConnected) {
-			throw new Error("CDP client is not connected");
+			throw new ConnectionClosedError(`CDP client is not connected: cannot send ${method}`);
 		}
 
 		const params = args[0] as Record<string, unknown> | undefined;
@@ -222,14 +232,7 @@ export class CdpClient {
 			return;
 		}
 		this.isConnected = false;
-
-		const error = new ConnectionClosedError("CDP client disconnected");
-		for (const [id, pending] of this.pending) {
-			clearTimeout(pending.timer);
-			pending.reject(error);
-			this.pending.delete(id);
-		}
-
+		this.failPending("CDP client disconnected");
 		this.listeners.clear();
 		this.ws.close();
 	}
@@ -257,17 +260,23 @@ export class CdpClient {
 		this.ws.addEventListener("close", () => {
 			if (this.isConnected) this.closedByPeer.resolve();
 			this.isConnected = false;
-			const error = new ConnectionClosedError("WebSocket connection closed");
-			for (const [id, pending] of this.pending) {
-				clearTimeout(pending.timer);
-				pending.reject(error);
-				this.pending.delete(id);
-			}
+			this.failPending("WebSocket connection closed");
 		});
 
 		this.ws.addEventListener("error", () => {
 			// Error events are followed by close events, so cleanup happens there.
 		});
+	}
+
+	/** Each unanswered request fails, naming itself: the rejection may surface far from the send. */
+	private failPending(why: string): void {
+		for (const [id, pending] of this.pending) {
+			clearTimeout(pending.timer);
+			pending.reject(
+				new ConnectionClosedError(`${why} before ${this.sentMethods.get(id)} was answered`),
+			);
+			this.pending.delete(id);
+		}
 	}
 
 	private onMessage(data: string): void {

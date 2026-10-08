@@ -85,7 +85,7 @@ export async function withSession(
  * them only (macOS AirPlay holds 7000 on IPv4), which makes "localhost" ambiguous.
  */
 export function freeLoopbackPort(): number {
-	for (;;) {
+	for (let attempt = 0; attempt < 50; attempt++) {
 		const v4 = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
 		try {
 			Bun.listen({ hostname: "::1", port: v4.port, socket: { data() {} } }).stop(true);
@@ -96,19 +96,23 @@ export function freeLoopbackPort(): number {
 			v4.stop(true);
 		}
 	}
+	throw new Error("No port is free on both 127.0.0.1 and ::1");
 }
 
 export async function waitForPort(port: number, timeoutMs = 10_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		try {
-			// localhost, not 127.0.0.1: inspectors bound to "localhost" may listen on ::1 only
-			const socket = await Bun.connect({ hostname: "localhost", port, socket: { data() {} } });
-			socket.end();
-			return;
-		} catch {
-			await Bun.sleep(50);
+		// Both loopbacks, by address: inspectors bound to "localhost" may listen on ::1 only
+		for (const hostname of ["127.0.0.1", "::1"]) {
+			try {
+				const socket = await Bun.connect({ hostname, port, socket: { data() {} } });
+				socket.end();
+				return;
+			} catch {
+				// Not listening there (yet)
+			}
 		}
+		await Bun.sleep(50);
 	}
 	throw new Error(`Nothing listened on port ${port} within ${timeoutMs}ms`);
 }
@@ -125,4 +129,19 @@ export async function waitForNodeInspector(port: number, timeoutMs = 10_000): Pr
 		await Bun.sleep(50);
 	}
 	throw new Error(`No inspector answered on port ${port} within ${timeoutMs}ms`);
+}
+
+/** Resolves once the session's console holds a message containing each text. */
+export async function consoleShows(
+	session: CdpSession,
+	texts: string[],
+	timeoutMs = 10_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	const missing = () =>
+		texts.filter((t) => !session.getConsoleMessages().some((m) => m.text.includes(t)));
+	while (missing().length > 0) {
+		if (Date.now() > deadline) throw new Error(`Console never showed: ${missing().join(", ")}`);
+		await Bun.sleep(20);
+	}
 }

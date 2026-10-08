@@ -9,6 +9,7 @@ import type {
 	ConnectIntent,
 	ConnectTarget,
 	InspectorDialect,
+	JsLogger,
 } from "../dialect.ts";
 import { JscClient } from "../jsc-client.ts";
 import type { JSC } from "../jsc-protocol.js";
@@ -23,13 +24,19 @@ import type { JSC } from "../jsc-protocol.js";
 export class BunDialect implements InspectorDialect {
 	readonly name = "bun" as const;
 	readonly internalUrlPrefix = "bun:";
+	readonly dropsMessagesAtExit = true;
 	private readonly jsc: JscClient;
+	private logSink: Promise<void> | null = null;
 
 	constructor(private readonly cdp: CdpClient) {
 		this.jsc = new JscClient(cdp);
 	}
 
-	async connect(target: ConnectTarget, intent: ConnectIntent): Promise<void> {
+	async connect(
+		target: ConnectTarget,
+		intent: ConnectIntent,
+		prepare: () => Promise<void>,
+	): Promise<void> {
 		await this.enableInspectorDomain();
 		await this.cdp.enableDomains();
 		// JSC starts with breakpoints inactive; nothing would pause after a plain attach.
@@ -39,12 +46,17 @@ export class BunDialect implements InspectorDialect {
 
 		if (intent.mode === "launch") {
 			// dbg launches Bun held until it connects (see startInspected)
+			await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+			await prepare();
 			if (intent.pauseAtEntry) await this.releaseAndPause(target);
 			else await this.jsc.send("Inspector.initialized");
-		} else if (await this.isHeldByInspector(target)) {
-			await this.releaseAndPause(target);
+			return;
 		}
-
+		// Asked first: what prepare evaluates counts as a loaded script
+		const held = await this.isHeldByInspector(target);
+		await prepare();
+		if (held) await this.releaseAndPause(target);
+		// Only now: a process held by --inspect-brk or ?break=1 starts with a debugger statement of Bun's
 		await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
 	}
 
@@ -141,6 +153,34 @@ export class BunDialect implements InspectorDialect {
 		}
 	}
 
+	/**
+	 * Bun's node:inspector console prints like console.log. Instead, a no-op
+	 * function in the target carries the arguments to a breakpoint whose
+	 * probe action samples them for dbg alone.
+	 */
+	async jsLogger(): Promise<JsLogger> {
+		this.logSink ??= this.installLogSink();
+		await this.logSink;
+		return (expression) => `globalThis[${JSON.stringify(LOG_SINK)}](${expression})`;
+	}
+
+	private async installLogSink(): Promise<void> {
+		await this.cdp.send("Runtime.evaluate", {
+			expression: `Object.defineProperty(globalThis, ${JSON.stringify(LOG_SINK)}, {
+	configurable: true,
+	value: function (...values) {
+		return values;
+	},
+});
+//# sourceURL=${LOG_SINK_URL}`,
+		});
+		await this.jsc.send("Debugger.setBreakpointByUrl", {
+			url: LOG_SINK_URL,
+			lineNumber: 3, // return values;
+			options: { actions: [{ type: "probe", data: "values" }], autoContinue: true },
+		});
+	}
+
 	// ── Handshake steps ───────────────────────────────────────────────
 
 	/** Required before any other domain. A probe or an earlier connection may have done it. */
@@ -185,7 +225,13 @@ export class BunDialect implements InspectorDialect {
 const HOLDS_FOR_INSPECTOR = `/[?&](break|wait)=1/.test(process.env.BUN_INSPECT ?? "") ||
 	process.execArgv.some((arg) => /^--inspect-(brk|wait)/.test(arg))`;
 
-/** Hit counts and logs as JSC breakpoint options; only the user's condition stays an expression. */
+const LOG_SINK = "__dbg_log";
+const LOG_SINK_URL = "dbg://log";
+
+/**
+ * Hit counts and logs as JSC breakpoint options; only the user's condition
+ * stays an expression. A log is a probe: its value goes to dbg alone.
+ */
 function breakpointOptions(
 	behavior: BreakpointBehavior,
 ): JSC.Debugger.BreakpointOptions | undefined {
@@ -193,7 +239,8 @@ function breakpointOptions(
 	if (behavior.condition) options.condition = behavior.condition;
 	if (behavior.hitCount && behavior.hitCount > 1) options.ignoreCount = behavior.hitCount - 1;
 	if (behavior.log !== undefined) {
-		options.actions = [{ type: "evaluate", data: `console.log(${behavior.log})` }];
+		// The log is console.log's argument list; the probe samples them as one array
+		options.actions = [{ type: "probe", data: `[${behavior.log}]` }];
 		options.autoContinue = true;
 	}
 	return Object.keys(options).length > 0 ? options : undefined;

@@ -58,13 +58,21 @@ export interface InspectorDialect {
 	readonly name: RuntimeName;
 	/** URL prefix of runtime-internal scripts, e.g. "node:" */
 	readonly internalUrlPrefix: string;
+	/** The runtime drops inspector messages still queued when the program exits (see ExitStop) */
+	readonly dropsMessagesAtExit: boolean;
 
 	/**
 	 * Performs the whole handshake on the open socket: enables the protocol
 	 * domains, reaches the initial state the intent asks for and applies
-	 * runtime defaults. Resolves with the target in a settled state.
+	 * runtime defaults. `prepare` runs once the domains are on and before a
+	 * held program runs: a program can end as soon as it is released.
+	 * Resolves with the target in a settled state.
 	 */
-	connect(target: ConnectTarget, intent: ConnectIntent): Promise<void>;
+	connect(
+		target: ConnectTarget,
+		intent: ConnectIntent,
+		prepare: () => Promise<void>,
+	): Promise<void>;
 
 	setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding>;
 
@@ -106,4 +114,13 @@ export interface InspectorDialect {
 	): Promise<Protocol.Runtime.GetPropertiesResponse>;
 
 	setBlackboxPatterns(patterns: string[]): Promise<void>;
+
+	/**
+	 * How JavaScript running in the target logs to dbg's console only, never
+	 * to the program's own output: a logpoint must not change what it prints.
+	 */
+	jsLogger(): Promise<JsLogger>;
 }
+
+/** JavaScript that logs the value of `expression` to dbg only */
+export type JsLogger = (expression: string) => string;

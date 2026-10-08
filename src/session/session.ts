@@ -45,6 +45,8 @@ export interface SessionFeatures {
 	breakpointToggle: boolean;
 	/** CDP: restart via stop + re-launch */
 	restart: boolean;
+	/** CDP: pause as the program exits (catch exit) */
+	exitPause: boolean;
 }
 
 // ── Shared result types ──────────────────────────────────────────────
@@ -72,6 +74,16 @@ export interface BreakpointListItem {
 	fn?: string;
 	/** How the breakpoint is held, when that matters to the user */
 	note?: string;
+}
+
+export interface SourceOptions {
+	file?: string;
+	/** Lines of context on each side */
+	lines?: number;
+	all?: boolean;
+	generated?: boolean;
+	/** Where to center, in the named file, counted from 1; else the paused position */
+	at?: { line: number; column?: number };
 }
 
 export interface EvalResult {
@@ -242,12 +254,7 @@ export interface Session {
 		ref: string,
 		options?: { own?: boolean; internal?: boolean; depth?: number },
 	): Promise<PropEntry[]>;
-	getSource(options?: {
-		file?: string;
-		lines?: number;
-		all?: boolean;
-		generated?: boolean;
-	}): Promise<SourceResult>;
+	getSource(options?: SourceOptions): Promise<SourceResult>;
 	getScripts(filter?: string): ScriptEntry[];
 	getStack(options?: {
 		asyncDepth?: number;
@@ -285,6 +292,8 @@ export interface Session {
 	removeBlackbox(patterns: string[]): Promise<string[] | string>;
 
 	// ── DAP-specific (optional, guarded by capabilities) ──────────
+	/** Pause as the program exits, with its state alive; requires features.exitPause */
+	setExitPause?(enabled: boolean): Promise<void>;
 	setFunctionBreakpoint?(
 		name: string,
 		options?: { condition?: string; hitCount?: number; log?: string; byName?: boolean },

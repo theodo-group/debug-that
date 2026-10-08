@@ -7,7 +7,12 @@ import {
 } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
-import type { PendingConfig, SessionFeatures, SourceMapInfo } from "../session/session.ts";
+import type {
+	PendingConfig,
+	SessionFeatures,
+	SourceMapInfo,
+	SourceOptions,
+} from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
 import { DapClient } from "./client.ts";
 import { type CanonicalRuntime, getRuntimeConfig, resolveRuntime } from "./runtimes/index.ts";
@@ -69,6 +74,7 @@ const DEFAULT_DAP_FEATURES: SessionFeatures = {
 	symbolLoading: true,
 	breakpointToggle: false,
 	restart: false,
+	exitPause: false,
 };
 
 /**
@@ -666,7 +672,7 @@ export class DapSession extends BaseSession {
 		return frames;
 	}
 
-	async getSource(options: { file?: string; lines?: number; all?: boolean } = {}): Promise<{
+	async getSource(options: SourceOptions = {}): Promise<{
 		url: string;
 		lines: Array<{ line: number; text: string; current?: boolean }>;
 	}> {
@@ -684,7 +690,7 @@ export class DapSession extends BaseSession {
 		}
 
 		const allLines = content.split("\n");
-		const currentLine = this.pauseInfo?.line;
+		const currentLine = options.at?.line ?? this.pauseInfo?.line;
 		const windowSize = options.lines ?? 10;
 
 		let startLine: number;

@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import type Protocol from "devtools-protocol/types/protocol.js";
 import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
+import { fromShortPath } from "../formatter/path.ts";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { createLogger, type Logger } from "../logger/index.ts";
@@ -11,6 +12,8 @@ import type {
 	FunctionBreakpointResult,
 	SessionFeatures,
 	SourceMapInfo,
+	SourceOptions,
+	SourceResult,
 } from "../session/session.ts";
 import type {
 	AttachResult,
@@ -26,7 +29,7 @@ import type {
 	TargetIdentity,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
-import type { CdpClient } from "./client.ts";
+import { type CdpClient, ConnectionClosedError } from "./client.ts";
 import { asCondition } from "./condition.ts";
 import type {
 	BreakpointBehavior,
@@ -36,6 +39,7 @@ import type {
 } from "./dialect.ts";
 import { openInspector } from "./dialects/index.ts";
 import { EntryBreakpoints } from "./entry-breakpoints.ts";
+import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
 import { startInspected } from "./launcher.ts";
@@ -119,6 +123,10 @@ export class CdpSession extends BaseSession {
 		this.cdp && this._dialect ? { cdp: this.cdp, dialect: this._dialect } : null,
 	);
 	/** Waiting breakpoints bound since the last entry pause, to tell whether one sits where it stopped */
+	/** The program's last moment: resumed through, or a pause for `catch exit` */
+	readonly exitStop = new ExitStop();
+	/** Logpoint samples (JSC), shown in the order they came */
+	private probedLogs: Promise<void> = Promise.resolve();
 	private boundWhileLoading: Array<{
 		breakpointId: string;
 		location?: { scriptId: string; lineNumber: number; columnNumber?: number };
@@ -148,6 +156,7 @@ export class CdpSession extends BaseSession {
 		symbolLoading: false,
 		breakpointToggle: true,
 		restart: true,
+		exitPause: true,
 	};
 
 	getSourceMapInfos(file?: string): SourceMapInfo[] {
@@ -467,6 +476,11 @@ export class CdpSession extends BaseSession {
 		return setExceptionPauseImpl(this, mode);
 	}
 
+	async setExitPause(enabled: boolean): Promise<void> {
+		this.exitStop.wanted = enabled;
+		if (enabled && this.cdp) await this.exitStop.install(this.cdp);
+	}
+
 	// Inspection
 	async eval(
 		expression: string,
@@ -508,12 +522,7 @@ export class CdpSession extends BaseSession {
 		return getPropsImpl(this, ref, options);
 	}
 
-	async getSource(
-		options: { file?: string; lines?: number; all?: boolean; generated?: boolean } = {},
-	): Promise<{
-		url: string;
-		lines: Array<{ line: number; text: string; current?: boolean }>;
-	}> {
+	async getSource(options: SourceOptions = {}): Promise<SourceResult> {
 		return getSourceImpl(this, options);
 	}
 
@@ -664,7 +673,8 @@ export class CdpSession extends BaseSession {
 		return resultData;
 	}
 
-	findScriptUrl(file: string): string | null {
+	findScriptUrl(shown: string): string | null {
+		const file = fromShortPath(shown);
 		// Try exact suffix match first
 		for (const script of this.scripts.values()) {
 			if (script.url?.endsWith(file)) {
@@ -868,7 +878,8 @@ export class CdpSession extends BaseSession {
 			) {
 				continue;
 			}
-			const condition = asCondition(behavior);
+			const log = behavior.log === undefined ? undefined : await this.dialect.jsLogger();
+			const condition = asCondition(behavior, log);
 			if (!condition) {
 				hits.push(breakpointId);
 				continue;
@@ -925,6 +936,19 @@ export class CdpSession extends BaseSession {
 				});
 			}
 		}
+	}
+
+	/** The elements of a probed argument array, each shown as console.log shows it */
+	private async logArguments(payload: RemoteObject): Promise<string[]> {
+		if (payload.subtype !== "array" || !payload.objectId) return [formatValue(payload)];
+		const { result } = await this.dialect.getProperties({
+			objectId: payload.objectId,
+			ownProperties: true,
+		});
+		return result
+			.filter((p) => /^\d+$/.test(p.name) && p.value)
+			.sort((a, b) => Number(a.name) - Number(b.name))
+			.map((p) => formatValue(p.value as RemoteObject));
 	}
 
 	private reportPause(
@@ -985,11 +1009,12 @@ export class CdpSession extends BaseSession {
 			this._notifyStateWaiters();
 		}
 
-		await dialect.connect(this, intent);
-
-		if (this.blackboxPatterns.length > 0) {
-			await dialect.setBlackboxPatterns(this.blackboxPatterns);
-		}
+		await dialect.connect(this, intent, async () => {
+			if (this.blackboxPatterns.length > 0) {
+				await dialect.setBlackboxPatterns(this.blackboxPatterns);
+			}
+			if (dialect.dropsMessagesAtExit || this.exitStop.wanted) await this.exitStop.install(cdp);
+		});
 	}
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
@@ -999,8 +1024,19 @@ export class CdpSession extends BaseSession {
 			const hitBreakpoints =
 				p.hitBreakpoints ??
 				(typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
+			if (ExitStop.isExitStop(p)) {
+				const atExit = { ...p, reason: "exit" as Protocol.Debugger.PausedEvent["reason"] };
+				if (this.exitStop.wanted) this.reportPause(atExit, undefined);
+				else void cdp.send("Debugger.resume").catch(() => {});
+				return;
+			}
 			if (p.reason === "instrumentation" || this.entryBreakpoints.isEntryPause(hitBreakpoints)) {
-				void this.bindPendingThenResume(p, hitBreakpoints ?? []);
+				this.bindPendingThenResume(p, hitBreakpoints ?? []).catch((err) => {
+					// The target may end meanwhile; anything else is a bug worth seeing
+					if (!(err instanceof ConnectionClosedError)) {
+						this.log.error("entry.pause.failed", { error: String(err) });
+					}
+				});
 				return;
 			}
 			this.reportPause(p, hitBreakpoints);
@@ -1054,6 +1090,11 @@ export class CdpSession extends BaseSession {
 			}
 		});
 
+		// Node.js: the program ended and only the connection keeps it alive
+		cdp.on("NodeRuntime.waitingForDisconnect", () => {
+			if (this.cdp === cdp) this.targetGone("program.ended");
+		});
+
 		cdp.on("Runtime.executionContextDestroyed", () => {
 			// The main execution context was destroyed — the script's top-level
 			// code has finished. The process may still be alive (servers keep the
@@ -1099,6 +1140,18 @@ export class CdpSession extends BaseSession {
 			});
 		});
 
+		// A logpoint on JSC: its arguments as an array, sampled by a probe action
+		cdp.on("Debugger.didSampleProbe", (p) => {
+			const { sample } = p as JSC.Debugger.DidSampleProbeEvent;
+			const payload = sample.payload as unknown as RemoteObject;
+			// Kept in order: each sample needs a round trip for its elements
+			this.probedLogs = this.probedLogs.then(async () => {
+				const args = await this.logArguments(payload).catch(() => [formatValue(payload)]);
+				const text = args.join(" ");
+				this.pushConsoleMessage({ timestamp: Date.now(), level: "log", text, args });
+			});
+		});
+
 		cdp.on("Runtime.exceptionThrown", (p) => {
 			const details = p.exceptionDetails;
 			if (!details) return;
@@ -1129,7 +1182,7 @@ export class CdpSession extends BaseSession {
 	}
 
 	/** The target exited or closed the connection: nothing runs or pauses anymore. */
-	private targetGone(why: "child.exit" | "socket.closed"): void {
+	private targetGone(why: "child.exit" | "socket.closed" | "program.ended"): void {
 		this.log.info("target.gone", { why });
 		this.cdp?.disconnect();
 		this.cdp = null;
@@ -1147,7 +1200,9 @@ export class CdpSession extends BaseSession {
 			.then((exitCode) => {
 				this.log.info("child.exit", { code: exitCode ?? null });
 				this.childProcess = null;
-				this.targetGone("child.exit");
+				// The exit can be seen before the socket's last messages are read, such
+				// as the program's final output: its closing, after them, ends the session
+				if (!this.cdp?.connected) this.targetGone("child.exit");
 			})
 			.catch((err) => {
 				this.log.error("child.exit.error", { error: String(err) });
