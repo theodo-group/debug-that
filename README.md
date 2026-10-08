@@ -135,7 +135,7 @@ Session:
   status                           Session info
 
 Execution (returns state automatically):
-  continue                         Resume execution
+  continue [--wait <seconds>]      Resume execution; --wait blocks until the next pause or exit
   step [over|into|out]             Step one statement
   run-to <file>:<line>             Continue to location
   pause                            Interrupt running process

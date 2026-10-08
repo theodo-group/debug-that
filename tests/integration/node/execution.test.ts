@@ -19,6 +19,19 @@ describe("Execution control", () => {
 			expect(session.sessionState).toBe("paused");
 		}));
 
+	test("continue with a wait reports a pause that comes after the default 0.5s", () =>
+		withPausedSession("test-exec-continue-wait", "tests/fixtures/js/delayed-pause.js", async (session) => {
+			await session.continue({ waitForStop: true, timeoutMs: 10_000, throwOnTimeout: false });
+			expect(session.sessionState).toBe("paused");
+			expect(session.getStatus().pauseInfo?.line).toBe(2);
+		}));
+
+	test("continue with a wait returns when the program ends", () =>
+		withPausedSession("test-exec-continue-wait-end", "tests/fixtures/js/step-app.js", async (session) => {
+			await session.continue({ waitForStop: true, timeoutMs: 10_000, throwOnTimeout: false });
+			expect(session.sessionState).toBe("idle");
+		}));
+
 	test("step over advances one line", () =>
 		withPausedSession("test-exec-step-over", "tests/fixtures/js/step-app.js", async (session) => {
 			const lineBefore = session.getStatus().pauseInfo?.line;

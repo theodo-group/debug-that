@@ -20,7 +20,12 @@ export class DaemonClient {
 		this.socketPath = getSocketPath(session);
 	}
 
-	async request<C extends Cmd>(cmd: C, args?: ArgsForCmd<C>): Promise<TypedResponse<C>> {
+	/** `timeoutMs` covers requests that wait on the target by design, longer than the default. */
+	async request<C extends Cmd>(
+		cmd: C,
+		args?: ArgsForCmd<C>,
+		{ timeoutMs = REQUEST_TIMEOUT_MS }: { timeoutMs?: number } = {},
+	): Promise<TypedResponse<C>> {
 		const message = `${JSON.stringify({ cmd, args: args ?? {} })}\n`;
 		const sessionName = this.session;
 		const socketPath = this.socketPath;
@@ -32,9 +37,9 @@ export class DaemonClient {
 			const timer = setTimeout(() => {
 				if (!settled) {
 					settled = true;
-					reject(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+					reject(new Error(`Request timed out after ${timeoutMs}ms`));
 				}
-			}, REQUEST_TIMEOUT_MS);
+			}, timeoutMs);
 
 			function settle(fn: () => void) {
 				if (!settled) {
@@ -175,6 +180,7 @@ export async function daemonRequest<C extends Cmd>(
 	session: string,
 	cmd: C,
 	args?: ArgsForCmd<C>,
+	options?: { timeoutMs?: number },
 ): Promise<ResponseDataMap[C] | null> {
 	if (!DaemonClient.isRunning(session)) {
 		console.error(`No active session "${session}"`);
@@ -182,7 +188,7 @@ export async function daemonRequest<C extends Cmd>(
 		return null;
 	}
 	const client = new DaemonClient(session);
-	const response = await client.request(cmd, args);
+	const response = await client.request(cmd, args, options);
 	if (!response.ok) {
 		console.error(response.error);
 		if (response.suggestion) console.error(`  ${response.suggestion}`);

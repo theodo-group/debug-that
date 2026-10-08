@@ -109,7 +109,12 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		case "continue": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			await session.continue();
+			const { waitMs } = req.args;
+			await session.continue(
+				waitMs === undefined
+					? undefined
+					: { waitForStop: true, timeoutMs: waitMs, throwOnTimeout: false },
+			);
 			const stateAfter = await session.buildState();
 			return { ok: true, data: stateAfter };
 		}

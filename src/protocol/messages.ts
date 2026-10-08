@@ -40,7 +40,13 @@ const StateRequest = z.object({
 	}),
 });
 
-const ContinueRequest = z.object({ cmd: z.literal("continue") });
+const ContinueRequest = z.object({
+	cmd: z.literal("continue"),
+	args: z.object({
+		/** Block until the next pause or the program's end, for at most this long */
+		waitMs: z.optional(z.number()),
+	}),
+});
 
 const StepRequest = z.object({
 	cmd: z.literal("step"),

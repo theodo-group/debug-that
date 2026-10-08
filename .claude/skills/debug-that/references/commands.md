@@ -28,7 +28,8 @@ dbg status                          # Session info (pid, state, pause location)
 All execution commands automatically return session status (state + pause info).
 
 ```bash
-dbg continue                        # Resume to next breakpoint or completion
+dbg continue                        # Resume; reports a pause only if it comes within 0.5s
+dbg continue --wait 30              # Resume and block until the next pause or exit (up to 30s)
 dbg step [over|into|out]            # Step one statement (default: over)
 dbg run-to <file>:<line>            # Continue to specific location
 dbg pause                           # Interrupt running process

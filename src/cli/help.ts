@@ -161,7 +161,7 @@ export function printHelpAgent(): void {
 CORE LOOP:
   1. dbg launch --brk "node app.js"    → pauses at first line, returns state
   2. dbg break src/file.ts:42          → set breakpoint
-  3. dbg continue                      → run to breakpoint, returns state
+  3. dbg continue --wait 30            → run until the next pause or exit (≤30s), returns state
   4. Inspect: dbg vars, dbg eval, dbg props @v1
   5. Mutate/fix: dbg set @v1 value, dbg hotpatch src/file.ts
   6. Repeat from 3
@@ -172,7 +172,8 @@ REFS: Every output assigns @refs. Use them everywhere:
   BP#1..N   breakpoints  |  dbg break-rm BP#1, dbg break-toggle BP#1
 
 EXECUTION (all return state automatically):
-  dbg continue              Resume to next breakpoint
+  dbg continue              Resume; shows a pause that comes within 0.5s, else running
+  dbg continue --wait N     Resume and wait up to N seconds for the next pause or exit
   dbg step [over|into|out]  Step one statement
   dbg run-to file:line      Continue to location
   dbg pause                 Interrupt running process

@@ -46,8 +46,8 @@ dbg attach 9229
 dbg break src/handler.ts:42
 dbg break src/utils.ts:15 --condition "count > 10"
 
-# 3. Run to breakpoint
-dbg continue
+# 3. Run to breakpoint (--wait blocks until it pauses or the program ends)
+dbg continue --wait 30
 
 # 4. Inspect state (shows location, source, locals, stack)
 dbg state
