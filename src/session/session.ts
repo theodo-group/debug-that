@@ -1,5 +1,6 @@
 import type { WaitForStopOptions } from "./base-session.ts";
 import type {
+	AttachResult,
 	ConsoleMessage,
 	ExceptionEntry,
 	LaunchResult,
@@ -179,7 +180,7 @@ export interface Session {
 
 	// ── Lifecycle ──────────────────────────────────────────────────
 	launch(command: string[], options?: { brk?: boolean; port?: number }): Promise<LaunchResult>;
-	attach(target: string): Promise<{ wsUrl: string }>;
+	attach(target: string): Promise<AttachResult>;
 	applyPendingConfig(config: PendingConfig): void;
 	getStatus(): SessionStatus;
 	stop(): Promise<void>;

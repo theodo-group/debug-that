@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { DaemonClient } from "../daemon/client.ts";
 import { ensureDaemon } from "../daemon/spawn.ts";
+import type { AttachResult } from "../session/types.ts";
 
 defineCommand({
 	name: "attach",
@@ -41,13 +42,14 @@ defineCommand({
 			return 1;
 		}
 
-		const data = response.data as { wsUrl: string };
+		const data = response.data as AttachResult;
 
 		if (ctx.global.json) {
 			console.log(JSON.stringify(data, null, 2));
 		} else {
 			console.log(`Session "${session}" attached`);
 			console.log(`Connected to ${data.wsUrl}`);
+			if (data.target) console.log(`Target: pid ${data.target.pid}  ${data.target.command}`);
 		}
 
 		return 0;

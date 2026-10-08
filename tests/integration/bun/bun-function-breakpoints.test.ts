@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CdpSession } from "../../../src/cdp/session.ts";
-import { waitForPort, withSession } from "../../helpers.ts";
+import { freeLoopbackPort, waitForPort, withSession } from "../../helpers.ts";
 import { expectPausedIn, pausedWithin, wrappersInProcess } from "../function-breakpoints.ts";
 
 const APP = "tests/fixtures/js/live-app.js";
@@ -78,7 +78,7 @@ describe("Native breakpoint options (Bun)", () => {
 
 describe("Attach to a running Bun process", () => {
 	test("breakpoints are active without ?break=1", async () => {
-		const port = 9900 + Math.floor(Math.random() * 90);
+		const port = freeLoopbackPort();
 		const proc = Bun.spawn(["bun", APP], {
 			env: { ...process.env, BUN_INSPECT: `ws://localhost:${port}/dbg-test` },
 			stdout: "ignore",

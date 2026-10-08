@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CdpSession } from "../../../src/cdp/session.ts";
-import { launchPaused, waitForNodeInspector } from "../../helpers.ts";
+import { freeLoopbackPort, launchPaused, waitForNodeInspector } from "../../helpers.ts";
 import { expectPausedIn, pausedWithin, wrappersInProcess } from "../function-breakpoints.ts";
 
 const APP = "tests/fixtures/js/live-app.js";
@@ -138,7 +138,7 @@ describe("Function breakpoints (Node.js)", () => {
 
 describe("Attach to a Node.js process", () => {
 	test("held by --inspect-brk: released and paused on the script's first statement", async () => {
-		const port = 9100 + Math.floor(Math.random() * 300);
+		const port = freeLoopbackPort();
 		const proc = Bun.spawn(["node", `--inspect-brk=${port}`, APP], {
 			stdout: "ignore",
 			stderr: "ignore",
@@ -156,7 +156,7 @@ describe("Attach to a Node.js process", () => {
 	});
 
 	test("running with --inspect: left running", async () => {
-		const port = 9400 + Math.floor(Math.random() * 90);
+		const port = freeLoopbackPort();
 		const proc = Bun.spawn(["node", `--inspect=${port}`, APP], {
 			stdout: "ignore",
 			stderr: "ignore",
@@ -164,8 +164,10 @@ describe("Attach to a Node.js process", () => {
 		const session = new CdpSession("node-attach-running");
 		try {
 			await waitForNodeInspector(port);
-			await session.attach(String(port));
+			const { target } = await session.attach(String(port));
 			expect(session.state).toBe("running");
+			expect(target?.pid).toBe(proc.pid);
+			expect(target?.command).toEndWith(APP);
 		} finally {
 			await session.stop();
 			proc.kill();
@@ -173,7 +175,7 @@ describe("Attach to a Node.js process", () => {
 	});
 
 	test("a killed process leaves the session idle", async () => {
-		const port = 9400 + Math.floor(Math.random() * 90);
+		const port = freeLoopbackPort();
 		const proc = Bun.spawn(["node", `--inspect=${port}`, APP], {
 			stdout: "ignore",
 			stderr: "ignore",
@@ -193,7 +195,7 @@ describe("Attach to a Node.js process", () => {
 });
 
 describe("Function breakpoints across sessions (Node.js)", () => {
-	const port = 9500 + Math.floor(Math.random() * 400);
+	const port = freeLoopbackPort();
 
 	test("stop takes wrappers out; a crashed session's wrappers are adopted on attach", async () => {
 		const proc = Bun.spawn(["node", `--inspect=${port}`, APP], {

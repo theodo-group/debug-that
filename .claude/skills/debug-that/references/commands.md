@@ -16,7 +16,7 @@
 dbg launch [--brk] <command...>     # Start + attach debugger (--brk pauses at first line)
 dbg launch --brk --runtime lldb ./program  # Native debugging via LLDB (DAP)
 dbg launch --brk python3 app.py     # Python debugging via debugpy (DAP)
-dbg attach <pid|ws-url|port>        # Attach to running process
+dbg attach <pid|ws-url|port>        # Attach to running process; prints the pid and command it reached
 dbg attach <port> --runtime python  # Python: attach to a `debugpy --listen <port>` server
 dbg stop                            # Kill process + daemon
 dbg sessions [--cleanup]            # List active sessions

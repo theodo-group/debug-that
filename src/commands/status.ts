@@ -21,6 +21,7 @@ defineCommand({
 			console.log(`${stateIcon} — Session "${data.session}" — ${data.state}`);
 
 			if (data.pid) console.log(`  PID: ${data.pid}`);
+			if (data.command) console.log(`  Command: ${data.command}`);
 			if (data.wsUrl) console.log(`  Inspector: ${data.wsUrl}`);
 			console.log(`  Uptime: ${Math.round(data.uptime)}s`);
 			console.log(`  Scripts loaded: ${data.scriptCount}`);

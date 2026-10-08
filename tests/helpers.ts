@@ -80,6 +80,24 @@ export async function withSession(
 }
 
 /** Resolves once something listens on the port, e.g. a target's inspector. Polls instead of guessing a delay. */
+/**
+ * A port free on both loopback addresses. A random one can be held on one of
+ * them only (macOS AirPlay holds 7000 on IPv4), which makes "localhost" ambiguous.
+ */
+export function freeLoopbackPort(): number {
+	for (;;) {
+		const v4 = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+		try {
+			Bun.listen({ hostname: "::1", port: v4.port, socket: { data() {} } }).stop(true);
+			return v4.port;
+		} catch {
+			// Taken on ::1: try another
+		} finally {
+			v4.stop(true);
+		}
+	}
+}
+
 export async function waitForPort(port: number, timeoutMs = 10_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {

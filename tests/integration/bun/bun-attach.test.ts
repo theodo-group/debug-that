@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { waitForPort, withSession } from "../../helpers.ts";
+import { freeLoopbackPort, waitForPort, withSession } from "../../helpers.ts";
 
 /**
  * Attach to a Bun process started with BUN_INSPECT. With `?break=1` Bun holds
@@ -14,9 +14,9 @@ describe("Bun attach", () => {
 	async function withInspectedBun(
 		args: string[],
 		query: string,
-		fn: (wsUrl: string) => Promise<void>,
+		fn: (wsUrl: string, pid: number) => Promise<void>,
 	): Promise<void> {
-		const port = 6540 + Math.floor(Math.random() * 800);
+		const port = freeLoopbackPort();
 		const child = Bun.spawn(["bun", ...args], {
 			env: { ...process.env, BUN_INSPECT: `ws://localhost:${port}/dbg-test${query}` },
 			stdout: "ignore",
@@ -24,17 +24,19 @@ describe("Bun attach", () => {
 		});
 		try {
 			await waitForPort(port);
-			await fn(`ws://localhost:${port}/dbg-test`);
+			await fn(`ws://localhost:${port}/dbg-test`, child.pid);
 		} finally {
 			child.kill();
 		}
 	}
 
 	test("attaching to ?break=1 process pauses on the entry script", () =>
-		withInspectedBun(["tests/fixtures/js/simple-app.js"], "?break=1", (wsUrl) =>
+		withInspectedBun(["tests/fixtures/js/simple-app.js"], "?break=1", (wsUrl, pid) =>
 			withSession("bun-attach-break", async (session) => {
 				const result = await session.attach(wsUrl);
-				expect(result.wsUrl).toBe(wsUrl);
+				// localhost is pinned to the one loopback address the process listens on
+				expect(result.wsUrl).toMatch(/^ws:\/\/(127\.0\.0\.1|\[::1\]):\d+\/dbg-test$/);
+				expect(result.target?.pid).toBe(pid);
 				expect(session.runtime).toBe("bun");
 				expect(session.state).toBe("paused");
 				await session.sourceMapResolver.waitForPendingLoads();

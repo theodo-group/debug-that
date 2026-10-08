@@ -95,12 +95,21 @@ export interface LaunchResult {
 
 export interface AttachResult {
 	wsUrl: string;
+	/** The process reached, as it describes itself */
+	target?: TargetIdentity;
+}
+
+export interface TargetIdentity {
+	pid: number;
+	command: string;
 }
 
 export interface SessionStatus {
 	session: string;
 	state: "idle" | "running" | "paused";
 	pid?: number;
+	/** The debugged process's command line, when it can tell */
+	command?: string;
 	wsUrl?: string;
 	/** As shown: source-mapped, lines and columns counted from 1 */
 	pauseInfo?: PauseInfo;

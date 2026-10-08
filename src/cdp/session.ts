@@ -22,6 +22,7 @@ import type {
 	SourceLocation,
 	StateOptions,
 	StateSnapshot,
+	TargetIdentity,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import type { CdpClient } from "./client.ts";
@@ -36,6 +37,7 @@ import { openInspector, runtimeFromCommand } from "./dialects/index.ts";
 import { EntryBreakpoints } from "./entry-breakpoints.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
+import { pinLoopback } from "./loopback.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
@@ -103,6 +105,8 @@ export class CdpSession extends BaseSession {
 	pausedCallFrames: Protocol.Debugger.CallFrame[] = [];
 	scripts: Map<string, ScriptInfo> = new Map();
 	wsUrl: string | null = null;
+	/** Who answered at wsUrl: the process dbg launched, or the one an attach reached */
+	targetIdentity: TargetIdentity | null = null;
 	onProcessExit: Set<() => void> = new Set();
 	blackboxPatterns: string[] = [];
 	disabledBreakpoints: Map<string, DisabledBreakpoint> = new Map();
@@ -232,6 +236,7 @@ export class CdpSession extends BaseSession {
 		// Read stderr to find the inspector URL
 		const wsUrl = await this.readInspectorUrl(proc.stderr);
 		this.wsUrl = wsUrl;
+		this.targetIdentity = { pid: proc.pid, command: command.join(" ") };
 
 		await this.connect(wsUrl, runtimeFromCommand(command), {
 			mode: "launch",
@@ -258,7 +263,9 @@ export class CdpSession extends BaseSession {
 		let wsUrl: string;
 
 		if (target.startsWith("ws://") || target.startsWith("wss://")) {
-			wsUrl = target;
+			const url = new URL(target);
+			url.hostname = await pinLoopback(url.hostname, Number(url.port || 80));
+			wsUrl = url.href;
 		} else {
 			// Treat as a port number
 			const port = parseInt(target, 10);
@@ -272,9 +279,21 @@ export class CdpSession extends BaseSession {
 
 		this.wsUrl = wsUrl;
 		await this.connect(wsUrl, this.runtimeHint, { mode: "attach" });
+		this.targetIdentity = await this.identifyTarget();
 		await this.functionBreakpoints.adoptLeftovers();
 
-		return { wsUrl };
+		return { wsUrl, target: this.targetIdentity ?? undefined };
+	}
+
+	/** Any process can hold a port, including a stale one; only the target can say who it is. */
+	private async identifyTarget(): Promise<TargetIdentity | null> {
+		const r = await this.cdp
+			?.send("Runtime.evaluate", { expression: IDENTIFY_TARGET, returnByValue: true })
+			.catch(() => null);
+		const value = r?.result.value as Partial<TargetIdentity> | null | undefined;
+		return typeof value?.pid === "number" && typeof value.command === "string"
+			? { pid: value.pid, command: value.command }
+			: null;
 	}
 
 	getStatus(): SessionStatus {
@@ -285,8 +304,9 @@ export class CdpSession extends BaseSession {
 			scriptCount: this.scripts.size,
 		};
 
-		if (this.childProcess) {
-			status.pid = this.childProcess.pid;
+		if (this.targetIdentity) {
+			status.pid = this.targetIdentity.pid;
+			status.command = this.targetIdentity.command;
 		}
 
 		if (this.wsUrl) {
@@ -343,6 +363,7 @@ export class CdpSession extends BaseSession {
 		this.resetState();
 		this._notifyStateWaiters();
 		this.wsUrl = null;
+		this.targetIdentity = null;
 		this.scripts.clear();
 		this.disabledBreakpoints.clear();
 		this._pendingRebinds.clear();
@@ -1207,20 +1228,13 @@ export class CdpSession extends BaseSession {
 		);
 	}
 
-	/** Inspectors bound to "localhost" may listen on one loopback only: Bun picks ::1, Node 127.0.0.1. */
 	private async discoverWsUrl(port: number): Promise<string> {
-		let response: Response | undefined;
-		let lastError: unknown;
-		for (const host of ["127.0.0.1", "[::1]"]) {
-			try {
-				response = await fetch(`http://${host}:${port}/json`);
-				break;
-			} catch (err) {
-				lastError = err;
-			}
-		}
-		if (!response) {
-			const reason = lastError instanceof Error ? lastError.message : String(lastError);
+		const host = await pinLoopback("localhost", port);
+		let response: Response;
+		try {
+			response = await fetch(`http://${host}:${port}/json`);
+		} catch (err) {
+			const reason = err instanceof Error ? err.message : String(err);
 			throw new Error(`Cannot connect to inspector at port ${port}: ${reason}`);
 		}
 
@@ -1262,3 +1276,8 @@ export class CdpSession extends BaseSession {
 		pump();
 	}
 }
+
+/** Evaluated in the target: its pid and command line, the binary first */
+const IDENTIFY_TARGET = `typeof process === "object" && process !== null
+	? { pid: process.pid, command: [process.execPath, ...process.argv.slice(1)].join(" ") }
+	: null`;
