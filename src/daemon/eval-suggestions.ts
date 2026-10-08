@@ -12,6 +12,9 @@ export function suggestEvalFix(errorMsg: string): string | undefined {
 	if (lower.includes("no member named") || lower.includes("has no member")) {
 		return "Try: debug-that props <@ref> to list available members";
 	}
+	if (lower.includes("require is not defined")) {
+		return 'This scope is an ES module. Try: process.getBuiltinModule("node:fs"), or await import("node:fs") while running';
+	}
 	if (
 		lower.includes("undeclared identifier") ||
 		lower.includes("use of undeclared") ||

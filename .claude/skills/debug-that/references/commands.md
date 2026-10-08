@@ -71,7 +71,8 @@ dbg stack --generated               # Show compiled JS paths
 ### eval -- evaluate expression
 ```bash
 dbg eval <expression>               # Evaluate in current frame
-dbg eval "await fetchUser(id)"      # Await supported
+dbg eval "await fetchUser(id)"      # Await supported (settles only while the program runs)
+dbg eval "bigObject" --out o.json   # Whole value to a file (strings as is, objects as JSON)
 dbg eval --frame @f1 "this"         # Evaluate in different frame
 dbg eval --silent "setup()"         # No output (side effects only)
 dbg eval --side-effect-free "x + 1" # Abort if side effects detected

@@ -2,9 +2,17 @@ import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { windowAround } from "../formatter/window.ts";
+import type { EvalResult } from "../session/session.ts";
 import type { CdpClient } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 import { type SourceWindow, sourceWindow } from "./source-view.ts";
+
+/** What engines answer to an evaluation. V8 reports a throw in exceptionDetails, JSC with wasThrown. */
+interface Evaluated {
+	result: Protocol.Runtime.RemoteObject;
+	exceptionDetails?: Protocol.Runtime.ExceptionDetails;
+	wasThrown?: boolean;
+}
 
 export async function evalExpression(
 	session: CdpSession,
@@ -16,23 +24,36 @@ export async function evalExpression(
 		timeout?: number;
 		/** Evaluate in the global scope even while paused */
 		global?: boolean;
+		/** Also return the whole value as text, however long */
+		full?: boolean;
 	} = {},
-): Promise<{
-	ref: string;
-	type: string;
-	value: string;
-	objectId?: string;
-}> {
+): Promise<EvalResult> {
 	const cdp = session.cdp;
 	if (!cdp) {
 		throw new Error("No active debug session");
 	}
+	// `await` is only valid in an async function, which keeps the scope it is written in
+	const awaits = /\bawait\b/.test(expression);
+	const source = awaits ? `(async () => (${expression}))()` : expression;
 
+	const work = (async () => {
+		const evaluated = await evaluate(session, cdp, source, options);
+		return options.awaitPromise || awaits ? settle(session, cdp, evaluated) : evaluated;
+	})();
+	const evaluated = await withTimeout(work, options.timeout);
+	const result = session.processEvalResult(evaluated, expression);
+	if (options.full) result.text = await fullText(cdp, evaluated.result);
+	return result;
+}
+
+async function evaluate(
+	session: CdpSession,
+	cdp: CdpClient,
+	expression: string,
+	options: { frame?: string; throwOnSideEffect?: boolean; global?: boolean },
+): Promise<Evaluated> {
 	const bound = bindRefs(session, expression);
-	if (bound.refs.length > 0) {
-		const response = await withTimeout(callWithRefs(cdp, bound, options), options.timeout);
-		return session.processEvalResult(response, expression);
-	}
+	if (bound.refs.length > 0) return callWithRefs(cdp, bound);
 
 	// A running target evaluates in its global scope; only frames need a pause.
 	if (options.global || session.sessionState !== "paused") {
@@ -44,10 +65,8 @@ export async function evalExpression(
 			returnByValue: false,
 			generatePreview: true,
 		};
-		if (options.awaitPromise) params.awaitPromise = true;
 		if (options.throwOnSideEffect) params.throwOnSideEffect = true;
-		const response = await withTimeout(cdp.send("Runtime.evaluate", params), options.timeout);
-		return session.processEvalResult(response, expression);
+		return cdp.send("Runtime.evaluate", params);
 	}
 
 	const targetFrame = session.pausedCallFrames[frameIndexOf(session, options.frame)];
@@ -61,12 +80,62 @@ export async function evalExpression(
 		generatePreview: true,
 	};
 	if (options.throwOnSideEffect) params.throwOnSideEffect = true;
-	const response = await withTimeout(
-		cdp.send("Debugger.evaluateOnCallFrame", params),
-		options.timeout,
-	);
-	return session.processEvalResult(response, expression);
+	return cdp.send("Debugger.evaluateOnCallFrame", params);
 }
+
+/**
+ * What a promise settles with. Promises settle only while the program runs,
+ * since their callbacks are queued work: a paused program can only tell what
+ * has settled already.
+ */
+async function settle(
+	session: CdpSession,
+	cdp: CdpClient,
+	evaluated: Evaluated,
+): Promise<Evaluated> {
+	const { result } = evaluated;
+	const isPromise = result.subtype === "promise" || result.className === "Promise";
+	if (evaluated.exceptionDetails || evaluated.wasThrown || !isPromise || !result.objectId) {
+		return evaluated;
+	}
+	if (session.sessionState !== "paused") {
+		return (await cdp.send("Runtime.awaitPromise", {
+			promiseObjectId: result.objectId,
+			generatePreview: true,
+		})) as Evaluated;
+	}
+	const { internalProperties = [] } = await session.dialect.getProperties({
+		objectId: result.objectId,
+		ownProperties: true,
+	});
+	const slot = (v8: string, jsc: string) =>
+		internalProperties.find((p) => p.name === v8 || p.name === jsc)?.value;
+	const state = slot("[[PromiseState]]", "status")?.value;
+	const value = slot("[[PromiseResult]]", "result") ?? { type: "undefined" as const };
+	if (state === "fulfilled") return { result: value };
+	if (state === "rejected") return { result: value, wasThrown: true };
+	throw new Error(
+		"The promise is pending, and promises only settle while the program runs -> Try: dbg continue --wait <seconds>, then eval it again",
+	);
+}
+
+/** The whole value as text: a string as is, anything else as JSON where it can be. */
+async function fullText(cdp: CdpClient, value: Protocol.Runtime.RemoteObject): Promise<string> {
+	if (!value.objectId)
+		return value.type === "string"
+			? String(value.value)
+			: (value.description ?? String(value.value));
+	const r = await cdp.send("Runtime.callFunctionOn", {
+		objectId: value.objectId,
+		functionDeclaration: FULL_TEXT,
+		returnByValue: true,
+	});
+	return String(r.result.value);
+}
+
+const FULL_TEXT = `function () {
+	try { return JSON.stringify(this, null, 2) ?? String(this); } catch { return String(this); }
+}`;
 
 function frameIndexOf(session: CdpSession, frameRef?: string): number {
 	if (!frameRef) return 0;
@@ -98,7 +167,6 @@ function bindRefs(session: CdpSession, expression: string): BoundExpression {
 function callWithRefs(
 	cdp: CdpClient,
 	bound: BoundExpression,
-	options: { awaitPromise?: boolean },
 ): Promise<Protocol.Runtime.CallFunctionOnResponse> {
 	const argNames = bound.refs.map((r) => r.name).join(", ");
 	const params: Protocol.Runtime.CallFunctionOnRequest = {
@@ -108,7 +176,6 @@ function callWithRefs(
 		returnByValue: false,
 		generatePreview: true,
 	};
-	if (options.awaitPromise) params.awaitPromise = true;
 	return cdp.send("Runtime.callFunctionOn", params);
 }
 

@@ -262,6 +262,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				return { ok: true, data: evalResult };
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
+				if (msg.includes(" -> ")) throw err; // Carries its own next step
 				return { ok: false, error: msg, suggestion: suggestEvalFix(msg) };
 			}
 		}

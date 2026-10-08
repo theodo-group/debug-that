@@ -7,6 +7,7 @@ import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type {
 	BreakpointListItem,
+	EvalResult,
 	FunctionBreakpointResult,
 	SessionFeatures,
 	SourceMapInfo,
@@ -475,13 +476,9 @@ export class CdpSession extends BaseSession {
 			throwOnSideEffect?: boolean;
 			timeout?: number;
 			global?: boolean;
+			full?: boolean;
 		} = {},
-	): Promise<{
-		ref: string;
-		type: string;
-		value: string;
-		objectId?: string;
-	}> {
+	): Promise<EvalResult> {
 		return evalExpression(this, expression, options);
 	}
 
@@ -627,11 +624,15 @@ export class CdpSession extends BaseSession {
 		result: {
 			result: Protocol.Runtime.RemoteObject;
 			exceptionDetails?: Protocol.Runtime.ExceptionDetails;
+			/** How JSC reports a throw */
+			wasThrown?: boolean;
 		},
 		expression: string,
-	): { ref: string; type: string; value: string; objectId?: string } {
+	): EvalResult {
 		const evalResult = result.result as RemoteObject | undefined;
-		const exceptionDetails = result.exceptionDetails;
+		const exceptionDetails =
+			result.exceptionDetails ??
+			(result.wasThrown ? { exception: result.result, text: "Uncaught" } : undefined);
 
 		if (exceptionDetails) {
 			const exception = exceptionDetails.exception as RemoteObject | undefined;

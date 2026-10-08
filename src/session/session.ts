@@ -79,6 +79,8 @@ export interface EvalResult {
 	type: string;
 	value: string;
 	objectId?: string;
+	/** The whole value as text, when asked for */
+	text?: string;
 }
 
 export interface VarEntry {
@@ -232,6 +234,7 @@ export interface Session {
 			awaitPromise?: boolean;
 			throwOnSideEffect?: boolean;
 			timeout?: number;
+			full?: boolean;
 		},
 	): Promise<EvalResult>;
 	getVars(options?: { frame?: string; names?: string[]; allScopes?: boolean }): Promise<VarEntry[]>;

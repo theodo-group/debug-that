@@ -193,7 +193,9 @@ See [references/commands.md](references/commands.md) for full command details an
 - `dbg state` after stepping always shows location + source + locals -- usually enough context
 - `dbg state -c` for source only, `-v` for vars only, `-s` for stack only -- save tokens
 - Minified/bundled code: `dbg source --width 600 --reflow` prints 600 chars around the paused column as one statement per line; `dbg search "text" --width 200` windows each match
-- `dbg eval` supports `await` -- useful for async inspection (JS/TS)
+- `dbg eval` supports `await` and `--await` (JS/TS). Promises settle only while the program runs: paused, you get an already-settled value, else an explanation
+- `dbg eval <expr> --out file.txt` writes the whole value (output is otherwise cut at 80 chars)
+- In ES modules `require` is undefined: use `process.getBuiltinModule("node:fs")`
 - `dbg blackbox "node_modules/**"` -- skip stepping into dependencies
 - `dbg hotpatch file` reads the file from disk -- edit the file first, then hotpatch (JS/TS only)
 - `dbg break-fn funcName` -- function breakpoints: by symbol on DAP runtimes; on JS by path (`obj.method`), `@ref`, or `--name <regex>` (Bun). `--condition`/`--log` run where the pause lands: the function's own parameters, `arguments` and `this`; for native functions (e.g. `fetch` on Bun), which dbg wraps in the process, `args` and `this`. The path must exist when set; `dbg stop` removes wrappers

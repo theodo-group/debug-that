@@ -181,6 +181,7 @@ const EvalRequest = z.object({
 		awaitPromise: z.optional(z.boolean()),
 		throwOnSideEffect: z.optional(z.boolean()),
 		timeout: z.optional(z.number()),
+		full: z.optional(z.boolean()),
 	}),
 });
 
