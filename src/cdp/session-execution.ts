@@ -1,5 +1,6 @@
 import type { WaitForStopOptions } from "@/session/base-session.ts";
 import { escapeRegex } from "../util/escape-regex.ts";
+import { ConnectionClosedError } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 
 export async function continueExecution(
@@ -17,7 +18,7 @@ export async function continueExecution(
 	const resumed = session.waitUntilResumed();
 	const waiter =
 		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
-	await session.cdp.send("Debugger.resume");
+	await session.cdp.send("Debugger.resume").catch(unlessTargetEnded);
 	await resumed;
 	await waiter;
 }
@@ -43,7 +44,7 @@ export async function stepExecution(
 	const waiter =
 		options?.waitForStop === true ? session.waitUntilStopped(options) : Promise.resolve();
 	session.stopRequested = "step";
-	await session.cdp.send(methodMap[mode]);
+	await session.cdp.send(methodMap[mode]).catch(unlessTargetEnded);
 	await waiter;
 }
 
@@ -140,4 +141,9 @@ export async function restartFrameExecution(
 	await waiter;
 
 	return { status: "restarted" };
+}
+
+/** Running on can end the program before it answers; that is a finished run, not a failure. */
+function unlessTargetEnded(error: unknown): void {
+	if (!(error instanceof ConnectionClosedError)) throw error;
 }

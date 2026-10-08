@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
-import { shortPath } from "../formatter/path.ts";
+import { formatLocation } from "../formatter/path.ts";
 
 defineCommand({
 	name: "status",
@@ -26,10 +26,7 @@ defineCommand({
 			console.log(`  Scripts loaded: ${data.scriptCount}`);
 
 			if (data.pauseInfo) {
-				const loc = data.pauseInfo.url
-					? `${shortPath(data.pauseInfo.url)}:${data.pauseInfo.line}${data.pauseInfo.column !== undefined ? `:${data.pauseInfo.column}` : ""}`
-					: "unknown";
-				console.log(`  Paused: ${data.pauseInfo.reason} at ${loc}`);
+				console.log(`  Paused: ${data.pauseInfo.reason} at ${formatLocation(data.pauseInfo)}`);
 			}
 
 			if (data.lastException) {

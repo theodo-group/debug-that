@@ -40,6 +40,15 @@ export function shortPath(path: string, opts?: { verbose?: boolean }): string {
 	return path;
 }
 
+/** "file:line:column" for a location whose line and column count from 1 */
+export function formatLocation(location: { url?: string; line?: number; column?: number }): string {
+	if (!location.url) return "unknown";
+	const line = location.line !== undefined ? `:${location.line}` : "";
+	const column =
+		location.line !== undefined && location.column !== undefined ? `:${location.column}` : "";
+	return `${shortPath(location.url)}${line}${column}`;
+}
+
 /**
  * Middle-truncate a path, keeping the last meaningful components.
  * "/very/long/path/to/React.framework/React" → "…/React.framework/React"

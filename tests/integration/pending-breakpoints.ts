@@ -7,12 +7,10 @@ const TARGET = "tests/fixtures/js/cjs-target.cjs";
 const ESM_LOADER = "tests/fixtures/js/esm-load.js";
 const ESM_TARGET = "tests/fixtures/js/esm-target.js";
 
-/** The loader prints the target's total once both ran; Bun stays alive after, so its state cannot tell. */
+/** The program ends, printing the target's total, without pausing on the way. */
 async function ranToCompletion(session: CdpSession): Promise<void> {
-	const printed = () => session.getConsoleMessages().some((m) => m.text === "3");
-	for (let waited = 0; !printed() && waited < 5_000; waited += 20) await Bun.sleep(20);
-	expect(printed()).toBe(true);
-	expect(session.sessionState).not.toBe("paused");
+	await session.waitForState("idle");
+	expect(session.getConsoleMessages().some((m) => m.text === "3")).toBe(true);
 }
 
 /**

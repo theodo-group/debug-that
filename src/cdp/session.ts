@@ -16,6 +16,7 @@ import type {
 	ConsoleMessage,
 	ExceptionEntry,
 	LaunchResult,
+	PauseInfo,
 	ResolvedLocation,
 	SessionStatus,
 	SourceLocation,
@@ -243,25 +244,8 @@ export class CdpSession extends BaseSession {
 			paused: this.sessionState === "paused",
 		};
 
-		if (this.pauseInfo) {
-			// Source-map translate for display
-			const translated = { ...this.pauseInfo };
-			if (translated.scriptId && translated.line !== undefined) {
-				const resolved = this.resolveToSource(
-					translated.scriptId,
-					translated.line + 1, // pauseInfo.line is 0-based
-					translated.column ?? 0,
-				);
-				if (resolved) {
-					translated.url = resolved.file;
-					translated.line = resolved.line - 1;
-					if (resolved.column !== undefined) {
-						translated.column = resolved.column - 1;
-					}
-				}
-			}
-			result.pauseInfo = translated;
-		}
+		const pauseInfo = this.displayedPauseInfo();
+		if (pauseInfo) result.pauseInfo = pauseInfo;
 
 		return result;
 	}
@@ -309,25 +293,8 @@ export class CdpSession extends BaseSession {
 			status.wsUrl = this.wsUrl;
 		}
 
-		if (this.pauseInfo) {
-			// Source-map translate pauseInfo for display
-			const translated = { ...this.pauseInfo };
-			if (translated.scriptId && translated.line !== undefined) {
-				const resolved = this.resolveToSource(
-					translated.scriptId,
-					translated.line + 1, // pauseInfo.line is 0-based
-					translated.column ?? 0,
-				);
-				if (resolved) {
-					translated.url = resolved.file;
-					translated.line = resolved.line - 1; // back to 0-based for pauseInfo
-					if (resolved.column !== undefined) {
-						translated.column = resolved.column - 1;
-					}
-				}
-			}
-			status.pauseInfo = translated;
-		}
+		const pauseInfo = this.displayedPauseInfo();
+		if (pauseInfo) status.pauseInfo = pauseInfo;
 
 		if (this.state === "idle" && this.exceptionEntries.length > 0) {
 			const last = this.exceptionEntries.at(-1);
@@ -335,6 +302,25 @@ export class CdpSession extends BaseSession {
 		}
 
 		return status;
+	}
+
+	/** The pause as shown: source-mapped, with lines and columns counted from 1 */
+	private displayedPauseInfo(): PauseInfo | undefined {
+		if (!this.pauseInfo) return undefined;
+		const { scriptId, line, column } = this.pauseInfo;
+		const shown: PauseInfo = {
+			...this.pauseInfo,
+			line: line === undefined ? undefined : line + 1,
+			column: column === undefined ? undefined : column + 1,
+		};
+		const resolved =
+			scriptId && line !== undefined ? this.resolveToSource(scriptId, line + 1, column ?? 0) : null;
+		if (resolved) {
+			shown.url = resolved.file;
+			shown.line = resolved.line;
+			shown.column = resolved.column ?? shown.column;
+		}
+		return shown;
 	}
 
 	async stop(): Promise<void> {
@@ -991,6 +977,10 @@ export class CdpSession extends BaseSession {
 		// Handlers before any domain is enabled so no event is missed; "running"
 		// before the handshake so waitUntilStopped() has a live target to wait on.
 		this.setupCdpEventHandlers(cdp);
+		// An attached target that exits only shows as its socket closing
+		void cdp.closed.then(() => {
+			if (this.cdp === cdp) this.targetGone("socket.closed");
+		});
 		if (this.state === "idle") {
 			this.state = "running";
 			this._notifyStateWaiters();
@@ -1139,22 +1129,26 @@ export class CdpSession extends BaseSession {
 		});
 	}
 
+	/** The target exited or closed the connection: nothing runs or pauses anymore. */
+	private targetGone(why: "child.exit" | "socket.closed"): void {
+		this.log.info("target.gone", { why });
+		this.cdp?.disconnect();
+		this.cdp = null;
+		this._dialect = null;
+		this.entryBreakpoints.reset();
+		this.state = "idle";
+		this.pauseInfo = null;
+		this._notifyStateWaiters();
+		for (const cb of this.onProcessExit) cb();
+		this.onProcessExit.clear();
+	}
+
 	private monitorProcessExit(proc: Subprocess<"ignore", "ignore", "pipe">): void {
 		proc.exited
 			.then((exitCode) => {
 				this.log.info("child.exit", { code: exitCode ?? null });
-				// Child process has exited
 				this.childProcess = null;
-				if (this.cdp) {
-					this.cdp.disconnect();
-					this.cdp = null;
-					this._dialect = null;
-				}
-				this.state = "idle";
-				this.pauseInfo = null;
-				this._notifyStateWaiters();
-				for (const cb of this.onProcessExit) cb();
-				this.onProcessExit.clear();
+				this.targetGone("child.exit");
 			})
 			.catch((err) => {
 				this.log.error("child.exit.error", { error: String(err) });

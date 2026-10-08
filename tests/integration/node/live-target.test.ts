@@ -171,6 +171,25 @@ describe("Attach to a Node.js process", () => {
 			proc.kill();
 		}
 	});
+
+	test("a killed process leaves the session idle", async () => {
+		const port = 9400 + Math.floor(Math.random() * 90);
+		const proc = Bun.spawn(["node", `--inspect=${port}`, APP], {
+			stdout: "ignore",
+			stderr: "ignore",
+		});
+		const session = new CdpSession("node-attach-killed");
+		try {
+			await waitForNodeInspector(port);
+			await session.attach(String(port));
+			proc.kill();
+			await session.waitForState("idle");
+			expect(session.cdp).toBeNull();
+		} finally {
+			await session.stop();
+			proc.kill();
+		}
+	});
 });
 
 describe("Function breakpoints across sessions (Node.js)", () => {

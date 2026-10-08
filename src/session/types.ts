@@ -89,6 +89,7 @@ export interface LaunchResult {
 	pid: number;
 	wsUrl: string;
 	paused: boolean;
+	/** As shown: source-mapped, lines and columns counted from 1 */
 	pauseInfo?: PauseInfo;
 }
 
@@ -101,6 +102,7 @@ export interface SessionStatus {
 	state: "idle" | "running" | "paused";
 	pid?: number;
 	wsUrl?: string;
+	/** As shown: source-mapped, lines and columns counted from 1 */
 	pauseInfo?: PauseInfo;
 	uptime: number;
 	scriptCount: number;

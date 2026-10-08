@@ -15,6 +15,14 @@ interface PendingRequest {
 	timer: ReturnType<typeof setTimeout>;
 }
 
+/** A request that will never be answered: the connection closed first. */
+export class ConnectionClosedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ConnectionClosedError";
+	}
+}
+
 export class TimeoutError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -28,6 +36,7 @@ export class CdpClient {
 	private pending = new Map<number, PendingRequest>();
 	private listeners = new Map<string, Set<AnyHandler>>();
 	private isConnected = false;
+	private readonly closedByPeer = Promise.withResolvers<void>();
 	private logger: Logger<"cdp"> | null;
 	/** Map request id → method name for response logging */
 	private sentMethods = new Map<number, string>();
@@ -43,7 +52,9 @@ export class CdpClient {
 
 	static async connect(wsUrl: string, logger?: Logger<"cdp">): Promise<CdpClient> {
 		return new Promise<CdpClient>((resolve, reject) => {
-			const ws = new WebSocket(wsUrl);
+			// Asks Bun not to stay alive for this connection, so a program ends
+			// as it would without a debugger (Node already does); Node ignores it
+			const ws = new WebSocket(wsUrl, { headers: { "Ref-Event-Loop": "0" } });
 
 			const onOpen = () => {
 				ws.removeEventListener("error", onError);
@@ -212,7 +223,7 @@ export class CdpClient {
 		}
 		this.isConnected = false;
 
-		const error = new Error("CDP client disconnected");
+		const error = new ConnectionClosedError("CDP client disconnected");
 		for (const [id, pending] of this.pending) {
 			clearTimeout(pending.timer);
 			pending.reject(error);
@@ -221,6 +232,11 @@ export class CdpClient {
 
 		this.listeners.clear();
 		this.ws.close();
+	}
+
+	/** Resolves when the other end closes the socket, e.g. the target exits. */
+	get closed(): Promise<void> {
+		return this.closedByPeer.promise;
 	}
 
 	get connected(): boolean {
@@ -239,8 +255,9 @@ export class CdpClient {
 		});
 
 		this.ws.addEventListener("close", () => {
+			if (this.isConnected) this.closedByPeer.resolve();
 			this.isConnected = false;
-			const error = new Error("WebSocket connection closed");
+			const error = new ConnectionClosedError("WebSocket connection closed");
 			for (const [id, pending] of this.pending) {
 				clearTimeout(pending.timer);
 				pending.reject(error);

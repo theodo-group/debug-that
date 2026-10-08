@@ -8,6 +8,8 @@ import { waitForPort, withSession } from "../../helpers.ts";
  *
  * Each test owns its process: tests in a file run concurrently.
  */
+const ENDS_WHEN_TOLD = "const t = setInterval(() => globalThis.done && clearInterval(t), 10)";
+
 describe("Bun attach", () => {
 	async function withInspectedBun(
 		args: string[],
@@ -57,6 +59,16 @@ describe("Bun attach", () => {
 				await expect(session.attach(port)).rejects.toThrow("lists no targets");
 			});
 		}));
+
+	test("an attached process that ends leaves the session idle", () =>
+		// Ends on its own once told to, rather than on a timer that could beat the attach
+		withInspectedBun(["-e", ENDS_WHEN_TOLD], "", (wsUrl) =>
+			withSession("bun-attach-ends", async (session) => {
+				await session.attach(wsUrl);
+				await session.eval("globalThis.done = true");
+				await session.waitForState("idle");
+			}),
+		));
 
 	test("attaching to an already-running process leaves it running", () =>
 		withInspectedBun(["-e", "setInterval(() => {}, 1000)"], "", (wsUrl) =>

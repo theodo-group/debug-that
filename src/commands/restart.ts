@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
-import { shortPath } from "../formatter/path.ts";
+import { formatLocation } from "../formatter/path.ts";
 
 defineCommand({
 	name: "restart",
@@ -18,11 +18,7 @@ defineCommand({
 		} else {
 			console.log(`Session "${ctx.global.session}" restarted (pid ${data.pid})`);
 			if (data.paused && data.pauseInfo) {
-				const col = data.pauseInfo.column !== undefined ? `:${data.pauseInfo.column + 1}` : "";
-				const loc = data.pauseInfo.url
-					? `${shortPath(data.pauseInfo.url)}:${data.pauseInfo.line}${col}`
-					: "unknown";
-				console.log(`Paused at ${loc}`);
+				console.log(`Paused at ${formatLocation(data.pauseInfo)}`);
 			} else {
 				console.log("Running");
 			}

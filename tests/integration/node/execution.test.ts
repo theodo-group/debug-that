@@ -93,6 +93,6 @@ describe("Execution control", () => {
 		withPausedSession("test-exec-run-to", "tests/fixtures/js/step-app.js", async (session) => {
 			await session.runTo("step-app.js", 12);
 			expect(session.sessionState).toBe("paused");
-			expect(session.getStatus().pauseInfo?.line).toBe(11);
+			expect(session.getStatus().pauseInfo?.line).toBe(12);
 		}));
 });

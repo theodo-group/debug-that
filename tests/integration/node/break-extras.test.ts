@@ -109,7 +109,7 @@ describe("break --continue", () => {
 			await session.setBreakpoint("tests/fixtures/js/step-app.js", 12);
 			await session.continue();
 			expect(session.sessionState).toBe("paused");
-			expect(session.getStatus().pauseInfo?.line).toBe(11);
+			expect(session.getStatus().pauseInfo?.line).toBe(12);
 		}));
 });
 

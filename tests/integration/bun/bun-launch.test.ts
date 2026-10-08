@@ -25,6 +25,15 @@ describe("Bun debugging", () => {
 			expect(session.getStack()[0]?.line).toBe(1);
 		}));
 
+	test("a program that ends exits with dbg attached, as without it", () =>
+		withSession("bun-test-ends", async (session) => {
+			await session.launch(["bun", "tests/fixtures/js/cjs-target.cjs"], { brk: true });
+			const child = session.childProcess;
+			await session.continue();
+			await session.waitForState("idle");
+			expect(await child?.exited).toBe(0);
+		}));
+
 	test("debugger statement pauses (JSC needs explicit opt-in)", () =>
 		withSession("bun-test-debugger-stmt", async (session) => {
 			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });
