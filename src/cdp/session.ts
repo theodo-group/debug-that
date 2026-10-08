@@ -235,7 +235,6 @@ export class CdpSession extends BaseSession {
 		await this.connect(wsUrl, runtimeFromCommand(command), {
 			mode: "launch",
 			pauseAtEntry: brk,
-			entryScript: entryScriptOf(command),
 		});
 
 		const result: LaunchResult = {
@@ -824,19 +823,31 @@ export class CdpSession extends BaseSession {
 	}
 
 	/**
-	 * Our own pause before a script that breakpoints wait for: bind them (its
-	 * scriptParsed came first and started that), then go on. Stays paused
-	 * when one of them sits right here, or when a step or pause is under way:
-	 * the engine ended that in this pause.
+	 * Our own pause before a script that breakpoints wait for: bind them, then
+	 * go on. Its scriptParsed came first and bound what it could; JSC refuses
+	 * a breakpoint where the entry breakpoint sits, so that one goes first and
+	 * the rest bind now. Stays paused when one of them sits right here, or when
+	 * a step or pause is under way: the engine ended that in this pause.
 	 */
-	private async bindPendingThenResume(p: Protocol.Debugger.PausedEvent): Promise<void> {
+	private async bindPendingThenResume(
+		p: Protocol.Debugger.PausedEvent,
+		hitBreakpoints: string[],
+	): Promise<void> {
 		let reported = false;
 		try {
 			await this.drainPendingRebinds();
+			await this.entryBreakpoints.release(hitBreakpoints);
+			const scriptId = p.callFrames[0]?.location.scriptId;
+			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
+			if (scriptId && url) await this.rebindPendingBreakpoints(scriptId, url);
 			await this.guardPendingBreakpoints();
 			const hits = await this.breakpointsThatPauseAt(p.callFrames[0]);
 			if (hits.length > 0) {
-				this.reportPause(p, hits);
+				// A breakpoint hit, as the engine would have reported it
+				this.reportPause(
+					{ ...p, reason: p.reason === "instrumentation" ? "other" : p.reason },
+					hits,
+				);
 				reported = true;
 			} else if (this.stopRequested) {
 				this.reportPause(
@@ -1000,7 +1011,7 @@ export class CdpSession extends BaseSession {
 				p.hitBreakpoints ??
 				(typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
 			if (p.reason === "instrumentation" || this.entryBreakpoints.isEntryPause(hitBreakpoints)) {
-				void this.bindPendingThenResume(p);
+				void this.bindPendingThenResume(p, hitBreakpoints ?? []);
 				return;
 			}
 			this.reportPause(p, hitBreakpoints);
@@ -1256,13 +1267,4 @@ export class CdpSession extends BaseSession {
 		};
 		pump();
 	}
-}
-
-/** The script a launch command runs: its last non-flag argument. */
-function entryScriptOf(command: string[]): string | null {
-	for (let i = command.length - 1; i >= 0; i--) {
-		const arg = command[i] as string;
-		if (!arg.startsWith("-")) return arg;
-	}
-	return null;
 }

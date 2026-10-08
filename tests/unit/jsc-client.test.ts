@@ -8,6 +8,9 @@ let jsc: JscClient | null = null;
 
 async function createTestClient(): Promise<{ cdp: CdpClient; jsc: JscClient }> {
 	server = Bun.serve({
+		// The address the client dials: Bun's default listens on ::1 only, so another
+		// process could hold this port on 127.0.0.1 and take the connection
+		hostname: "127.0.0.1",
 		port: 0,
 		fetch(req, srv) {
 			if (srv.upgrade(req, { data: undefined })) {

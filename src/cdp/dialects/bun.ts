@@ -1,6 +1,5 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import { BRK_PAUSE_TIMEOUT_MS } from "../../constants.ts";
-import { escapeRegex } from "../../util/escape-regex.ts";
 import { type CdpClient, isAlreadyEnabledError } from "../client.ts";
 import type {
 	BreakpointBehavior,
@@ -39,14 +38,11 @@ export class BunDialect implements InspectorDialect {
 		await this.jsc.send("Console.enable");
 
 		if (intent.mode === "launch" && intent.pauseAtEntry) {
-			await this.pauseAtEntryScript(target, intent.entryScript);
+			await this.stepPastOwnEntryStop(target);
 		} else if (intent.mode === "attach" && (await this.isHeldByInspector(target))) {
 			await this.releaseAndPause(target);
 		}
 
-		// Must come after the entry pause: Bun's own --inspect-brk fires through
-		// this setting at the module's first instruction, ahead of the breakpoint
-		// on the first real statement.
 		await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
 	}
 
@@ -159,16 +155,21 @@ export class BunDialect implements InspectorDialect {
 	 * and catch the entry script with a line-1 breakpoint, which JSC resolves to
 	 * the first breakable statement (line 0 would silently fail).
 	 */
-	private async pauseAtEntryScript(target: ConnectTarget, entryScript: string | null) {
+	/**
+	 * Bun's --inspect-brk puts a `debugger` statement ahead of the entry
+	 * script's code, which pauses once such statements do. One step over it
+	 * stops on the script's first statement, whatever kind of module it is.
+	 */
+	private async stepPastOwnEntryStop(target: ConnectTarget): Promise<void> {
 		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-		const entryBreakpoint = await this.setEntryBreakpoint(entryScript);
-		try {
-			const stopped = target.waitUntilStopped();
-			await this.jsc.send("Inspector.initialized");
-			await stopped;
-		} finally {
-			if (entryBreakpoint) await this.removeBreakpointQuietly(entryBreakpoint);
-		}
+		await this.jsc.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+		const stopped = target.waitUntilStopped({ timeoutMs: BRK_PAUSE_TIMEOUT_MS });
+		await this.jsc.send("Inspector.initialized");
+		await stopped;
+		if (target.pauseInfo?.reason !== "DebuggerStatement") return;
+		const stepped = target.waitUntilStopped();
+		await this.jsc.send("Debugger.stepOver");
+		await stepped;
 	}
 
 	/**
@@ -197,29 +198,6 @@ export class BunDialect implements InspectorDialect {
 		await this.jsc.send("Debugger.pause");
 		await this.jsc.send("Inspector.initialized");
 		await stopped;
-	}
-
-	private async setEntryBreakpoint(entryScript: string | null): Promise<string | null> {
-		if (!entryScript) return null;
-		const filename = entryScript.split("/").pop() ?? entryScript;
-		try {
-			const r = await this.jsc.send("Debugger.setBreakpointByUrl", {
-				urlRegex: `${escapeRegex(filename)}$`,
-				lineNumber: 1,
-			});
-			return r.breakpointId;
-		} catch {
-			return null;
-		}
-	}
-
-	private async removeBreakpointQuietly(breakpointId: string): Promise<void> {
-		if (!this.jsc.connected) return;
-		try {
-			await this.jsc.send("Debugger.removeBreakpoint", { breakpointId });
-		} catch {
-			// Already removed or disconnected
-		}
 	}
 }
 

@@ -4,6 +4,8 @@ import { withPausedSession } from "../helpers.ts";
 
 const LOADER = "tests/fixtures/js/cjs-load.js";
 const TARGET = "tests/fixtures/js/cjs-target.cjs";
+const ESM_LOADER = "tests/fixtures/js/esm-load.js";
+const ESM_TARGET = "tests/fixtures/js/esm-target.js";
 
 /** The loader prints the target's total once both ran; Bun stays alive after, so its state cannot tell. */
 async function ranToCompletion(session: CdpSession): Promise<void> {
@@ -21,6 +23,8 @@ async function ranToCompletion(session: CdpSession): Promise<void> {
 export function describePendingBreakpoints(runtime: "node" | "bun"): void {
 	const withLoader = (name: string, fn: Parameters<typeof withPausedSession>[2]) =>
 		withPausedSession(`${runtime}-${name}`, LOADER, fn, runtime);
+	const withEsmLoader = (name: string, fn: Parameters<typeof withPausedSession>[2]) =>
+		withPausedSession(`${runtime}-${name}`, ESM_LOADER, fn, runtime);
 
 	describe(`Breakpoints on a file not loaded yet (${runtime})`, () => {
 		test("fires in top-level code that runs as the file loads", () =>
@@ -57,6 +61,34 @@ export function describePendingBreakpoints(runtime: "node" | "bun"): void {
 				await session.continue();
 				await ranToCompletion(session);
 			}));
+
+		test("fires in a function the file declares above its top-level code", () =>
+			withEsmLoader("pending-esm-fn", async (session) => {
+				await session.setBreakpoint(ESM_TARGET, 2);
+				await session.continue();
+				await session.waitForState("paused");
+				expect(session.getStack()[0]?.file).toContain("esm-target.js");
+				expect(session.getStack()[0]?.line).toBe(2);
+			}));
+
+		test("fires in an ES module's top-level code after a call", () =>
+			withEsmLoader("pending-esm-toplevel", async (session) => {
+				await session.setBreakpoint(ESM_TARGET, 6);
+				await session.continue();
+				await session.waitForState("paused");
+				expect(session.getStack()[0]?.line).toBe(6);
+			}));
+
+		// JSC places the entry breakpoint at the first breakable spot in text order,
+		// helper()'s body here, so it stops only once line 5 is already calling it
+		test.if(runtime === "node")("fires on the top-level line that first runs code", () =>
+			withEsmLoader("pending-esm-first", async (session) => {
+				await session.setBreakpoint(ESM_TARGET, 5);
+				await session.continue();
+				await session.waitForState("paused");
+				expect(session.getStack()[0]?.line).toBe(5);
+			}),
+		);
 
 		test("stepping over the require stops in the file instead of running on", () =>
 			withLoader("pending-step", async (session) => {

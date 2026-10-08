@@ -4,14 +4,12 @@ import type { WaitForStopOptions } from "../session/base-session.ts";
 export type RuntimeName = "node" | "bun";
 
 /** Why the session is connecting; decides which initial state the dialect must reach. */
-export type ConnectIntent =
-	| { mode: "launch"; pauseAtEntry: boolean; entryScript: string | null }
-	| { mode: "attach" };
+export type ConnectIntent = { mode: "launch"; pauseAtEntry: boolean } | { mode: "attach" };
 
 /** The slice of session state a dialect may observe while reaching the initial state. */
 export interface ConnectTarget {
 	isPaused(): boolean;
-	readonly pauseInfo: { url?: string } | null;
+	readonly pauseInfo: { reason: string; url?: string } | null;
 	readonly scripts: ReadonlyMap<string, unknown>;
 	waitUntilStopped(options?: WaitForStopOptions): Promise<void>;
 }

@@ -9,6 +9,11 @@ import type { InspectorDialect } from "./dialect.ts";
  * before its first statement and the waiting breakpoints can be bound by
  * script id, on source-mapped lines, before any of its code runs. This is
  * what the Bun and VS Code debug adapters do.
+ *
+ * V8 stops on the first statement that runs. JSC stops on the first
+ * breakable spot in text order, which may be inside a function declared
+ * above the top-level code: there, the top-level line calling it first
+ * has started when the file stops.
  */
 export class EntryBreakpoints {
 	/** Breakpoint id by the file it waits for */
@@ -25,6 +30,13 @@ export class EntryBreakpoints {
 		const wanted = new Set(files);
 		this.applied = this.applied.catch(() => {}).then(() => this.apply(wanted));
 		return this.applied;
+	}
+
+	/** Removes these entry breakpoints, so that JSC accepts others at their location. */
+	release(breakpointIds: readonly string[]): Promise<void> {
+		const files = [...this.byFile].filter(([, id]) => breakpointIds.includes(id)).map(([f]) => f);
+		const kept = [...this.byFile.keys()].filter((f) => !files.includes(f));
+		return this.sync(kept);
 	}
 
 	/** Whether a pause hit entry breakpoints only. */

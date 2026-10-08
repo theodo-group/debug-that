@@ -14,6 +14,17 @@ describe("Bun debugging", () => {
 			expect(session.runtime).toBe("bun");
 		}));
 
+	test("launches a CommonJS file paused on its first statement", () =>
+		withSession("bun-test-launch-cjs", async (session) => {
+			const result = await session.launch(["bun", "tests/fixtures/js/cjs-target.cjs"], {
+				brk: true,
+			});
+			expect(result.paused).toBe(true);
+			await session.sourceMapResolver.waitForPendingLoads();
+			expect(session.getStack()[0]?.file).toContain("cjs-target.cjs");
+			expect(session.getStack()[0]?.line).toBe(1);
+		}));
+
 	test("debugger statement pauses (JSC needs explicit opt-in)", () =>
 		withSession("bun-test-debugger-stmt", async (session) => {
 			await session.launch(["bun", "tests/fixtures/js/simple-app.js"], { brk: true });
