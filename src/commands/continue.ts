@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
+import { secondsFlag } from "../cli/parse-flag.ts";
 import { REQUEST_TIMEOUT_MS } from "../constants.ts";
 import { daemonRequest } from "../daemon/client.ts";
 import { shouldEnableColor } from "../formatter/color.ts";
@@ -11,9 +12,9 @@ defineCommand({
 	category: "execution",
 	positional: { kind: "none" },
 	flags: z.object({
-		wait: z.coerce.number().optional().meta({
-			description: "Seconds to wait for the next pause or the program's end",
-		}),
+		wait: secondsFlag(
+			"Seconds to wait for the next pause or the program's end; while running, just waits",
+		),
 	}),
 	handler: async (ctx) => {
 		const waitMs = ctx.flags.wait === undefined ? undefined : ctx.flags.wait * 1000;

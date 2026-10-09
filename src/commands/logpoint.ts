@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { parseFileLine } from "../cli/parse-target.ts";
 import { daemonRequest } from "../daemon/client.ts";
+import { PENDING_NOTE } from "../formatter/breakpoint.ts";
 import { shortPath } from "../formatter/path.ts";
 import { requestFunctionBreakpoint } from "./break-fn.ts";
 
@@ -61,7 +62,8 @@ defineCommand({
 			console.log(JSON.stringify(data, null, 2));
 		} else {
 			const loc = `${shortPath(data.location.url)}:${data.location.line}`;
-			console.log(`${data.ref} set at ${loc} (log: ${template})`);
+			const pending = data.pending ? ` ${PENDING_NOTE}` : "";
+			console.log(`${data.ref} set at ${loc} (log: ${template})${pending}`);
 		}
 
 		return 0;

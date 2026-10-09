@@ -27,9 +27,12 @@ export function describePendingBreakpoints(runtime: "node" | "bun"): void {
 	describe(`Breakpoints on a file not loaded yet (${runtime})`, () => {
 		test("fires in top-level code that runs as the file loads", () =>
 			withLoader("pending-toplevel", async (session) => {
+				expect(session.pauseInfo?.reason).toBe("entry");
 				expect((await session.setBreakpoint(TARGET, 2)).pending).toBe(true);
 				await session.continue();
 				await session.waitForState("paused");
+				// The guard's pause, kept because the breakpoint sits there: reported as the hit it is
+				expect(session.pauseInfo?.reason).toBe("breakpoint");
 				expect(session.getStack()[0]).toMatchObject({ line: 2 });
 				expect(session.getStack()[0]?.file).toContain("cjs-target.cjs");
 				expect(session.listBreakpoints()[0]?.pending).toBeFalsy();

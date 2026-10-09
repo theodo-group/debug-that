@@ -48,6 +48,8 @@ const NOTES: Record<Mechanism, string | undefined> = {
 
 export class FunctionBreakpoints {
 	private readonly bindings = new Map<string, Binding>();
+	/** The target being bound, whose first pause can come before its entry is recorded */
+	private inFlight: { label: string; byName: boolean } | null = null;
 
 	constructor(private readonly session: CdpSession) {}
 
@@ -55,10 +57,17 @@ export class FunctionBreakpoints {
 		target: string,
 		options: FunctionBreakpointOptions = {},
 	): Promise<FunctionBreakpointResult> {
-		// Name the target first: once bound, a call can pause before the entry is
-		// recorded, and the pause would not be reported as this breakpoint.
+		// Named before binding: the engine can report the breakpoint's first pause
+		// in the same message batch as the reply that created it, before the
+		// entry below is recorded. pauseReason knows an unknown id as this one.
 		const label = isRef(target) ? await this.describeRef(target) : target;
-		const bound = await this.bind(target, options);
+		this.inFlight = { label, byName: options.byName === true };
+		let bound: { id: string; mechanism: Mechanism };
+		try {
+			bound = await this.bind(target, options);
+		} finally {
+			this.inFlight = null;
+		}
 		const meta = {
 			url: `fn:${label}`,
 			line: 0,
@@ -71,25 +80,7 @@ export class FunctionBreakpoints {
 			options.log !== undefined
 				? this.session.refs.addLogpoint(bound.id, { ...meta, template: options.log })
 				: this.session.refs.addBreakpoint(bound.id, { ...meta, hitCount: options.hitCount });
-		this.relabelPauseFrom(bound.id, label);
 		return { ref, note: NOTES[bound.mechanism] };
-	}
-
-	/**
-	 * The engine can report the first pause of a breakpoint in the same message
-	 * batch as the reply that created it, before the entry above was recorded.
-	 * Such a pause got the engine's generic reason; give it the right one.
-	 */
-	private relabelPauseFrom(id: string, label: string): void {
-		const pause = this.session.isPaused() ? this.session.pauseInfo : null;
-		if (!pause || pause.reason.startsWith("Function breakpoint")) return;
-		const byName = this.bindings.get(id)?.mechanism === "name" && pause.reason === "FunctionCall";
-		if (byName) {
-			const top = this.session.pausedCallFrames[0]?.functionName;
-			pause.reason = `Function breakpoint ${top || label}`;
-		} else if (pause.hitBreakpoints?.includes(id)) {
-			pause.reason = `Function breakpoint ${label}`;
-		}
 	}
 
 	/** Binds a stored entry again (re-enable). */
@@ -180,19 +171,24 @@ export class FunctionBreakpoints {
 		topFunction?: string;
 	}): string | undefined {
 		if (pause.topUrl?.startsWith(WRAPPER_URL)) {
-			return `Function breakpoint ${pause.topUrl.slice(WRAPPER_URL.length)}`;
+			return `function breakpoint ${pause.topUrl.slice(WRAPPER_URL.length)}`;
 		}
-		for (const id of pause.hitBreakpoints ?? []) {
+		const hits = pause.hitBreakpoints ?? [];
+		for (const id of hits) {
 			const entry = this.session.refs.findByRemoteId(id);
 			if (entry && (entry.type === "BP" || entry.type === "LP") && entry.meta.fn) {
-				return `Function breakpoint ${entry.meta.fn}`;
+				return `function breakpoint ${entry.meta.fn}`;
 			}
 		}
-		if (
-			pause.reason === "FunctionCall" &&
-			[...this.bindings.values()].some((b) => b.mechanism === "name")
-		) {
-			return `Function breakpoint ${pause.topFunction ?? ""}`.trim();
+		const byName = pause.reason === "FunctionCall";
+		if (byName && [...this.bindings.values()].some((b) => b.mechanism === "name")) {
+			return `function breakpoint ${pause.topFunction ?? ""}`.trim();
+		}
+		// Entry pauses are told apart before this, so an id nothing knows is the one being bound
+		const unknown = hits.some((id) => !this.session.refs.findByRemoteId(id));
+		if (this.inFlight && (unknown || (byName && this.inFlight.byName))) {
+			const name = byName ? pause.topFunction || this.inFlight.label : this.inFlight.label;
+			return `function breakpoint ${name}`;
 		}
 		return undefined;
 	}

@@ -49,7 +49,7 @@ describe("Bun attach", () => {
 				expect(bp.ref).toMatch(/^BP#/);
 				await session.continue();
 				await session.waitForState("paused");
-				expect(session.pauseInfo?.reason).toBe("Breakpoint");
+				expect(session.pauseInfo?.reason).toBe("breakpoint");
 			}),
 		));
 

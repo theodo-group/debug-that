@@ -4,8 +4,8 @@ import type {
 	LogpointEntry,
 	LogpointMeta,
 } from "../refs/ref-table.ts";
-import type { BreakpointListItem } from "../session/session.ts";
-import type { BreakpointBehavior, BreakpointTarget } from "./dialect.ts";
+import type { BreakpointListItem, BreakpointResult } from "../session/session.ts";
+import type { BreakpointBehavior, BreakpointTarget, InspectorDialect } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
 
 /** What a stored breakpoint or logpoint does when hit, active or disabled */
@@ -21,11 +21,7 @@ export async function setBreakpoint(
 	file: string,
 	line: number,
 	options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
-): Promise<{
-	ref: string;
-	location: { url: string; line: number; column?: number };
-	pending?: boolean;
-}> {
+): Promise<BreakpointResult> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -38,10 +34,15 @@ export async function setBreakpoint(
 		: null;
 	const actualFile = resolved?.runtime.file ?? file;
 	const actualLine = resolved?.runtime.line ?? line;
-	// A translated position keeps its column: on a minified line it is the
-	// only thing that tells the statement apart. The runtime binds at the
-	// first breakable location from there.
-	const actualColumn = resolved ? resolved.runtime.column : userColumn;
+	const actualColumn =
+		resolved && userColumn === undefined
+			? await breakableColumnFrom(
+					session.dialect,
+					resolved.runtime.scriptId,
+					actualLine,
+					resolved.runtime.column,
+				)
+			: (resolved?.runtime.column ?? userColumn);
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;
@@ -51,14 +52,11 @@ export async function setBreakpoint(
 		url = session.findScriptUrl(actualFile);
 	}
 
-	// If the script is not loaded yet and no explicit urlRegex was given,
-	// store as a local pending breakpoint instead of sending a URL-regex
-	// breakpoint to V8. V8 resolves URL-regex breakpoints using raw compiled
-	// line numbers (ignoring source maps), which causes breakpoints to snap
-	// to wrong lines in vm.compileFunction() contexts (Jest/Vitest).
-	// rebindPendingBreakpoints() will set it by scriptId with the correct
-	// source-map-translated line when the script loads, which stops before
-	// its first statement until then (guardPendingBreakpoints).
+	// A script not loaded yet cannot take the breakpoint: V8 would bind a URL
+	// breakpoint on raw compiled lines, ignoring source maps (wrong lines in
+	// vm.compileFunction contexts such as Jest). It waits instead, and
+	// PendingBreakpoints binds it by script id, on the translated line, as the
+	// script loads and stops before its first statement.
 	if (!url && !resolved?.runtime.scriptId && !urlRegex) {
 		const meta: BreakpointMeta = { url: file, line };
 		if (options?.column !== undefined) meta.column = options.column;
@@ -66,7 +64,7 @@ export async function setBreakpoint(
 		if (options?.hitCount) meta.hitCount = options.hitCount;
 
 		const ref = session.refs.addPendingBreakpoint(meta);
-		await session.guardPendingBreakpoints();
+		await session.pending.guard();
 		return { ref, location: { url: file, line, column: meta.column }, pending: true };
 	}
 
@@ -145,7 +143,7 @@ export async function removeBreakpoint(session: CdpSession, ref: string): Promis
 
 	if (!entry.pending) await unbind(session, entry);
 	session.refs.remove(ref);
-	if (entry.pending) await session.guardPendingBreakpoints();
+	if (entry.pending) await session.pending.guard();
 }
 
 export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
@@ -161,7 +159,7 @@ export async function removeAllBreakpoints(session: CdpSession): Promise<void> {
 	for (const entry of session.refs.listBreakpoints({ pending: true })) {
 		session.refs.remove(entry.ref);
 	}
-	await session.guardPendingBreakpoints();
+	await session.pending.guard();
 }
 
 export function listBreakpoints(
@@ -264,7 +262,7 @@ export async function toggleBreakpoint(
 				session.disabledBreakpoints.set(entry.ref, toDisabled(entry, "", true));
 				session.refs.remove(entry.ref);
 			}
-			await session.guardPendingBreakpoints();
+			await session.pending.guard();
 			return { ref: "all", state: "disabled" };
 		}
 		// Re-enable all disabled breakpoints
@@ -292,7 +290,7 @@ export async function toggleBreakpoint(
 			),
 		);
 		session.refs.remove(ref);
-		if (activeEntry.pending) await session.guardPendingBreakpoints();
+		if (activeEntry.pending) await session.pending.guard();
 		return { ref, state: "disabled" };
 	}
 
@@ -321,7 +319,7 @@ async function reEnableBreakpoint(
 			session.refs.addPendingLogpoint(entry.meta);
 		}
 		session.disabledBreakpoints.delete(ref);
-		await session.guardPendingBreakpoints();
+		await session.pending.guard();
 		return;
 	}
 
@@ -388,7 +386,7 @@ export async function setLogpoint(
 	line: number,
 	template: string,
 	options?: { condition?: string; maxEmissions?: number },
-): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
+): Promise<BreakpointResult> {
 	if (!session.cdp) {
 		throw new Error("No active debug session");
 	}
@@ -409,13 +407,21 @@ export async function setLogpoint(
 		if (options?.maxEmissions) meta.maxEmissions = options.maxEmissions;
 
 		const ref = session.refs.addPendingLogpoint(meta);
-		await session.guardPendingBreakpoints();
-		return { ref, location: { url: file, line } };
+		await session.pending.guard();
+		return { ref, location: { url: file, line }, pending: true };
 	}
 
+	const column = resolved
+		? await breakableColumnFrom(
+				session.dialect,
+				resolved.runtime.scriptId,
+				actualLine,
+				resolved.runtime.column,
+			)
+		: undefined;
 	const r = await session.dialect.setBreakpoint(
 		breakpointTarget(session, { scriptId: resolved?.runtime.scriptId, url }),
-		{ line: actualLine, condition: options?.condition, log: template },
+		{ line: actualLine, column, condition: options?.condition, log: template },
 	);
 
 	const loc = r.location;
@@ -483,6 +489,30 @@ function toDisabled(
 		return { breakpointId, type: "BP", meta: entry.meta, wasPending };
 	}
 	return { breakpointId, type: "LP", meta: entry.meta, wasPending };
+}
+
+/**
+ * The compiled column to bind a source-mapped line at, counted from 0. A source
+ * line's start translates to a column inside the compiled line; on a minified
+ * line that column is what tells the statement apart, so it is kept, snapped
+ * forward to the line's first breakable location. Past the last one (the
+ * mapping sits on a trailing sub-expression) the column is dropped, so the
+ * engine binds on the line instead of nowhere. Unknown locations leave the
+ * column as translated.
+ */
+export async function breakableColumnFrom(
+	dialect: InspectorDialect,
+	scriptId: string,
+	line: number,
+	column: number | undefined,
+): Promise<number | undefined> {
+	if (column === undefined) return undefined;
+	const locations = await dialect.getBreakableLocations(scriptId, line, line).catch(() => null);
+	if (!locations) return column;
+	const onLine = locations.filter((l) => l.line === line);
+	if (onLine.length === 0) return column;
+	const next = onLine.find((l) => l.column - 1 >= column);
+	return next ? next.column - 1 : undefined;
 }
 
 /**

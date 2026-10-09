@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { daemonRequest } from "../daemon/client.ts";
+import { PENDING_NOTE } from "../formatter/breakpoint.ts";
 import { colorize, shouldEnableColor } from "../formatter/color.ts";
 import { formatLocation } from "../formatter/path.ts";
 
@@ -32,6 +33,9 @@ defineCommand({
 					}
 					if (bp.hitCount) {
 						line += ` ${cc(`[hit-count: ${bp.hitCount}]`, "gray")}`;
+					}
+					if (bp.pending) {
+						line += ` ${cc(PENDING_NOTE, "gray")}`;
 					}
 					if (bp.disabled) {
 						line += ` ${cc("(disabled)", "gray")}`;

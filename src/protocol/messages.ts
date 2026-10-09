@@ -52,6 +52,8 @@ const StepRequest = z.object({
 	cmd: z.literal("step"),
 	args: z.object({
 		mode: z.optional(z.union([z.literal("over"), z.literal("into"), z.literal("out")])),
+		/** Wait this long for the step to land, instead of the default few seconds */
+		waitMs: z.optional(z.number()),
 	}),
 });
 

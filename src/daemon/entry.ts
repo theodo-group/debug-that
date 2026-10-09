@@ -7,6 +7,7 @@ import {
 } from "../protocol/messages.ts";
 import { createSession } from "../session/factory.ts";
 import type { PendingConfig, Session } from "../session/session.ts";
+import type { StateSnapshot } from "../session/types.ts";
 import { suggestEvalFix } from "./eval-suggestions.ts";
 import { ensureSocketDir, getLogPath } from "./paths.ts";
 import { DaemonServer } from "./server.ts";
@@ -64,6 +65,19 @@ function requireSession(): Session | ErrorResponse {
 	};
 }
 
+/** The wait a command asked for with --wait, or the session's default when it did not */
+function boundedWait(waitMs: number | undefined) {
+	return waitMs === undefined
+		? undefined
+		: { waitForStop: true, timeoutMs: waitMs, throwOnTimeout: false };
+}
+
+/** A state still running after the wait asked for says so, so that it reads as a timeout, not a resume */
+function afterWait(state: StateSnapshot, waitMs: number | undefined): StateSnapshot {
+	if (waitMs !== undefined && state.status === "running") state.waitedMs = waitMs;
+	return state;
+}
+
 function resetConfig() {
 	pendingConfig.remaps = [];
 	pendingConfig.symbolPaths = [];
@@ -112,22 +126,19 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 			const session = requireSession();
 			if (isError(session)) return session;
 			const { waitMs } = req.args;
-			await session.continue(
-				waitMs === undefined
-					? undefined
-					: { waitForStop: true, timeoutMs: waitMs, throwOnTimeout: false },
-			);
-			const stateAfter = await session.buildState();
-			return { ok: true, data: stateAfter };
+			const wait = boundedWait(waitMs);
+			// Already running: there is nothing to resume, the wait is the point
+			if (wait && session.getStatus().state === "running") await session.waitUntilStopped(wait);
+			else await session.continue(wait);
+			return { ok: true, data: afterWait(await session.buildState(), waitMs) };
 		}
 
 		case "step": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			const { mode = "over" } = req.args;
-			await session.step(mode);
-			const stateAfter = await session.buildState();
-			return { ok: true, data: stateAfter };
+			const { mode = "over", waitMs } = req.args;
+			await session.step(mode, boundedWait(waitMs));
+			return { ok: true, data: afterWait(await session.buildState(), waitMs) };
 		}
 
 		case "pause": {

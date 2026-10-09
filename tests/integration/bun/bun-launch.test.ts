@@ -65,7 +65,7 @@ describe("Bun debugging", () => {
 			await session.eval("setTimeout(() => { debugger; }, 20)");
 			await session.continue();
 			await session.waitForState("paused");
-			expect(session.pauseInfo?.reason).toBe("DebuggerStatement");
+			expect(session.pauseInfo?.reason).toBe("debugger");
 		}));
 
 	test("captures console output (JSC Console domain)", () =>
@@ -124,7 +124,7 @@ describe("Bun debugging", () => {
 			await session.continue();
 			await session.waitForState("paused");
 			expect(session.state).toBe("paused");
-			expect(session.pauseInfo?.reason).toBe("Breakpoint");
+			expect(session.pauseInfo?.reason).toBe("breakpoint");
 		}));
 
 	test("step over works", () =>
@@ -157,6 +157,6 @@ describe("Bun debugging", () => {
 			await session.setBreakpoint("tests/fixtures/js/simple-app.js", 6);
 			await session.continue();
 			expect(session.state).toBe("paused");
-			expect(session.pauseInfo?.reason).toBe("Breakpoint");
+			expect(session.pauseInfo?.reason).toBe("breakpoint");
 		}));
 });

@@ -213,6 +213,8 @@ export interface Session {
 	// ── Execution control ─────────────────────────────────────────
 	continue(options?: WaitForStopOptions): Promise<void>;
 	step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void>;
+	/** Resolves on the next pause or the program's end; after timeoutMs, resolves or throws as asked */
+	waitUntilStopped(options?: WaitForStopOptions): Promise<void>;
 	pause(): Promise<void>;
 	runTo(file: string, line: number): Promise<void>;
 	restartFrame(frameRef?: string): Promise<{ status: string }>;

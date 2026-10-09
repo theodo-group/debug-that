@@ -64,6 +64,7 @@ function flagSummary(shape: Record<string, z.ZodType>, usage?: string): string {
 function flagValueHint(key: string, meta?: { description?: string }): string {
 	const desc = meta?.description?.toLowerCase() ?? "";
 	// Common patterns — order matters: specific checks before generic ones
+	if (desc.includes("seconds")) return "SECONDS";
 	if (desc.includes("timeout") || desc.includes("ms")) return "MS";
 	if (desc.includes("depth")) return "N";
 	if (desc.includes("lines") || desc.includes("last n") || desc.includes("since")) return "N";
@@ -173,8 +174,8 @@ REFS: Every output assigns @refs. Use them everywhere:
 
 EXECUTION (all return state automatically):
   dbg continue              Resume; shows a pause that comes within 0.5s, else running
-  dbg continue --wait N     Resume and wait up to N seconds for the next pause or exit
-  dbg step [over|into|out]  Step one statement
+  dbg continue --wait N     Resume and wait up to N seconds for the next pause or exit (while running: just waits)
+  dbg step [over|into|out] [--wait N]  Step one statement; --wait N for a step that runs long (an await)
   dbg run-to file:line      Continue to location
   dbg pause                 Interrupt running process
   dbg restart-frame [@fN]   Re-run frame from beginning
@@ -187,7 +188,7 @@ BREAKPOINTS:
   dbg break-toggle <BP#|all>  Enable/disable breakpoints
   dbg breakable file:line[-end] Valid breakpoint locations (break file:line:col)
   dbg logpoint file:line "template \${var}" [--condition expr]
-  dbg catch [all|uncaught|caught|none]
+  dbg catch [all|uncaught|caught|none|exit]   (exit: pause as the program exits, state alive; none clears both)
   dbg break-fn <path|@ref|name> [--condition expr] [--log args] [--name]  Pause when a function is called
   dbg break fn:<path> / dbg logpoint fn:<path> <args>   Same, in location form (JS)
     (JS: --condition and --log run where the pause lands: the function's parameters/arguments/this, or args/this for wrapped natives)

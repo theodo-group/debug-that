@@ -18,7 +18,7 @@ describe("Function breakpoints (Bun)", () => {
 				condition: 'label === "tick"',
 			});
 			expect(r.note).toBeUndefined();
-			await expectPausedIn(session, "ping", "Function breakpoint service.ping");
+			await expectPausedIn(session, "ping", "function breakpoint service.ping");
 			expect((await session.eval("label")).value).toBe('"tick"');
 			expect(await wrappersInProcess(session)).toBe(0);
 		}));
@@ -28,7 +28,7 @@ describe("Function breakpoints (Bun)", () => {
 			await running(session);
 			const r = await session.setFunctionBreakpoint("double", { condition: "n === 21" });
 			expect(r.note).toBeUndefined();
-			await expectPausedIn(session, null, "Function breakpoint double");
+			await expectPausedIn(session, null, "function breakpoint double");
 			expect((await session.eval("n")).value).toBe("21");
 		}));
 
@@ -37,7 +37,7 @@ describe("Function breakpoints (Bun)", () => {
 			await running(session);
 			const r = await session.setFunctionBreakpoint("JSON.parse");
 			expect(r.note).toContain("wrapped");
-			await expectPausedIn(session, "parse", "Function breakpoint JSON.parse");
+			await expectPausedIn(session, "parse", "function breakpoint JSON.parse");
 			await session.removeBreakpoint(r.ref);
 			expect(await wrappersInProcess(session)).toBe(0);
 		}));
@@ -47,7 +47,7 @@ describe("Function breakpoints (Bun)", () => {
 			await running(session);
 			const r = await session.setFunctionBreakpoint("^ping$", { byName: true });
 			expect(r.note).toContain("name");
-			await expectPausedIn(session, "ping", "Function breakpoint ping");
+			await expectPausedIn(session, "ping", "function breakpoint ping");
 			await session.removeBreakpoint(r.ref);
 			await session.continue();
 			expect(await pausedWithin(session, 200)).toBe(false);

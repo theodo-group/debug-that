@@ -154,6 +154,7 @@ export abstract class BaseSession implements Session {
 
 	abstract continue(options?: WaitForStopOptions): Promise<void>;
 	abstract step(mode: "over" | "into" | "out", options?: WaitForStopOptions): Promise<void>;
+	abstract waitUntilStopped(options?: WaitForStopOptions): Promise<void>;
 	abstract pause(): Promise<void>;
 	abstract runTo(file: string, line: number): Promise<void>;
 	abstract restartFrame(frameRef?: string): Promise<{ status: string }>;

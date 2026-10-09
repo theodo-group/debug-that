@@ -1,4 +1,9 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
+import {
+	STATE_WAIT_TIMEOUT_MS,
+	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
+	WAIT_PAUSE_TIMEOUT_MS,
+} from "../constants.ts";
 import { ensureSocketDir, getLogPath } from "../daemon/paths.ts";
 import { fromShortPath } from "../formatter/path.ts";
 import type { RemoteObject } from "../formatter/values.ts";
@@ -7,6 +12,7 @@ import { createLogger, type Logger } from "../logger/index.ts";
 import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts";
 import type {
 	BreakpointListItem,
+	BreakpointResult,
 	EvalResult,
 	FunctionBreakpointResult,
 	SessionFeatures,
@@ -29,26 +35,20 @@ import type {
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
 import { type CdpClient, ConnectionClosedError } from "./client.ts";
-import { asCondition } from "./condition.ts";
-import type {
-	BreakpointBehavior,
-	ConnectIntent,
-	InspectorDialect,
-	RuntimeName,
-} from "./dialect.ts";
+import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
 import { openInspector } from "./dialects/index.ts";
-import { EntryBreakpoints } from "./entry-breakpoints.ts";
 import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import type { JSC } from "./jsc-protocol.js";
 import { type InspectedProcess, startInspected } from "./launcher.ts";
+import { classifyPause } from "./pause-classifier.ts";
+import { PendingBreakpoints } from "./pending-breakpoints.ts";
 import {
 	addBlackbox as addBlackboxImpl,
 	listBlackbox as listBlackboxImpl,
 	removeBlackbox as removeBlackboxImpl,
 } from "./session-blackbox.ts";
 import {
-	behaviorOf,
 	type DisabledBreakpoint,
 	getBreakableLocations as getBreakableLocationsImpl,
 	listBreakpoints as listBreakpointsImpl,
@@ -88,14 +88,6 @@ export interface ScriptInfo {
 	sourceMapURL?: string;
 }
 
-// Node.js: "Debugger listening on ws://..."
-// Bun:     "  ws://localhost:PORT/ID" (on its own indented line)
-import {
-	STATE_WAIT_TIMEOUT_MS,
-	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
-	WAIT_PAUSE_TIMEOUT_MS,
-} from "../constants.ts";
-
 export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
 	readonly sourceMapResolver = new SourceMapResolver((scriptId) => this.scriptSource(scriptId));
@@ -112,26 +104,18 @@ export class CdpSession extends BaseSession {
 		target: "idle" | "running" | "paused";
 		resolve: () => void;
 	}> = [];
-	private _pendingRebinds = new Set<Promise<void>>();
 	/** Counts reported pauses, so a wait can tell a new pause from the one it started in */
 	private pauseCount = 0;
 	/** Called on every state change, including the process going away */
 	private stateListeners = new Set<() => void>();
-	private readonly entryBreakpoints = new EntryBreakpoints(() =>
-		this.cdp && this._dialect ? { cdp: this.cdp, dialect: this._dialect } : null,
-	);
-	/** Waiting breakpoints bound since the last entry pause, to tell whether one sits where it stopped */
+	/** Breakpoints on files not loaded yet, and the guards that let them bind in time */
+	readonly pending: PendingBreakpoints;
 	/** The program's last moment: resumed through, or a pause for `catch exit` */
 	readonly exitStop = new ExitStop();
 	/** Logpoint samples (JSC), shown in the order they came */
 	private probedLogs: Promise<void> = Promise.resolve();
-	private boundWhileLoading: Array<{
-		breakpointId: string;
-		location?: { scriptId: string; lineNumber: number; columnNumber?: number };
-		behavior: BreakpointBehavior;
-	}> = [];
-	/** A step or pause that was sent and has not stopped yet */
-	stopRequested: "step" | "pause" | null = null;
+	/** A step or pause that was sent, or the entry pause a handshake reaches, not stopped yet */
+	stopRequested: "step" | "pause" | "entry" | null = null;
 	launchCommand: string[] | null = null;
 	readonly functionBreakpoints = new FunctionBreakpoints(this);
 	launchOptions: { brk?: boolean; port?: number } | null = null;
@@ -207,20 +191,7 @@ export class CdpSession extends BaseSession {
 	}
 
 	private async rebindAfterMapChange(scriptIds: string[]): Promise<void> {
-		for (const scriptId of scriptIds) {
-			const url = this.scripts.get(scriptId)?.url;
-			if (!url) continue;
-			this.logSourceMap(scriptId, url, true);
-			await this.rebindPendingBreakpoints(scriptId, url);
-		}
-	}
-
-	private logSourceMap(scriptId: string, url: string, loaded: boolean): void {
-		if (!loaded) return;
-		this.log.info("sourcemap.loaded", {
-			file: url,
-			map: this.sourceMapResolver.getInfo(scriptId)?.mapUrl ?? "",
-		});
+		for (const scriptId of scriptIds) await this.pending.mapChanged(scriptId);
 	}
 
 	/** The text of a script as the engine holds it */
@@ -240,6 +211,7 @@ export class CdpSession extends BaseSession {
 		this.log = rootLogger.child("session");
 		this.cdpLog = rootLogger.child("cdp");
 		this.runtimeHint = options?.runtime;
+		this.pending = new PendingBreakpoints(this, this.log);
 	}
 
 	get runtime(): "node" | "bun" | "unknown" {
@@ -406,9 +378,7 @@ export class CdpSession extends BaseSession {
 		this.targetIdentity = null;
 		this.scripts.clear();
 		this.disabledBreakpoints.clear();
-		this._pendingRebinds.clear();
-		this.entryBreakpoints.reset();
-		this.boundWhileLoading = [];
+		this.pending.reset();
 		this.stopRequested = null;
 		this.sourceMapResolver.clear();
 	}
@@ -435,7 +405,7 @@ export class CdpSession extends BaseSession {
 		target: "idle" | "running" | "paused",
 		timeoutMs = STATE_WAIT_TIMEOUT_MS,
 	): Promise<void> {
-		if (this.state === target) return this.drainPendingRebinds();
+		if (this.state === target) return this.pending.settled();
 		return new Promise<void>((resolve, reject) => {
 			const waiter = { target, resolve };
 			this._stateWaiters.push(waiter);
@@ -449,17 +419,11 @@ export class CdpSession extends BaseSession {
 			const origResolve = waiter.resolve;
 			waiter.resolve = () => {
 				clearTimeout(timer);
-				// Drain pending rebinds before resolving — ensures breakpoints
-				// triggered by scriptParsed are fully bound before the caller
-				// inspects them (eliminates Bun.sleep race in tests).
-				this.drainPendingRebinds().then(origResolve);
+				// The breakpoints the scripts of this state brought are bound first,
+				// so the caller sees them bound
+				this.pending.settled().then(origResolve);
 			};
 		});
-	}
-
-	private drainPendingRebinds(): Promise<void> {
-		if (this._pendingRebinds.size === 0) return Promise.resolve();
-		return Promise.all(this._pendingRebinds).then(() => {});
 	}
 
 	private _notifyStateWaiters(): void {
@@ -490,8 +454,8 @@ export class CdpSession extends BaseSession {
 	async setBreakpoint(
 		file: string,
 		line: number,
-		options?: { condition?: string; hitCount?: number; urlRegex?: string },
-	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
+		options?: { condition?: string; hitCount?: number; urlRegex?: string; column?: number },
+	): Promise<BreakpointResult> {
 		return setBreakpointImpl(this, file, line, options);
 	}
 
@@ -524,7 +488,7 @@ export class CdpSession extends BaseSession {
 		line: number,
 		template: string,
 		options?: { condition?: string; maxEmissions?: number },
-	): Promise<{ ref: string; location: { url: string; line: number; column?: number } }> {
+	): Promise<BreakpointResult> {
 		return setLogpointImpl(this, file, line, template, options);
 	}
 
@@ -762,6 +726,11 @@ export class CdpSession extends BaseSession {
 		return null;
 	}
 
+	/** The URL of a loaded script */
+	scriptUrl(scriptId: string): string | undefined {
+		return this.scripts.get(scriptId)?.url;
+	}
+
 	/** Find the scriptId for a given URL (exact match). */
 	findScriptIdByUrl(url: string): string | undefined {
 		for (const [sid, info] of this.scripts) {
@@ -853,142 +822,30 @@ export class CdpSession extends BaseSession {
 		return null;
 	}
 
-	/** Keeps every script that file breakpoints wait for stopping before its first statement. */
-	async guardPendingBreakpoints(): Promise<void> {
-		if (!this._dialect) return;
-		const files = new Set(
-			this.refs
-				.listBreakpoints({ pending: true })
-				.filter((e) => e.meta.fn === undefined)
-				.map((e) => e.meta.url),
-		);
-		// Entry breakpoints cover files loaded under their own name; the
-		// instrumentation pause (V8, ES modules) also covers bundles
-		await Promise.all([
-			this.entryBreakpoints.sync(files),
-			this._dialect.pauseBeforeNewScripts(files.size > 0),
-		]);
-	}
-
 	/**
-	 * Our own pause before a script that breakpoints wait for: bind them, then
-	 * go on. Its scriptParsed came first and bound what it could; JSC refuses
-	 * a breakpoint where the entry breakpoint sits, so that one goes first and
-	 * the rest bind now. Stays paused when one of them sits right here, or when
-	 * a step or pause is under way: the engine ended that in this pause.
+	 * A pause a guard of ours caused, before a script that breakpoints waited
+	 * for: binds them, then goes on. Stays paused when one of them sits right
+	 * here, reported as the breakpoint hit it is, or when a step or pause is
+	 * under way: the engine ended that in this pause.
 	 */
-	private async bindPendingThenResume(
+	private async settleEntryPause(
 		p: Protocol.Debugger.PausedEvent,
 		hitBreakpoints: string[],
 	): Promise<void> {
 		let reported = false;
 		try {
-			await this.drainPendingRebinds();
-			await this.entryBreakpoints.release(hitBreakpoints);
-			const scriptId = p.callFrames[0]?.location.scriptId;
-			const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
-			if (scriptId && url) await this.rebindPendingBreakpoints(scriptId, url);
-			await this.guardPendingBreakpoints();
-			const hits = await this.breakpointsThatPauseAt(p.callFrames[0]);
+			const hits = await this.pending.bindAtEntryPause(p, hitBreakpoints);
 			if (hits.length > 0) {
-				// A breakpoint hit, as the engine would have reported it
-				this.reportPause(
-					{ ...p, reason: p.reason === "instrumentation" ? "other" : p.reason },
-					hits,
-				);
+				this.reportPause(p, { reason: "breakpoint", hitBreakpoints: hits });
 				reported = true;
-			} else if (this.stopRequested) {
-				this.reportPause(
-					{ ...p, reason: this.stopRequested === "step" ? "step" : "other" },
-					undefined,
-				);
+			} else if (this.stopRequested === "step" || this.stopRequested === "pause") {
+				this.reportPause(p, { reason: this.stopRequested });
 				reported = true;
 			}
 		} finally {
 			if (!reported) {
 				await this.cdp?.send("Debugger.resume").catch(() => {
 					// Disconnected meanwhile
-				});
-			}
-		}
-	}
-
-	/**
-	 * Breakpoints just bound at the frame's location whose behavior asks to
-	 * pause. The engine evaluates them on the next arrival only, so this one is
-	 * evaluated here. A hit count above 1 counts from the next arrival.
-	 */
-	private async breakpointsThatPauseAt(
-		frame: Protocol.Debugger.CallFrame | undefined,
-	): Promise<string[]> {
-		const bound = this.boundWhileLoading;
-		this.boundWhileLoading = [];
-		if (!frame || !this.cdp) return [];
-		const here = frame.location;
-		const hits: string[] = [];
-		for (const { breakpointId, location, behavior } of bound) {
-			if (
-				location?.scriptId !== here.scriptId ||
-				location.lineNumber !== here.lineNumber ||
-				(location.columnNumber ?? 0) !== (here.columnNumber ?? 0)
-			) {
-				continue;
-			}
-			const log = behavior.log === undefined ? undefined : await this.dialect.jsLogger();
-			const condition = asCondition(behavior, log);
-			if (!condition) {
-				hits.push(breakpointId);
-				continue;
-			}
-			const r = await this.cdp
-				.send("Debugger.evaluateOnCallFrame", {
-					callFrameId: frame.callFrameId,
-					expression: `!!(${condition})`,
-				})
-				.catch(() => null);
-			if (r?.result.value === true) hits.push(breakpointId);
-		}
-		return hits;
-	}
-
-	/**
-	 * Binds the breakpoints waiting for a newly parsed script by its id, on the
-	 * compiled line its source map gives, so the source map must be loaded.
-	 */
-	private async rebindPendingBreakpoints(scriptId: string, scriptUrl: string): Promise<void> {
-		if (!this.cdp) return;
-
-		for (const entry of this.refs.listBreakpoints({ pending: true })) {
-			const meta = entry.meta;
-			if (meta.fn !== undefined) continue; // bound by name or path, not by script
-			// Use findScriptUrl for consistent URL matching (suffix + basename)
-			const matchedUrl = this.findScriptUrl(meta.url);
-			if (matchedUrl !== scriptUrl) continue;
-
-			const column = "column" in meta ? meta.column : undefined;
-			const resolved = this.resolveToRuntime(meta.url, meta.line, (column ?? 1) - 1);
-			const compiledLine = resolved?.runtime.line ?? meta.line;
-			const compiledColumn =
-				resolved?.runtime.column ?? (column === undefined ? undefined : column - 1);
-
-			try {
-				const r = await this.dialect.setBreakpoint(
-					{ kind: "location", scriptId },
-					{ line: compiledLine, column: compiledColumn, ...behaviorOf(entry) },
-				);
-
-				this.refs.bind(entry.ref, r.breakpointId);
-				this.boundWhileLoading.push({
-					breakpointId: r.breakpointId,
-					location: r.location,
-					behavior: behaviorOf(entry),
-				});
-
-				this.log.info("breakpoint.rebound", { file: scriptUrl, line: compiledLine });
-			} catch (err) {
-				this.log.debug("breakpoint.rebind.failed", {
-					ref: entry.ref,
-					error: err instanceof Error ? err.message : String(err),
 				});
 			}
 		}
@@ -1009,9 +866,9 @@ export class CdpSession extends BaseSession {
 
 	private reportPause(
 		p: Protocol.Debugger.PausedEvent,
-		hitBreakpoints: string[] | undefined,
+		pause: { reason: string; hitBreakpoints?: string[] },
 	): void {
-		this.stopRequested = null;
+		if (this.stopRequested !== "entry") this.stopRequested = null;
 		this.pauseCount++;
 		this.state = "paused";
 		const callFrames = p.callFrames;
@@ -1021,16 +878,8 @@ export class CdpSession extends BaseSession {
 		const scriptId = location?.scriptId;
 		const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
 		this.pauseInfo = {
-			reason:
-				this.functionBreakpoints.pauseReason({
-					reason: p.reason,
-					hitBreakpoints,
-					topUrl: url,
-					topFunction: topFrame?.functionName,
-				}) ??
-				p.reason ??
-				"unknown",
-			hitBreakpoints,
+			reason: pause.reason,
+			hitBreakpoints: pause.hitBreakpoints,
 			scriptId,
 			url,
 			line: location?.lineNumber,
@@ -1065,37 +914,45 @@ export class CdpSession extends BaseSession {
 			this._notifyStateWaiters();
 		}
 
-		await dialect.connect(this, intent, async () => {
-			if (this.blackboxPatterns.length > 0) {
-				await dialect.setBlackboxPatterns(this.blackboxPatterns);
-			}
-			if (dialect.dropsMessagesAtExit || this.exitStop.wanted) await this.exitStop.install(cdp);
-		});
+		// The pauses a handshake reaches are the program's entry, whatever the engine calls them
+		this.stopRequested = "entry";
+		try {
+			await dialect.connect(this, intent, async () => {
+				if (this.blackboxPatterns.length > 0) {
+					await dialect.setBlackboxPatterns(this.blackboxPatterns);
+				}
+				if (dialect.dropsMessagesAtExit || this.exitStop.wanted) await this.exitStop.install(cdp);
+			});
+		} finally {
+			if (this.stopRequested === "entry") this.stopRequested = null;
+		}
 	}
 
 	private setupCdpEventHandlers(cdp: CdpClient): void {
 		cdp.on("Debugger.paused", (p) => {
-			// V8 lists hit breakpoints; JSC names the one it hit in its pause data
-			const data = (p as { data?: Record<string, unknown> }).data;
-			const hitBreakpoints =
-				p.hitBreakpoints ??
-				(typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
-			if (ExitStop.isExitStop(p)) {
-				const atExit = { ...p, reason: "exit" as Protocol.Debugger.PausedEvent["reason"] };
-				if (this.exitStop.wanted) this.reportPause(atExit, undefined);
-				else void cdp.send("Debugger.resume").catch(() => {});
-				return;
+			const pause = classifyPause(p, {
+				stopRequested: this.stopRequested,
+				pending: this.pending,
+				functionBreakpoints: this.functionBreakpoints,
+				knownBreakpoint: (id) => this.refs.findByRemoteId(id) !== undefined,
+				scriptUrl: (id) => this.scriptUrl(id),
+			});
+			switch (pause.kind) {
+				case "exit":
+					if (this.exitStop.wanted) this.reportPause(p, { reason: "exit" });
+					else void cdp.send("Debugger.resume").catch(() => {});
+					return;
+				case "entry":
+					this.settleEntryPause(p, pause.hitBreakpoints).catch((err) => {
+						// The target may end meanwhile; anything else is a bug worth seeing
+						if (!(err instanceof ConnectionClosedError)) {
+							this.log.error("entry.pause.failed", { error: String(err) });
+						}
+					});
+					return;
+				case "stop":
+					this.reportPause(p, pause);
 			}
-			if (p.reason === "instrumentation" || this.entryBreakpoints.isEntryPause(hitBreakpoints)) {
-				this.bindPendingThenResume(p, hitBreakpoints ?? []).catch((err) => {
-					// The target may end meanwhile; anything else is a bug worth seeing
-					if (!(err instanceof ConnectionClosedError)) {
-						this.log.error("entry.pause.failed", { error: String(err) });
-					}
-				});
-				return;
-			}
-			this.reportPause(p, hitBreakpoints);
 		});
 
 		cdp.on("Debugger.resumed", () => {
@@ -1117,25 +974,9 @@ export class CdpSession extends BaseSession {
 				if (p.sourceMapURL) {
 					info.sourceMapURL = p.sourceMapURL;
 				}
-				// Register the script BEFORE rebinding so findScriptUrl() works
+				// Registered before anything binds to it, so that findScriptUrl() finds it
 				this.scripts.set(scriptId, info);
-
-				// Load the source map, then bind the breakpoints waiting for the
-				// script. Tracked in _pendingRebinds so waitForState() can drain them.
-				const rebindPromise = this.sourceMapResolver
-					.loadSourceMap(scriptId, info.url, p.sourceMapURL)
-					.then((loaded) => {
-						this.logSourceMap(scriptId, info.url, loaded);
-						if (p.url) return this.rebindPendingBreakpoints(scriptId, p.url);
-					})
-					.catch((err) => {
-						this.log.debug("sourcemap.load.failed", {
-							file: info.url,
-							reason: err instanceof Error ? err.message : String(err),
-						});
-					});
-				this._pendingRebinds.add(rebindPromise);
-				rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
+				this.pending.trackScript(scriptId, info.url, p.sourceMapURL);
 			}
 		});
 
@@ -1236,7 +1077,8 @@ export class CdpSession extends BaseSession {
 		this.cdp?.disconnect();
 		this.cdp = null;
 		this._dialect = null;
-		this.entryBreakpoints.reset();
+		this.pending.reset();
+		this.stopRequested = null;
 		this.state = "idle";
 		this.pauseInfo = null;
 		this._notifyStateWaiters();

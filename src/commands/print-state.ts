@@ -33,6 +33,12 @@ export function printState(data: StateSnapshot, opts?: PrintStateOptions): void 
 			console.log(`${cc(icon, "yellow")} ${label} ${cc("(crashed)", "red")}`);
 			console.log(`  ${cc(firstLine, "red")}`);
 			console.log(`  ${cc("-> Try:", "cyan")} dbg exceptions`);
+		} else if (data.waitedMs !== undefined) {
+			const seconds = data.waitedMs / 1000;
+			console.log(`${cc(icon, "green")} ${label} ${cc(`(no pause within ${seconds}s)`, "gray")}`);
+			console.log(
+				`  ${cc("-> Try:", "cyan")} dbg continue --wait ${seconds * 2} to keep waiting, or dbg pause`,
+			);
 		} else {
 			const iconColor = data.status === "running" ? "green" : "gray";
 			console.log(`${cc(icon, iconColor)} ${label}`);

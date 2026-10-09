@@ -179,6 +179,13 @@ describe("SourceMapResolver", () => {
 			expect(result).toBeNull();
 		});
 
+		test("matches whole path segments only: pp.ts is not app.ts", async () => {
+			await resolver.loadSourceMap("1", APP_JS, "app.js.map");
+			expect(resolver.findScriptForSource("pp.ts")).toBeNull();
+			expect(resolver.toGenerated("pp.ts", 7, 0)).toBeNull();
+			expect(resolver.findScriptForSource("/app.ts")).toBeNull();
+		});
+
 		test("returns null when disabled", async () => {
 			await resolver.loadSourceMap("1", APP_JS, "app.js.map");
 			resolver.setDisabled(true);

@@ -47,7 +47,8 @@ dbg attach 9229
 dbg break src/handler.ts:42
 dbg break src/utils.ts:15 --condition "count > 10"
 
-# 3. Run to breakpoint (--wait blocks until it pauses or the program ends)
+# 3. Run to breakpoint (--wait blocks until it pauses or the program ends;
+#    "Running (no pause within 30s)" means it ran out: dbg continue --wait 60 keeps waiting)
 dbg continue --wait 30
 
 # 4. Inspect state (shows location, source, locals, stack)
@@ -200,7 +201,7 @@ See [references/commands.md](references/commands.md) for full command details an
 
 - `dbg state` after stepping always shows location + source + locals -- usually enough context
 - `dbg state -c` for source only, `-v` for vars only, `-s` for stack only -- save tokens
-- Minified/bundled code: `dbg source --width 600 --reflow` prints 600 chars around the paused column as one statement per line; `dbg search "text" --width 200` windows each match
+- Minified/bundled code: `dbg sourcemap <script> --pretty` shows the script formatted from then on (positions and breakpoints translate); `dbg source --width 600` shows 600 chars around the paused column; `dbg search "text" --width 200` windows each match
 - `dbg eval` supports `await` and `--await` (JS/TS). Promises settle only while the program runs: paused, you get an already-settled value, else an explanation
 - `dbg eval <expr> --out file.txt` writes the whole value (output is otherwise cut at 80 chars)
 - In ES modules `require` is undefined: use `process.getBuiltinModule("node:fs")`

@@ -50,6 +50,8 @@ export interface StateOptions {
 
 export interface StateSnapshot {
 	status: string; // "paused" | "running" | "idle"
+	/** Still running after a wait of this long was asked for and ran out */
+	waitedMs?: number;
 	reason?: string;
 	location?: { url: string; line: number; column?: number };
 	source?: { lines: Array<{ line: number; text: string; current?: boolean; column?: number }> };

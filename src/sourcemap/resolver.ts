@@ -426,9 +426,16 @@ function sameRef(a: SourceRef, b: SourceRef): boolean {
 	return a.map === b.map && a.sourceIndex === b.sourceIndex;
 }
 
-/** The same file named with more or less of its directory path */
+/** The same file named with more or less of its directory path: "app.ts" is "src/app.ts", not "webapp.ts" */
 function sameFile(a: string | undefined, b: string): boolean {
-	return a !== undefined && (a === b || a.endsWith(b) || b.endsWith(a));
+	return a !== undefined && (a === b || endsWithPath(a, b) || endsWithPath(b, a));
+}
+
+function endsWithPath(whole: string, tail: string): boolean {
+	return (
+		whole.endsWith(tail) &&
+		(whole.length === tail.length || whole[whole.length - tail.length - 1] === "/")
+	);
 }
 
 /** The exact mapping, else the nearest one after it on the same source line */

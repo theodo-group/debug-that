@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
 import { parseFileLineColumn } from "../cli/parse-target.ts";
 import { DaemonClient, daemonRequest } from "../daemon/client.ts";
+import { PENDING_NOTE } from "../formatter/breakpoint.ts";
 import { colorize, shouldEnableColor } from "../formatter/color.ts";
 import { formatLocation, shortPath } from "../formatter/path.ts";
 import { requestFunctionBreakpoint } from "./break-fn.ts";
@@ -95,7 +96,9 @@ defineCommand({
 				console.log(JSON.stringify(data, null, 2));
 			} else {
 				const loc = `${shortPath(data.location.url)}:${data.location.line}`;
-				console.log(`${cc(data.ref, "magenta")} set at ${cc(loc, "cyan")} (log: ${logTemplate})`);
+				let msg = `${cc(data.ref, "magenta")} set at ${cc(loc, "cyan")} (log: ${logTemplate})`;
+				if (data.pending) msg += ` ${cc(PENDING_NOTE, "gray")}`;
+				console.log(msg);
 			}
 
 			return 0;
@@ -121,6 +124,9 @@ defineCommand({
 			}
 			if (hitCount) {
 				msg += ` ${cc(`(hit-count: ${hitCount})`, "gray")}`;
+			}
+			if (data.pending) {
+				msg += ` ${cc(PENDING_NOTE, "gray")}`;
 			}
 			console.log(msg);
 		}

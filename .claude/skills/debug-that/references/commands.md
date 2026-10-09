@@ -29,8 +29,9 @@ All execution commands automatically return session status (state + pause info).
 
 ```bash
 dbg continue                        # Resume; reports a pause only if it comes within 0.5s
-dbg continue --wait 30              # Resume and block until the next pause or exit (up to 30s)
+dbg continue --wait 30              # Resume and block until the next pause or exit (up to 30s); while running, just waits
 dbg step [over|into|out]            # Step one statement (default: over)
+dbg step over --wait 30             # Same, waiting up to 30s for a step that runs long (an await, I/O)
 dbg run-to <file>:<line>            # Continue to specific location
 dbg pause                           # Interrupt running process
 dbg restart-frame [@fN]             # Re-execute frame from beginning

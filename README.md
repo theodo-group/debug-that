@@ -47,7 +47,7 @@ Paused at ./src/app.ts:0:1
 BP#1 set at src/app.ts:19
 
 > dbg continue
-Paused at ./src/app.ts:19:21 (other)
+Paused at ./src/app.ts:19:21 (breakpoint)
 
 Source:
    16|

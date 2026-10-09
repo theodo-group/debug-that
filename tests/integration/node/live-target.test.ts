@@ -36,7 +36,7 @@ describe("Function breakpoints (Node.js)", () => {
 				condition: 'label === "tick"',
 			});
 			expect(r.note).toBeUndefined();
-			await expectPausedIn(session, "ping", "Function breakpoint service.ping");
+			await expectPausedIn(session, "ping", "function breakpoint service.ping");
 			expect((await session.eval("label")).value).toBe('"tick"');
 			expect(await wrappersInProcess(session)).toBe(0);
 
@@ -49,7 +49,7 @@ describe("Function breakpoints (Node.js)", () => {
 		withRunning("node-fnbp-native", async (session) => {
 			const r = await session.setFunctionBreakpoint("JSON.parse");
 			expect(r.note).toContain("wrapped");
-			await expectPausedIn(session, "parse", "Function breakpoint JSON.parse");
+			await expectPausedIn(session, "parse", "function breakpoint JSON.parse");
 			expect((await session.eval("args[0]")).value).toBe('"{"a":1}"');
 
 			await session.removeBreakpoint(r.ref);
@@ -60,7 +60,7 @@ describe("Function breakpoints (Node.js)", () => {
 		withRunning("node-fnbp-arrow", async (session) => {
 			const r = await session.setFunctionBreakpoint("double", { condition: "n === 21" });
 			expect(r.note).toBeUndefined();
-			await expectPausedIn(session, null, "Function breakpoint double");
+			await expectPausedIn(session, null, "function breakpoint double");
 			expect((await session.eval("n")).value).toBe("21");
 			expect(await wrappersInProcess(session)).toBe(0);
 		}));
@@ -68,7 +68,7 @@ describe("Function breakpoints (Node.js)", () => {
 	test("bound function: breaks on the function it calls", () =>
 		withRunning("node-fnbp-bound", async (session) => {
 			await session.setFunctionBreakpoint("boundPing", { condition: 'label === "bound"' });
-			await expectPausedIn(session, "ping", "Function breakpoint boundPing");
+			await expectPausedIn(session, "ping", "function breakpoint boundPing");
 			expect((await session.eval("label")).value).toBe('"bound"');
 			expect(await wrappersInProcess(session)).toBe(0);
 		}));
@@ -87,7 +87,7 @@ describe("Function breakpoints (Node.js)", () => {
 				condition: 'label === "tick"',
 				hitCount: 3,
 			});
-			await expectPausedIn(session, "ping", "Function breakpoint service.ping");
+			await expectPausedIn(session, "ping", "function breakpoint service.ping");
 			expect(Number((await session.eval("this.calls")).value) - before).toBeGreaterThanOrEqual(2);
 		}));
 
@@ -95,7 +95,7 @@ describe("Function breakpoints (Node.js)", () => {
 		withRunning("node-fnbp-ref", async (session) => {
 			const fn = await session.eval("service.ping");
 			await session.setFunctionBreakpoint(fn.ref);
-			await expectPausedIn(session, "ping", `Function breakpoint ping (${fn.ref})`);
+			await expectPausedIn(session, "ping", `function breakpoint ping (${fn.ref})`);
 		}));
 
 	test("--log: logs every call, never pauses", () =>
@@ -118,7 +118,7 @@ describe("Function breakpoints (Node.js)", () => {
 
 			await session.toggleBreakpoint(r.ref);
 			expect(await wrappersInProcess(session)).toBe(1);
-			await expectPausedIn(session, "parse", "Function breakpoint JSON.parse");
+			await expectPausedIn(session, "parse", "function breakpoint JSON.parse");
 		}));
 
 	test("--name is not available on V8 and says what to use instead", () =>

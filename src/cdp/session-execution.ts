@@ -8,7 +8,9 @@ export async function continueExecution(
 	options?: WaitForStopOptions,
 ): Promise<void> {
 	if (!session.isPaused()) {
-		throw new Error("Cannot continue: process is not paused");
+		throw new Error(
+			"Cannot continue: the process is not paused -> Try: dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
+		);
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot continue: no CDP connection");
@@ -29,7 +31,9 @@ export async function stepExecution(
 	options?: WaitForStopOptions,
 ): Promise<void> {
 	if (!session.isPaused()) {
-		throw new Error("Cannot step: process is not paused");
+		throw new Error(
+			"Cannot step: the process is not paused -> Try: dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
+		);
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot step: no CDP connection");
