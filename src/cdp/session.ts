@@ -1,4 +1,5 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
+import { z } from "zod";
 import {
 	STATE_WAIT_TIMEOUT_MS,
 	WAIT_MAYBE_PAUSE_TIMEOUT_MS,
@@ -37,6 +38,7 @@ import { UserError } from "../util/user-error.ts";
 import { type CdpClient, ConnectionClosedError } from "./client.ts";
 import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
 import { openInspector } from "./dialects/index.ts";
+import { type Evaluated, evaluateValue } from "./evaluate.ts";
 import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
 import { type InspectedProcess, startInspected } from "./launcher.ts";
@@ -298,13 +300,9 @@ export class CdpSession extends BaseSession {
 
 	/** Any process can hold a port, including a stale one; only the target can say who it is. */
 	private async identifyTarget(): Promise<TargetIdentity | null> {
-		const r = await this.cdp
-			?.send("Runtime.evaluate", { expression: IDENTIFY_TARGET, returnByValue: true })
-			.catch(() => null);
-		const value = r?.result.value as Partial<TargetIdentity> | null | undefined;
-		return typeof value?.pid === "number" && typeof value.command === "string"
-			? { pid: value.pid, command: value.command }
-			: null;
+		if (!this.cdp) return null;
+		const value = await evaluateValue(this.cdp, IDENTIFY_TARGET).catch(() => undefined);
+		return isTargetIdentity(value) ? { pid: value.pid, command: value.command } : null;
 	}
 
 	getStatus(): SessionStatus {
@@ -648,22 +646,14 @@ export class CdpSession extends BaseSession {
 
 	// ── Public helpers (used by extracted modules) ─────────────────────
 
-	processEvalResult(
-		result: {
-			result: Protocol.Runtime.RemoteObject;
-			exceptionDetails?: Protocol.Runtime.ExceptionDetails;
-			/** How JSC reports a throw */
-			wasThrown?: boolean;
-		},
-		expression: string,
-	): EvalResult {
-		const evalResult = result.result as RemoteObject | undefined;
+	processEvalResult(result: Evaluated, expression: string): EvalResult {
+		const evalResult = result.result;
 		const exceptionDetails =
 			result.exceptionDetails ??
 			(result.wasThrown ? { exception: result.result, text: "Uncaught" } : undefined);
 
 		if (exceptionDetails) {
-			const exception = exceptionDetails.exception as RemoteObject | undefined;
+			const exception = exceptionDetails.exception;
 			const errorText = exception
 				? formatValue(exception)
 				: (exceptionDetails.text ?? "Evaluation error");
@@ -858,9 +848,9 @@ export class CdpSession extends BaseSession {
 			ownProperties: true,
 		});
 		return result
-			.filter((p) => /^\d+$/.test(p.name) && p.value)
+			.filter((p) => /^\d+$/.test(p.name))
 			.sort((a, b) => Number(a.name) - Number(b.name))
-			.map((p) => formatValue(p.value as RemoteObject));
+			.flatMap((p) => (p.value ? [formatValue(p.value)] : []));
 	}
 
 	/** The exit pause as the user should see it: at the program's own frame, with the exit code */
@@ -997,7 +987,7 @@ export class CdpSession extends BaseSession {
 			},
 
 			console: (message) => {
-				const args = message.args.map((a) => formatValue(a as unknown as RemoteObject));
+				const args = message.args.map((a) => formatValue(a));
 				this.pushConsoleMessage({
 					timestamp: Date.now(),
 					level: message.level,
@@ -1010,7 +1000,7 @@ export class CdpSession extends BaseSession {
 
 			// A logpoint's arguments as an array; each needs a round trip for its elements, kept in order
 			logSample: (payload) => {
-				const sample = payload as unknown as RemoteObject;
+				const sample = payload;
 				this.probedLogs = this.probedLogs.then(async () => {
 					const args = await this.logArguments(sample).catch(() => [formatValue(sample)]);
 					this.pushConsoleMessage({
@@ -1107,19 +1097,33 @@ export class CdpSession extends BaseSession {
 			throw new Error(`Inspector at port ${port} returned HTTP ${response.status}`);
 		}
 
-		const targets = (await response.json()) as Array<Record<string, unknown>>;
-		const target = targets[0];
+		const targets = InspectorTargets.safeParse(await response.json());
+		if (!targets.success) {
+			throw new Error(`Inspector at port ${port} answered with something other than a target list`);
+		}
+		const target = targets.data[0];
 		if (!target) {
 			throw new Error(`No debug targets found at port ${port}`);
 		}
-
-		const wsUrl = target.webSocketDebuggerUrl as string | undefined;
-		if (!wsUrl) {
+		if (!target.webSocketDebuggerUrl) {
 			throw new Error(`Debug target at port ${port} has no webSocketDebuggerUrl`);
 		}
-
-		return wsUrl;
+		return target.webSocketDebuggerUrl;
 	}
+}
+
+/** What an inspector's /json lists: one entry per debuggable target */
+const InspectorTargets = z.array(z.object({ webSocketDebuggerUrl: z.optional(z.string()) }));
+
+function isTargetIdentity(value: unknown): value is TargetIdentity {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"pid" in value &&
+		typeof value.pid === "number" &&
+		"command" in value &&
+		typeof value.command === "string"
+	);
 }
 
 /** Evaluated in the target: its pid and command line, the binary first */

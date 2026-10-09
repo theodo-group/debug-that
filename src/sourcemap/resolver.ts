@@ -320,7 +320,7 @@ export class SourceMapResolver {
 		if (this.disabled) return null;
 
 		const map = this.maps.get(scriptId);
-		const contents = map?.traceMap.sourcesContent as (string | null)[] | undefined;
+		const contents = map?.traceMap.sourcesContent;
 		if (!map || !contents) return null;
 
 		const ref = this.declarationsOf(sourcePath).find((r) => r.map === map);
@@ -393,7 +393,8 @@ function entryFor(
 	scriptUrl: string,
 	mapUrl: string,
 ): LoadedMap {
-	const sources: string[] = (traceMap.sources as string[]) ?? [];
+	// A map may declare a source as null; it names nothing dbg can show, so it stays unnamed
+	const sources: string[] = traceMap.sources.map((s) => s ?? "");
 	const scriptDir = dirname(pathOf(scriptUrl));
 	return {
 		traceMap,

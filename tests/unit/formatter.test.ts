@@ -308,23 +308,29 @@ describe("formatValue", () => {
 					description: "Map(3)",
 					overflow: false,
 					properties: [],
+					// Each side of an entry is a preview of its own, as the protocols send them
 					entries: [
 						{
-							key: { name: "key", type: "string", value: "a" },
-							value: { name: "value", type: "number", value: "1" },
+							key: { type: "string", description: "a", overflow: false, properties: [] },
+							value: { type: "number", description: "1", overflow: false, properties: [] },
 						},
 						{
-							key: { name: "key", type: "string", value: "b" },
-							value: { name: "value", type: "number", value: "2" },
+							key: { type: "string", description: "b", overflow: false, properties: [] },
+							value: {
+								type: "object",
+								description: "Object",
+								overflow: false,
+								properties: [{ name: "x", type: "number", value: "1" }],
+							},
 						},
 						{
-							key: { name: "key", type: "string", value: "c" },
-							value: { name: "value", type: "number", value: "3" },
+							key: { type: "string", description: "c", overflow: false, properties: [] },
+							value: { type: "undefined", overflow: false, properties: [] },
 						},
 					],
 				},
 			};
-			expect(formatValue(obj)).toBe('Map(3) { "a" => 1, "b" => 2, "c" => 3 }');
+			expect(formatValue(obj)).toBe('Map(3) { "a" => 1, "b" => Object, "c" => undefined }');
 		});
 
 		test("set with entries", () => {
@@ -341,13 +347,13 @@ describe("formatValue", () => {
 					overflow: false,
 					properties: [],
 					entries: [
-						{ value: { name: "value", type: "number", value: "1" } },
-						{ value: { name: "value", type: "number", value: "2" } },
-						{ value: { name: "value", type: "number", value: "3" } },
+						{ value: { type: "number", description: "1", overflow: false, properties: [] } },
+						{ value: { type: "string", description: "two", overflow: false, properties: [] } },
+						{ value: { type: "object", subtype: "null", overflow: false, properties: [] } },
 					],
 				},
 			};
-			expect(formatValue(obj)).toBe("Set(3) { 1, 2, 3 }");
+			expect(formatValue(obj)).toBe('Set(3) { 1, "two", null }');
 		});
 	});
 

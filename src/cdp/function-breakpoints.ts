@@ -4,6 +4,7 @@ import { UserError } from "../util/user-error.ts";
 import type { CdpClient } from "./client.ts";
 import { asCondition } from "./condition.ts";
 import type { BreakpointBehavior, InspectorDialect, RuntimeName } from "./dialect.ts";
+import { type Evaluated, evaluateValue, threw, thrownText } from "./evaluate.ts";
 
 /**
  * Breakpoints on function calls. A target is a path from the global scope
@@ -130,16 +131,13 @@ export class FunctionBreakpoints {
 	async adoptLeftovers(): Promise<void> {
 		const cdp = this.session.cdp;
 		if (!cdp) return;
-		const r = (await cdp.send("Runtime.evaluate", {
-			expression: `[...(${REGISTRY}?.entries() ?? [])].map(([id, e]) => ({ id, path: e.path ?? e.key, template: e.template, condition: e.condition }))`,
-			returnByValue: true,
-		})) as {
-			result: {
-				value?: Array<{ id: string; path: string; template?: string; condition?: string }>;
-			};
-		};
+		const listed = await evaluateValue(
+			cdp,
+			`[...(${REGISTRY}?.entries() ?? [])].map(([id, e]) => ({ id, path: e.path ?? e.key, template: e.template, condition: e.condition }))`,
+		);
+		const leftovers = Array.isArray(listed) ? listed.filter(isLeftover) : [];
 
-		for (const left of r.result.value ?? []) {
+		for (const left of leftovers) {
 			if (this.bindings.has(left.id)) continue;
 			this.bindings.set(left.id, {
 				mechanism: "wrapper",
@@ -256,12 +254,8 @@ export class FunctionBreakpoints {
 
 		const cdp = this.session.cdp;
 		if (!cdp) throw new Error("No active debug session");
-		const r = (await cdp.send("Runtime.evaluate", { expression: target })) as {
-			result: { type: string; objectId?: string; description?: string };
-			exceptionDetails?: unknown;
-			wasThrown?: boolean;
-		};
-		if (r.exceptionDetails || r.wasThrown || r.result.type === "undefined") {
+		const r: Evaluated = await cdp.send("Runtime.evaluate", { expression: target });
+		if (threw(r) || r.result.type === "undefined") {
 			throw new UserError(`${target} is not defined`, `${this.whenUndefined(target)}`);
 		}
 		if (r.result.type !== "function" || !r.result.objectId) {
@@ -331,30 +325,40 @@ export class FunctionBreakpoints {
 	private async evaluate(expression: string): Promise<void> {
 		const cdp = this.session.cdp;
 		if (!cdp) throw new Error("No active debug session");
-		const r = (await cdp.send("Runtime.evaluate", { expression })) as {
-			result: { description?: string };
-			exceptionDetails?: { exception?: { description?: string }; text?: string };
-			wasThrown?: boolean;
-		};
-		if (r.exceptionDetails || r.wasThrown) {
-			const text =
-				r.exceptionDetails?.exception?.description ??
-				r.result.description ??
-				r.exceptionDetails?.text;
-			throw new Error((text ?? "Evaluation failed").split("\n")[0]);
-		}
+		const r: Evaluated = await cdp.send("Runtime.evaluate", { expression });
+		if (threw(r)) throw new Error(thrownText(r));
 	}
 
 	private async describeRef(ref: string): Promise<string> {
 		const objectId = this.session.refs.resolveId(ref);
 		if (!objectId || !this.session.cdp) return ref;
-		const r = (await this.session.cdp.send("Runtime.callFunctionOn", {
+		const r = await this.session.cdp.send("Runtime.callFunctionOn", {
 			objectId,
 			functionDeclaration: "function () { return typeof this === 'function' ? this.name : ''; }",
 			returnByValue: true,
-		})) as { result: { value?: string } };
-		return r.result.value ? `${r.result.value} (${ref})` : ref;
+		});
+		const name: unknown = r.result.value;
+		return typeof name === "string" && name ? `${name} (${ref})` : ref;
 	}
+}
+
+/** A registry entry as the target lists it */
+interface Leftover {
+	id: string;
+	path: string;
+	template?: string;
+	condition?: string;
+}
+
+function isLeftover(value: unknown): value is Leftover {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"id" in value &&
+		typeof value.id === "string" &&
+		"path" in value &&
+		typeof value.path === "string"
+	);
 }
 
 function isRef(target: string): boolean {

@@ -78,18 +78,33 @@ export interface PendingLogpointEntry {
 
 export type LogpointEntry = BoundLogpointEntry | PendingLogpointEntry;
 
-/** Entries that are always bound (v, f, o, HS). No typed meta. */
+/** A frame of the current pause; its index picks the frame for eval, vars and state */
+export interface FrameMeta {
+	frameIndex: number;
+}
+
+export interface FrameEntry {
+	ref: string;
+	type: "f";
+	pending?: false;
+	remoteId: string;
+	name?: string;
+	/** Absent when the session resolves frames itself (DAP) */
+	meta?: FrameMeta;
+}
+
+/** Entries that are always bound (v, o, HS). No typed meta. */
 export interface SimpleEntry {
 	ref: string;
-	type: "v" | "f" | "o" | "HS";
+	type: "v" | "o" | "HS";
 	pending?: false;
 	remoteId: string;
 	name?: string;
 	meta?: Record<string, unknown>;
 }
 
-export type RefEntry = BreakpointEntry | LogpointEntry | SimpleEntry;
-export type BoundEntry = BoundBreakpointEntry | BoundLogpointEntry | SimpleEntry;
+export type RefEntry = BreakpointEntry | LogpointEntry | FrameEntry | SimpleEntry;
+export type BoundEntry = BoundBreakpointEntry | BoundLogpointEntry | FrameEntry | SimpleEntry;
 
 // ── Prefix map ────────────────────────────────────────────────────
 
@@ -149,8 +164,13 @@ export class RefTable {
 		return this.addSimple("v", remoteId, name, meta);
 	}
 
-	addFrame(remoteId: string, name?: string, meta?: Record<string, unknown>): string {
-		return this.addSimple("f", remoteId, name, meta);
+	addFrame(remoteId: string, name?: string, meta?: FrameMeta): string {
+		const ref = this.nextRef("f");
+		const entry: FrameEntry = { ref, type: "f", remoteId };
+		if (name !== undefined) entry.name = name;
+		if (meta !== undefined) entry.meta = meta;
+		this.entries.set(ref, entry);
+		return ref;
 	}
 
 	addObject(remoteId: string, name?: string, meta?: Record<string, unknown>): string {
@@ -200,9 +220,10 @@ export class RefTable {
 		const includeLP = options?.logpoints !== false;
 		const result: (BreakpointEntry | LogpointEntry)[] = [];
 		for (const entry of this.entries.values()) {
-			if (entry.type !== "BP" && !(includeLP && entry.type === "LP")) continue;
+			if (entry.type !== "BP" && entry.type !== "LP") continue;
+			if (entry.type === "LP" && !includeLP) continue;
 			if (options?.pending !== undefined && !!entry.pending !== options.pending) continue;
-			result.push(entry as BreakpointEntry | LogpointEntry);
+			result.push(entry);
 		}
 		return result;
 	}
@@ -285,7 +306,7 @@ export class RefTable {
 	}
 
 	private addSimple(
-		type: "v" | "f" | "o" | "HS",
+		type: "v" | "o" | "HS",
 		remoteId: string,
 		name?: string,
 		meta?: Record<string, unknown>,

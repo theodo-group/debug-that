@@ -12,9 +12,10 @@ import type {
 	JsLogger,
 	TargetEvents,
 } from "../dialect.ts";
+import { evaluateValue } from "../evaluate.ts";
 import { JscClient } from "../jsc-client.ts";
 import type { JSC } from "../jsc-protocol.js";
-import { forwardCommonEvents } from "./events.ts";
+import { forwardSharedEvents } from "./events.ts";
 
 /**
  * WebKit Inspector Protocol as spoken by Bun. Differs from CDP in that the
@@ -40,27 +41,28 @@ export class BunDialect implements InspectorDialect {
 	 * own Console domain, and samples logpoint arguments through probes.
 	 */
 	subscribe(events: TargetEvents): void {
-		forwardCommonEvents(this.cdp, events, {
-			hitBreakpoints: (p) => {
-				const data = (p as { data?: Record<string, unknown> }).data;
-				return typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined;
-			},
-			scriptUrl: (p) => p.url || ((p as { sourceURL?: string }).sourceURL ?? ""),
+		forwardSharedEvents(this.cdp, events);
+		this.jsc.on("Debugger.paused", (p) => {
+			const hit = p.data?.breakpointId;
+			events.paused(asCdpPause(p), typeof hit === "string" ? [hit] : undefined);
 		});
-		this.cdp.on("Console.messageAdded", (p) => {
-			const message = p.message as JSC.Console.ConsoleMessage;
+		this.jsc.on("Debugger.scriptParsed", (p) => {
+			events.scriptParsed({
+				scriptId: p.scriptId,
+				url: p.url || p.sourceURL || "",
+				sourceMapURL: p.sourceMapURL || undefined,
+			});
+		});
+		this.jsc.on("Console.messageAdded", ({ message }) => {
 			events.console({
 				level: message.level,
-				args: (message.parameters ?? []) as Protocol.Runtime.RemoteObject[],
+				args: message.parameters ?? [],
 				text: message.text,
 				url: message.url,
 				line: message.line,
 			});
 		});
-		this.cdp.on("Debugger.didSampleProbe", (p) => {
-			const { sample } = p as JSC.Debugger.DidSampleProbeEvent;
-			events.logSample(sample.payload as unknown as Protocol.Runtime.RemoteObject);
-		});
+		this.jsc.on("Debugger.didSampleProbe", ({ sample }) => events.logSample(sample.payload));
 	}
 
 	async connect(
@@ -232,11 +234,7 @@ export class BunDialect implements InspectorDialect {
 	 */
 	private async isHeldByInspector(target: ConnectTarget): Promise<boolean> {
 		if (target.isPaused() || target.scripts.size > 0) return false;
-		const r = (await this.cdp.send("Runtime.evaluate", {
-			expression: HOLDS_FOR_INSPECTOR,
-			returnByValue: true,
-		})) as { result: { value?: unknown } };
-		return r.result.value === true;
+		return (await evaluateValue(this.cdp, HOLDS_FOR_INSPECTOR)) === true;
 	}
 
 	/** Pausing before Inspector.initialized stops on the very first statement. */
@@ -255,6 +253,16 @@ export class BunDialect implements InspectorDialect {
 /** Evaluated in the target: whether Bun was told to wait for an inspector before running */
 const HOLDS_FOR_INSPECTOR = `/[?&](break|wait)=1/.test(process.env.BUN_INSPECT ?? "") ||
 	process.execArgv.some((arg) => /^--inspect-(brk|wait)/.test(arg))`;
+
+/**
+ * JSC's pause event is CDP's in every field dbg reads: the reason, and each
+ * frame's id, function name, location, scope chain and `this`. Only the
+ * per-frame `url` V8 adds is missing, and dbg takes URLs from the script
+ * registry anyway. The one cast at the protocol boundary, for that.
+ */
+function asCdpPause(p: JSC.Debugger.PausedEvent): Protocol.Debugger.PausedEvent {
+	return p as unknown as Protocol.Debugger.PausedEvent;
+}
 
 const LOG_SINK = "__dbg_log";
 const LOG_SINK_URL = "dbg://log";

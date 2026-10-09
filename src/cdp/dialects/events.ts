@@ -1,31 +1,13 @@
-import type Protocol from "devtools-protocol/types/protocol.js";
 import type { CdpClient } from "../client.ts";
 import type { TargetEvents } from "../dialect.ts";
 
-/** How an engine's pause and script events read, where the two differ */
-interface EventReaders {
-	/** The breakpoints a pause hit, as this engine reports them */
-	hitBreakpoints(p: Protocol.Debugger.PausedEvent): string[] | undefined;
-	/** The URL a parsed script goes by */
-	scriptUrl(p: Protocol.Debugger.ScriptParsedEvent): string;
-}
-
-/** The events both engines report under the same names, forwarded in one shape. */
-export function forwardCommonEvents(
-	cdp: CdpClient,
-	events: TargetEvents,
-	read: EventReaders,
-): void {
-	cdp.on("Debugger.paused", (p) => events.paused(p, read.hitBreakpoints(p)));
+/**
+ * The events both engines report under CDP's names and shapes. Pauses,
+ * script loads, console calls and logpoint samples differ, and each dialect
+ * forwards those itself from its own typed client.
+ */
+export function forwardSharedEvents(cdp: CdpClient, events: TargetEvents): void {
 	cdp.on("Debugger.resumed", () => events.resumed());
-	cdp.on("Debugger.scriptParsed", (p) => {
-		if (!p.scriptId) return;
-		events.scriptParsed({
-			scriptId: p.scriptId,
-			url: read.scriptUrl(p),
-			sourceMapURL: p.sourceMapURL || undefined,
-		});
-	});
 	cdp.on("Runtime.exceptionThrown", (p) => {
 		if (p.exceptionDetails) events.exception(p.exceptionDetails);
 	});

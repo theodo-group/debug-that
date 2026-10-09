@@ -195,8 +195,7 @@ export class CdpClient {
 		await Promise.allSettled(
 			optional.map(async (domain) => {
 				try {
-					// biome-ignore lint/suspicious/noExplicitAny: dynamic domain enable
-					await this.send(`${domain}.enable` as any);
+					await this.sendRaw(`${domain}.enable`);
 					this.enabledDomains.add(domain);
 				} catch {
 					// Domain not supported — skip silently

@@ -1,5 +1,4 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { NO_SUCH_SCRIPT, UserError, WHILE_RUNNING } from "../util/user-error.ts";
 import type { CdpSession } from "./session.ts";
@@ -46,7 +45,7 @@ export async function setVariable(
 			returnByValue: false,
 			generatePreview: true,
 		});
-		const oldRemote = oldResult.result as RemoteObject | undefined;
+		const oldRemote = oldResult.result;
 		if (oldRemote) {
 			oldValue = formatValue(oldRemote);
 		}
@@ -63,11 +62,11 @@ export async function setVariable(
 		generatePreview: true,
 	});
 
-	const evalResult = setResult.result as RemoteObject | undefined;
+	const evalResult = setResult.result;
 	const exceptionDetails = setResult.exceptionDetails;
 
 	if (exceptionDetails) {
-		const exception = exceptionDetails.exception as RemoteObject | undefined;
+		const exception = exceptionDetails.exception;
 		const errorText = exception
 			? formatValue(exception)
 			: (exceptionDetails.text ?? "Assignment error");
@@ -116,11 +115,11 @@ export async function setReturnValue(
 		generatePreview: true,
 	});
 
-	const evalRemote = evalResult.result as RemoteObject | undefined;
+	const evalRemote = evalResult.result;
 	const exceptionDetails = evalResult.exceptionDetails;
 
 	if (exceptionDetails) {
-		const exception = exceptionDetails.exception as RemoteObject | undefined;
+		const exception = exceptionDetails.exception;
 		const errorText = exception
 			? formatValue(exception)
 			: (exceptionDetails.text ?? "Evaluation error");

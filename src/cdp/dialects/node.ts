@@ -13,7 +13,7 @@ import type {
 	JsLogger,
 	TargetEvents,
 } from "../dialect.ts";
-import { forwardCommonEvents } from "./events.ts";
+import { forwardSharedEvents } from "./events.ts";
 
 export class NodeDialect implements InspectorDialect {
 	readonly name = "node" as const;
@@ -26,9 +26,14 @@ export class NodeDialect implements InspectorDialect {
 
 	/** V8 lists the breakpoints a pause hit; console calls come on the Runtime domain. */
 	subscribe(events: TargetEvents): void {
-		forwardCommonEvents(this.cdp, events, {
-			hitBreakpoints: (p) => p.hitBreakpoints,
-			scriptUrl: (p) => p.url,
+		forwardSharedEvents(this.cdp, events);
+		this.cdp.on("Debugger.paused", (p) => events.paused(p, p.hitBreakpoints));
+		this.cdp.on("Debugger.scriptParsed", (p) => {
+			events.scriptParsed({
+				scriptId: p.scriptId,
+				url: p.url,
+				sourceMapURL: p.sourceMapURL || undefined,
+			});
 		});
 		this.cdp.on("Runtime.consoleAPICalled", (p) => {
 			const top = p.stackTrace?.callFrames[0];
@@ -124,9 +129,9 @@ export class NodeDialect implements InspectorDialect {
 			this.beforeScriptsBreakpoint = r.breakpointId;
 			return;
 		}
-		const breakpointId = this.beforeScriptsBreakpoint as string;
+		const breakpointId = this.beforeScriptsBreakpoint;
 		this.beforeScriptsBreakpoint = null;
-		await this.cdp.send("Debugger.removeBreakpoint", { breakpointId });
+		if (breakpointId) await this.cdp.send("Debugger.removeBreakpoint", { breakpointId });
 	}
 
 	async breakOnFunctionName(): Promise<null> {

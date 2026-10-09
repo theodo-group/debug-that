@@ -9,12 +9,17 @@ export interface RemoteObject {
 	unserializableValue?: string;
 }
 
+/**
+ * The shapes both inspector protocols send, read with the fields they share:
+ * V8's and JSC's RemoteObject and previews assign to these as they are.
+ */
 export interface ObjectPreview {
 	type: string;
 	subtype?: string;
 	description?: string;
-	overflow: boolean;
-	properties: PropertyPreview[];
+	overflow?: boolean;
+	/** JSC leaves it out for an empty object */
+	properties?: PropertyPreview[];
 	entries?: EntryPreview[];
 }
 
@@ -25,9 +30,10 @@ export interface PropertyPreview {
 	subtype?: string;
 }
 
+/** A Map or Set entry: each side is a preview of its own, with a description, not a property */
 export interface EntryPreview {
-	key?: PropertyPreview;
-	value: PropertyPreview;
+	key?: ObjectPreview;
+	value: ObjectPreview;
 }
 
 function truncate(str: string, max: number): string {
@@ -54,7 +60,9 @@ function formatObjectWithPreview(obj: RemoteObject, maxLen: number): string {
 
 	const className = preview.description ?? obj.className ?? "Object";
 
-	const props = preview.properties.map((p) => `${p.name}: ${formatPreviewValue(p)}`).join(", ");
+	const props = (preview.properties ?? [])
+		.map((p) => `${p.name}: ${formatPreviewValue(p)}`)
+		.join(", ");
 
 	const suffix = preview.overflow ? ", ..." : "";
 	const result = `${className} { ${props}${suffix} }`;
@@ -79,7 +87,7 @@ function formatArray(obj: RemoteObject, maxLen: number): string {
 		return truncate(desc, maxLen);
 	}
 
-	const items = preview.properties.map((p) => formatPreviewValue(p)).join(", ");
+	const items = (preview.properties ?? []).map((p) => formatPreviewValue(p)).join(", ");
 	const suffix = preview.overflow ? ", ..." : "";
 	const result = `${desc} [ ${items}${suffix} ]`;
 	if (result.length > maxLen) {
@@ -114,12 +122,12 @@ function formatFunction(obj: RemoteObject): string {
 
 function formatPromise(obj: RemoteObject, maxLen: number): string {
 	const preview = obj.preview;
-	if (!preview?.properties.length) {
+	if (!preview?.properties?.length) {
 		return truncate("Promise { <pending> }", maxLen);
 	}
 
-	const status = preview.properties.find((p) => p.name === "[[PromiseState]]");
-	const value = preview.properties.find((p) => p.name === "[[PromiseResult]]");
+	const status = (preview.properties ?? []).find((p) => p.name === "[[PromiseState]]");
+	const value = (preview.properties ?? []).find((p) => p.name === "[[PromiseResult]]");
 
 	if (!status) {
 		return truncate("Promise { <pending> }", maxLen);
@@ -154,6 +162,14 @@ function formatError(obj: RemoteObject, maxLen: number): string {
 	return truncate(messageLine, maxLen);
 }
 
+/** One side of a Map or Set entry, as console.log would show it */
+function formatEntryPreview(side: ObjectPreview): string {
+	if (side.subtype === "null") return "null";
+	if (side.type === "string") return `"${side.description ?? ""}"`;
+	if (side.type === "undefined") return "undefined";
+	return side.description ?? side.subtype ?? side.type;
+}
+
 function formatMap(obj: RemoteObject, maxLen: number): string {
 	const desc = obj.description ?? "Map";
 	const preview = obj.preview;
@@ -164,8 +180,8 @@ function formatMap(obj: RemoteObject, maxLen: number): string {
 
 	const items = preview.entries
 		.map((e) => {
-			const key = e.key ? formatPreviewValue(e.key) : "?";
-			const val = formatPreviewValue(e.value);
+			const key = e.key ? formatEntryPreview(e.key) : "?";
+			const val = formatEntryPreview(e.value);
 			return `${key} => ${val}`;
 		})
 		.join(", ");
@@ -183,7 +199,7 @@ function formatSet(obj: RemoteObject, maxLen: number): string {
 		return truncate(`${desc} {}`, maxLen);
 	}
 
-	const items = preview.entries.map((e) => formatPreviewValue(e.value)).join(", ");
+	const items = preview.entries.map((e) => formatEntryPreview(e.value)).join(", ");
 	const suffix = preview.overflow ? ", ..." : "";
 	const result = `${desc} { ${items}${suffix} }`;
 	return truncate(result, maxLen);
@@ -198,7 +214,7 @@ function formatBuffer(obj: RemoteObject, maxLen: number): string {
 	}
 
 	// Preview properties contain the byte values
-	const bytes = preview.properties
+	const bytes = (preview.properties ?? [])
 		.slice(0, 5)
 		.map((p) => {
 			const num = Number.parseInt(p.value ?? "0", 10);

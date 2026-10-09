@@ -15,6 +15,7 @@ import type {
 	VarEntry,
 } from "../session/session.ts";
 import type {
+	AttachResult,
 	ConsoleMessage,
 	ExceptionEntry,
 	LaunchResult,
@@ -37,7 +38,7 @@ export type ArgsForCmd<C extends Cmd> =
 export interface ResponseDataMap {
 	ping: string;
 	launch: LaunchResult;
-	attach: { wsUrl: string };
+	attach: AttachResult;
 	status: SessionStatus;
 	state: StateSnapshot;
 	continue: StateSnapshot;

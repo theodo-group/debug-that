@@ -5,15 +5,9 @@ import { windowAround } from "../formatter/window.ts";
 import type { EvalResult, SourceOptions } from "../session/session.ts";
 import { NO_SUCH_SCRIPT, STALE_REF, UserError, WHILE_RUNNING } from "../util/user-error.ts";
 import type { CdpClient } from "./client.ts";
+import type { Evaluated } from "./evaluate.ts";
 import type { CdpSession } from "./session.ts";
 import { type SourceWindow, sourceWindow } from "./source-view.ts";
-
-/** What engines answer to an evaluation. V8 reports a throw in exceptionDetails, JSC with wasThrown. */
-interface Evaluated {
-	result: Protocol.Runtime.RemoteObject;
-	exceptionDetails?: Protocol.Runtime.ExceptionDetails;
-	wasThrown?: boolean;
-}
 
 export async function evalExpression(
 	session: CdpSession,
@@ -100,10 +94,10 @@ async function settle(
 		return evaluated;
 	}
 	if (session.sessionState !== "paused") {
-		return (await cdp.send("Runtime.awaitPromise", {
+		return cdp.send("Runtime.awaitPromise", {
 			promiseObjectId: result.objectId,
 			generatePreview: true,
-		})) as Evaluated;
+		});
 	}
 	const { internalProperties = [] } = await session.dialect.getProperties({
 		objectId: result.objectId,
@@ -143,7 +137,7 @@ function frameIndexOf(session: CdpSession, frameRef?: string): number {
 	if (!frameRef) return 0;
 	const entry = session.refs.resolve(frameRef);
 	if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
-		return entry.meta.frameIndex as number;
+		return entry.meta.frameIndex;
 	}
 	return 0;
 }
@@ -208,7 +202,7 @@ export async function getVars(
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
 		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
-			frameIndex = entry.meta.frameIndex as number;
+			frameIndex = entry.meta.frameIndex;
 		}
 	}
 
@@ -251,7 +245,7 @@ export async function getVars(
 
 			for (const prop of properties) {
 				const propName = prop.name;
-				const propValue = prop.value as RemoteObject | undefined;
+				const propValue = prop.value;
 
 				if (!propValue) continue;
 
@@ -263,7 +257,7 @@ export async function getVars(
 					if (!options.names.includes(propName)) continue;
 				}
 
-				const remoteId = (propValue.objectId as string) ?? `primitive:${propName}`;
+				const remoteId = propValue.objectId ?? `primitive:${propName}`;
 				const ref = session.refs.addVar(remoteId, propName);
 
 				variables.push({
@@ -350,22 +344,20 @@ async function fetchPropsRecursive(
 
 	for (const prop of properties) {
 		const propName = prop.name;
-		const propValue = prop.value as RemoteObject | undefined;
+		const propValue = prop.value;
 		const isOwn = prop.isOwn;
-		const getDesc = prop.get as RemoteObject | undefined;
-		const setDesc = prop.set as RemoteObject | undefined;
+		const getDesc = prop.get;
+		const setDesc = prop.set;
 		const isAccessor =
 			!!(getDesc?.type && getDesc.type !== "undefined") ||
 			!!(setDesc?.type && setDesc.type !== "undefined");
 
 		if (!propValue && !isAccessor) continue;
 
-		const displayValue = propValue
-			? propValue
-			: ({
-					type: "function",
-					description: "getter/setter",
-				} as RemoteObject);
+		const displayValue: RemoteObject = propValue ?? {
+			type: "function",
+			description: "getter/setter",
+		};
 
 		let propRef: string | undefined;
 		if (propValue?.objectId) {
@@ -404,7 +396,7 @@ async function fetchPropsRecursive(
 	// Add internal properties
 	for (const prop of internalProps) {
 		const propName = prop.name;
-		const propValue = prop.value as RemoteObject | undefined;
+		const propValue = prop.value;
 
 		if (!propValue) continue;
 

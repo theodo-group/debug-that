@@ -22,6 +22,17 @@ export function describeEval(runtime: "node" | "bun"): void {
 		);
 
 	describe(`eval (${runtime})`, () => {
+		// JSC describes a Map as "Map", V8 as "Map(2)"; the entries are what dbg renders
+		test("Map and Set previews show their entries, as console.log does", () =>
+			paused("eval-map-set", async (session) => {
+				expect((await session.eval('new Map([["a", 1], ["b", {}]])')).value).toMatch(
+					/^Map(\(2\))? \{ "a" => 1, "b" => (Object|\{\}) \}$/,
+				);
+				expect((await session.eval('new Set(["x", 2, null])')).value).toMatch(
+					/^Set(\(3\))? \{ "x", 2, null \}$/,
+				);
+			}));
+
 		test("a thrown error is an error, not a value", () =>
 			paused("eval-throws", async (session) => {
 				await expect(session.eval("notDefinedAnywhere")).rejects.toThrow("notDefinedAnywhere");

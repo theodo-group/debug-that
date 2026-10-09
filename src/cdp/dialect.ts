@@ -1,4 +1,5 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
+import type { RemoteObject } from "../formatter/values.ts";
 import type { WaitForStopOptions } from "../session/base-session.ts";
 
 export type RuntimeName = "node" | "bun";
@@ -52,7 +53,7 @@ export interface BreakpointBinding {
 /** A console call in the program, with its arguments as the engine sent them */
 export interface ConsoleEvent {
 	level: string;
-	args: Protocol.Runtime.RemoteObject[];
+	args: RemoteObject[];
 	/** The engine's own rendering, when it sends one (JSC) */
 	text?: string;
 	url?: string;
@@ -70,7 +71,7 @@ export interface TargetEvents {
 	scriptParsed(script: { scriptId: string; url: string; sourceMapURL?: string }): void;
 	console(message: ConsoleEvent): void;
 	/** A logpoint's arguments, sampled as one array by the engine (JSC) */
-	logSample(payload: Protocol.Runtime.RemoteObject): void;
+	logSample(payload: RemoteObject): void;
 	exception(details: Protocol.Runtime.ExceptionDetails): void;
 	/** The program ran to its end; only the connection keeps the process alive */
 	programEnded(): void;

@@ -1,4 +1,3 @@
-import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import type { StateOptions, StateSnapshot } from "../session/types.ts";
 import type { CdpSession } from "./session.ts";
@@ -33,7 +32,7 @@ export async function buildState(
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
 		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {
-			frameIndex = entry.meta.frameIndex as number;
+			frameIndex = entry.meta.frameIndex;
 		}
 	}
 
@@ -116,7 +115,7 @@ export async function buildState(
 
 						for (const prop of properties) {
 							const propName = prop.name;
-							const propValue = prop.value as RemoteObject | undefined;
+							const propValue = prop.value;
 
 							if (!propValue) continue;
 
@@ -124,7 +123,7 @@ export async function buildState(
 							if (propName.startsWith("__")) continue;
 
 							const remoteId = propValue.objectId ?? `primitive:${propName}`;
-							const ref = session.refs.addVar(remoteId as string, propName);
+							const ref = session.refs.addVar(remoteId, propName);
 
 							vars.push({
 								ref,
