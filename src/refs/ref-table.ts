@@ -2,11 +2,11 @@ export type RefType = "v" | "f" | "o" | "BP" | "LP" | "HS";
 
 // ── Typed meta for breakpoints and logpoints ──────────────────────
 
-export interface BreakpointMeta {
+/** A breakpoint or logpoint on a line of a file, as shown and as bound */
+export interface FileMeta {
+	kind: "file";
 	url: string;
 	line: number;
-	condition?: string;
-	hitCount?: number;
 	/** Counted from 1, set only when the breakpoint was pinned to a column */
 	column?: number;
 	originalUrl?: string;
@@ -14,8 +14,13 @@ export interface BreakpointMeta {
 	generatedUrl?: string;
 	generatedLine?: number;
 	urlRegex?: string;
-	/** Function breakpoint label. url and line are placeholders for these. */
-	fn?: string;
+}
+
+/** A breakpoint or logpoint on calls of a function */
+export interface FunctionMeta {
+	kind: "function";
+	/** How the target was named: a path, or "name (@vN)" for an object ref */
+	fn: string;
 	/** Path the function was found at; absent when set on an object ref */
 	fnPath?: string;
 	fnByName?: boolean;
@@ -23,19 +28,13 @@ export interface BreakpointMeta {
 	fnFound?: boolean;
 }
 
-export interface LogpointMeta {
-	url: string;
-	line: number;
+export type BreakpointMeta = (FileMeta | FunctionMeta) & { condition?: string; hitCount?: number };
+
+export type LogpointMeta = (FileMeta | FunctionMeta) & {
 	template: string;
-	fn?: string;
-	fnPath?: string;
-	fnByName?: boolean;
-	fnFound?: boolean;
 	condition?: string;
 	maxEmissions?: number;
-	originalUrl?: string;
-	originalLine?: number;
-}
+};
 
 // ── Entry types ───────────────────────────────────────────────────
 

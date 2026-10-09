@@ -59,7 +59,7 @@ export async function setBreakpoint(
 	// PendingBreakpoints binds it by script id, on the translated line, as the
 	// script loads and stops before its first statement.
 	if (!url && !resolved?.runtime.scriptId && !urlRegex) {
-		const meta: BreakpointMeta = { url: file, line };
+		const meta: BreakpointMeta = { kind: "file", url: file, line };
 		if (options?.column !== undefined) meta.column = options.column;
 		if (options?.condition) meta.condition = options.condition;
 		if (options?.hitCount) meta.hitCount = options.hitCount;
@@ -92,10 +92,7 @@ export async function setBreakpoint(
 				? options.column
 				: loc.columnNumber + 1;
 
-	const meta: BreakpointMeta = {
-		url: sourceUrl,
-		line: sourceLine,
-	};
+	const meta: BreakpointMeta = { kind: "file", url: sourceUrl, line: sourceLine };
 	if (resolved) {
 		meta.originalUrl = resolved.source.file;
 		meta.originalLine = resolved.source.line;
@@ -167,76 +164,40 @@ export function listBreakpoints(
 	session: CdpSession,
 	options?: { pending?: boolean },
 ): BreakpointListItem[] {
-	const all = session.refs.listBreakpoints({ pending: options?.pending });
+	const items = session.refs.listBreakpoints({ pending: options?.pending }).map((entry) => {
+		const item = listItem(entry.ref, entry.type, entry.meta);
+		if (entry.pending) item.pending = true;
+		const note = functionNote(session, entry);
+		if (note) item.note = note;
+		return item;
+	});
+	for (const [ref, disabled] of session.disabledBreakpoints) {
+		items.push({ ...listItem(ref, disabled.type, disabled.meta), disabled: true });
+	}
+	return items;
+}
 
-	const results: BreakpointListItem[] = all.map((entry) => {
-		const meta = entry.meta;
-		const item: BreakpointListItem = {
-			ref: entry.ref,
-			type: entry.type,
-			url: meta.url,
-			line: meta.line,
-		};
-
-		if ("column" in meta && meta.column !== undefined) {
-			item.column = meta.column;
-		}
-		if (meta.condition !== undefined) {
-			item.condition = meta.condition;
-		}
-		if ("hitCount" in meta && meta.hitCount !== undefined) {
-			item.hitCount = meta.hitCount;
-		}
-		if ("template" in meta && meta.template !== undefined) {
-			item.template = meta.template;
-		}
-		if (entry.pending) {
-			item.pending = true;
-		}
-		if ("originalUrl" in meta && meta.originalUrl !== undefined) {
+/** A breakpoint as listed. A function one goes by "fn:<label>" at line 0, as the CLI expects. */
+function listItem(
+	ref: string,
+	type: "BP" | "LP",
+	meta: BreakpointMeta | LogpointMeta,
+): BreakpointListItem {
+	const item: BreakpointListItem =
+		meta.kind === "file"
+			? { ref, type, url: meta.url, line: meta.line }
+			: { ref, type, url: `fn:${meta.fn}`, line: 0, fn: meta.fn };
+	if (meta.kind === "file") {
+		if (meta.column !== undefined) item.column = meta.column;
+		if (meta.originalUrl !== undefined) {
 			item.originalUrl = meta.originalUrl;
 			item.originalLine = meta.originalLine;
 		}
-		if (meta.fn !== undefined) {
-			item.fn = meta.fn;
-			const note = functionNote(session, entry);
-			if (note) item.note = note;
-		}
-
-		return item;
-	});
-
-	// Include disabled breakpoints
-	for (const [ref, disabled] of session.disabledBreakpoints) {
-		const meta = disabled.meta;
-		const item: BreakpointListItem = {
-			ref,
-			type: disabled.type,
-			url: meta.url,
-			line: meta.line,
-			disabled: true,
-		};
-
-		if ("column" in meta && meta.column !== undefined) {
-			item.column = meta.column;
-		}
-		if (meta.condition !== undefined) {
-			item.condition = meta.condition;
-		}
-		if ("hitCount" in meta && meta.hitCount !== undefined) {
-			item.hitCount = meta.hitCount;
-		}
-		if ("template" in meta && meta.template !== undefined) {
-			item.template = meta.template;
-		}
-		if ("fn" in meta && meta.fn !== undefined) {
-			item.fn = meta.fn;
-		}
-
-		results.push(item);
 	}
-
-	return results;
+	if (meta.condition !== undefined) item.condition = meta.condition;
+	if ("hitCount" in meta && meta.hitCount !== undefined) item.hitCount = meta.hitCount;
+	if ("template" in meta && meta.template !== undefined) item.template = meta.template;
+	return item;
 }
 
 export async function toggleBreakpoint(
@@ -324,8 +285,9 @@ async function reEnableBreakpoint(
 		return;
 	}
 
-	if (entry.meta.fn !== undefined) {
-		const id = await session.functionBreakpoints.rebind({ ...entry.meta, fn: entry.meta.fn });
+	const meta = entry.meta;
+	if (meta.kind === "function") {
+		const id = await session.functionBreakpoints.rebind(meta);
 		if (entry.type === "BP") session.refs.addBreakpoint(id, entry.meta);
 		else session.refs.addLogpoint(id, entry.meta);
 		session.disabledBreakpoints.delete(ref);
@@ -333,11 +295,8 @@ async function reEnableBreakpoint(
 	}
 
 	const r = await session.dialect.setBreakpoint(
-		breakpointTarget(session, {
-			url: entry.meta.url,
-			urlRegex: entry.type === "BP" ? entry.meta.urlRegex : undefined,
-		}),
-		{ line: entry.meta.line, ...behaviorOf(entry) },
+		breakpointTarget(session, { url: meta.url, urlRegex: meta.urlRegex }),
+		{ line: meta.line, ...behaviorOf(entry) },
 	);
 
 	// Re-create the ref entry in the ref table
@@ -403,7 +362,7 @@ export async function setLogpoint(
 	// If the script is not loaded yet, store as a pending logpoint
 	// (same rationale as pending breakpoints — V8 URL-regex ignores source maps)
 	if (!url && !resolved?.runtime.scriptId) {
-		const meta: LogpointMeta = { url: file, line, template };
+		const meta: LogpointMeta = { kind: "file", url: file, line, template };
 		if (options?.condition) meta.condition = options.condition;
 		if (options?.maxEmissions) meta.maxEmissions = options.maxEmissions;
 
@@ -429,11 +388,7 @@ export async function setLogpoint(
 	const sourceUrl = resolved?.source.file ?? url ?? file;
 	const sourceLine = resolved?.source.line ?? (loc ? loc.lineNumber + 1 : line);
 
-	const meta: LogpointMeta = {
-		url: sourceUrl,
-		line: sourceLine,
-		template,
-	};
+	const meta: LogpointMeta = { kind: "file", url: sourceUrl, line: sourceLine, template };
 	if (options?.condition) {
 		meta.condition = options.condition;
 	}
@@ -536,7 +491,7 @@ function breakpointTarget(
 /** Detaches a bound breakpoint from the target, whichever kind it is. */
 async function unbind(session: CdpSession, entry: BreakpointEntry | LogpointEntry): Promise<void> {
 	if (entry.pending) return;
-	if (entry.meta.fn !== undefined) {
+	if (entry.meta.kind === "function") {
 		await session.functionBreakpoints.remove(entry.remoteId);
 		return;
 	}
@@ -548,7 +503,7 @@ function functionNote(
 	session: CdpSession,
 	entry: BreakpointEntry | LogpointEntry,
 ): string | undefined {
-	if (entry.meta.fn === undefined) return undefined;
+	if (entry.meta.kind !== "function") return undefined;
 	if (entry.meta.fnFound) return "left in the process by an earlier session";
 	return entry.pending ? undefined : session.functionBreakpoints.describe(entry.remoteId);
 }

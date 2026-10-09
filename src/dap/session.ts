@@ -395,6 +395,7 @@ export class DapSession extends BaseSession {
 
 		// Register ref
 		const ref = this.refs.addBreakpoint(`dap-bp:${file}:${line}`, {
+			kind: "file",
 			url: file,
 			line,
 		});
@@ -503,10 +504,7 @@ export class DapSession extends BaseSession {
 
 		this.breakpoints.push(entry);
 
-		const ref = this.refs.addBreakpoint(`dap-fn:${name}`, {
-			url: name,
-			line: 0,
-		});
+		const ref = this.refs.addBreakpoint(`dap-fn:${name}`, { kind: "function", fn: name });
 		entry.ref = ref;
 
 		await this.syncFunctionBreakpoints();

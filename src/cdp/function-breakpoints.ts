@@ -39,7 +39,8 @@ interface Binding {
 	unbind(): Promise<void>;
 }
 
-type FunctionMeta = (BreakpointMeta | LogpointMeta) & { fn: string };
+/** The stored entry of a function breakpoint or logpoint */
+type FunctionEntryMeta = Extract<BreakpointMeta | LogpointMeta, { kind: "function" }>;
 
 const NOTES: Record<Mechanism, string | undefined> = {
 	call: undefined,
@@ -79,8 +80,7 @@ export class FunctionBreakpoints {
 			this.inFlight = null;
 		}
 		const meta = {
-			url: `fn:${label}`,
-			line: 0,
+			kind: "function" as const,
 			fn: label,
 			fnPath: isRef(target) ? undefined : target,
 			fnByName: options.byName || undefined,
@@ -94,7 +94,7 @@ export class FunctionBreakpoints {
 	}
 
 	/** Binds a stored entry again (re-enable). */
-	async rebind(meta: FunctionMeta): Promise<string> {
+	async rebind(meta: FunctionEntryMeta): Promise<string> {
 		const target = meta.fnByName ? meta.fn : meta.fnPath;
 		if (!target) {
 			throw new UserError(
@@ -146,8 +146,7 @@ export class FunctionBreakpoints {
 				unbind: () => this.uninstallWrapper(left.id),
 			});
 			const meta = {
-				url: `fn:${left.path}`,
-				line: 0,
+				kind: "function" as const,
 				fn: left.path,
 				fnPath: left.path,
 				fnFound: true,
@@ -187,7 +186,7 @@ export class FunctionBreakpoints {
 		const hits = pause.hitBreakpoints ?? [];
 		for (const id of hits) {
 			const entry = this.session.refs.findByRemoteId(id);
-			if (entry && (entry.type === "BP" || entry.type === "LP") && entry.meta.fn) {
+			if (entry && (entry.type === "BP" || entry.type === "LP") && entry.meta.kind === "function") {
 				return `function breakpoint ${entry.meta.fn}`;
 			}
 		}

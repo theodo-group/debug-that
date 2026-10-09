@@ -60,8 +60,7 @@ export class PendingBreakpoints {
 		const files = new Set(
 			this.host.refs
 				.listBreakpoints({ pending: true })
-				.filter((e) => e.meta.fn === undefined)
-				.map((e) => e.meta.url),
+				.flatMap((e) => (e.meta.kind === "file" ? [e.meta.url] : [])),
 		);
 		// Entry breakpoints cover files loaded under their own name; the
 		// instrumentation pause (V8, ES modules) also covers bundles
@@ -150,10 +149,10 @@ export class PendingBreakpoints {
 		if (!this.host.cdp) return;
 		for (const entry of this.host.refs.listBreakpoints({ pending: true })) {
 			const meta = entry.meta;
-			if (meta.fn !== undefined) continue; // bound by name or path, not by script
+			if (meta.kind !== "file") continue; // bound by name or path, not by script
 			if (this.host.findScriptUrl(meta.url) !== scriptUrl) continue;
 
-			const pinned = "column" in meta ? meta.column : undefined;
+			const pinned = meta.column;
 			const resolved = this.host.resolveToRuntime(meta.url, meta.line, (pinned ?? 1) - 1);
 			const line = resolved?.runtime.line ?? meta.line;
 			const column =
