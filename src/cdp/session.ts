@@ -22,7 +22,6 @@ import type {
 } from "../session/session.ts";
 import type {
 	AttachResult,
-	ConsoleMessage,
 	ExceptionEntry,
 	LaunchResult,
 	PauseInfo,
@@ -40,7 +39,6 @@ import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts"
 import { openInspector } from "./dialects/index.ts";
 import { ExitStop } from "./exit-stop.ts";
 import { type FunctionBreakpointOptions, FunctionBreakpoints } from "./function-breakpoints.ts";
-import type { JSC } from "./jsc-protocol.js";
 import { type InspectedProcess, startInspected } from "./launcher.ts";
 import { classifyPause } from "./pause-classifier.ts";
 import { PendingBreakpoints } from "./pending-breakpoints.ts";
@@ -916,7 +914,7 @@ export class CdpSession extends BaseSession {
 
 		// Handlers before any domain is enabled so no event is missed; "running"
 		// before the handshake so waitUntilStopped() has a live target to wait on.
-		this.setupCdpEventHandlers(cdp);
+		this.setupCdpEventHandlers(cdp, dialect);
 		// An attached target that exits only shows as its socket closing
 		void cdp.closed.then(() => {
 			if (this.cdp === cdp) this.targetGone("socket.closed");
@@ -940,146 +938,107 @@ export class CdpSession extends BaseSession {
 		}
 	}
 
-	private setupCdpEventHandlers(cdp: CdpClient): void {
-		cdp.on("Debugger.paused", (p) => {
-			const pause = classifyPause(p, {
-				stopRequested: this.stopRequested,
-				pending: this.pending,
-				functionBreakpoints: this.functionBreakpoints,
-				knownBreakpoint: (id) => this.refs.findByRemoteId(id) !== undefined,
-				scriptUrl: (id) => this.scriptUrl(id),
-			});
-			switch (pause.kind) {
-				case "exit":
-					if (this.exitStop.wanted) void this.reportExitPause(p, cdp);
-					else void cdp.send("Debugger.resume").catch(() => {});
-					return;
-				case "entry":
-					this.settleEntryPause(p, pause.hitBreakpoints).catch((err) => {
-						// The target may end meanwhile; anything else is a bug worth seeing
-						if (!(err instanceof ConnectionClosedError)) {
-							this.log.error("entry.pause.failed", { error: String(err) });
-						}
-					});
-					return;
-				case "stop":
-					this.reportPause(p, pause);
-			}
-		});
-
-		cdp.on("Debugger.resumed", () => {
-			this.state = "running";
-			this._notifyStateWaiters();
-			this.pauseInfo = null;
-			this.pausedCallFrames = [];
-			this.refs.clearVolatile();
-		});
-
-		cdp.on("Debugger.scriptParsed", (p) => {
-			const scriptId = p.scriptId;
-			if (scriptId) {
-				const info: ScriptInfo = {
-					scriptId,
-					// JSC reports a //# sourceURL apart from the url, which is empty for evaluated code
-					url: p.url || ((p as { sourceURL?: string }).sourceURL ?? ""),
-				};
-				if (p.sourceMapURL) {
-					info.sourceMapURL = p.sourceMapURL;
+	/** The target's events, as the dialect reports them in one shape, applied to the session's state. */
+	private setupCdpEventHandlers(cdp: CdpClient, dialect: InspectorDialect): void {
+		dialect.subscribe({
+			paused: (p, hitBreakpoints) => {
+				const pause = classifyPause(p, hitBreakpoints, {
+					stopRequested: this.stopRequested,
+					pending: this.pending,
+					functionBreakpoints: this.functionBreakpoints,
+					knownBreakpoint: (id) => this.refs.findByRemoteId(id) !== undefined,
+					scriptUrl: (id) => this.scriptUrl(id),
+				});
+				switch (pause.kind) {
+					case "exit":
+						if (this.exitStop.wanted) void this.reportExitPause(p, cdp);
+						else void cdp.send("Debugger.resume").catch(() => {});
+						return;
+					case "entry":
+						this.settleEntryPause(p, pause.hitBreakpoints).catch((err) => {
+							// The target may end meanwhile; anything else is a bug worth seeing
+							if (!(err instanceof ConnectionClosedError)) {
+								this.log.error("entry.pause.failed", { error: String(err) });
+							}
+						});
+						return;
+					case "stop":
+						this.reportPause(p, pause);
 				}
+			},
+
+			resumed: () => {
+				this.state = "running";
+				this._notifyStateWaiters();
+				this.pauseInfo = null;
+				this.pausedCallFrames = [];
+				this.refs.clearVolatile();
+			},
+
+			scriptParsed: (script) => {
 				// Registered before anything binds to it, so that findScriptUrl() finds it
-				this.scripts.set(scriptId, info);
-				this.pending.trackScript(scriptId, info.url, p.sourceMapURL);
-			}
-		});
+				this.scripts.set(script.scriptId, script);
+				this.pending.trackScript(script.scriptId, script.url, script.sourceMapURL);
+			},
 
-		// Node.js: the program ended and only the connection keeps it alive
-		cdp.on("NodeRuntime.waitingForDisconnect", () => {
-			if (this.cdp === cdp) this.targetGone("program.ended");
-		});
+			programEnded: () => {
+				if (this.cdp === cdp) this.targetGone("program.ended");
+			},
 
-		cdp.on("Runtime.executionContextDestroyed", () => {
-			// The main execution context was destroyed — the script's top-level
-			// code has finished. The process may still be alive (servers keep the
-			// event loop running, and --inspect keeps it alive too).
-			// Mark as "idle" so waiters resolve, but the CDP connection stays
-			// open — pause/breakpoints still work if the process is alive.
-			this.state = "idle";
-			this.pauseInfo = null;
-			this._notifyStateWaiters();
-		});
+			contextDestroyed: () => {
+				// The main execution context was destroyed — the script's top-level
+				// code has finished. The process may still be alive (servers keep the
+				// event loop running, and --inspect keeps it alive too).
+				// Mark as "idle" so waiters resolve, but the CDP connection stays
+				// open — pause/breakpoints still work if the process is alive.
+				this.state = "idle";
+				this.pauseInfo = null;
+				this._notifyStateWaiters();
+			},
 
-		cdp.on("Runtime.consoleAPICalled", (p) => {
-			const type = p.type ?? "log";
-			const args = p.args ?? [];
-			// Format each arg using formatValue
-			const formattedArgs = args.map((a) => formatValue(a as unknown as RemoteObject));
-			const text = formattedArgs.join(" ");
-			// Get stack trace info if available
-			const stackTrace = p.stackTrace;
-			const eventCallFrames = stackTrace?.callFrames;
-			const topFrame = eventCallFrames?.[0];
-			const msg: ConsoleMessage = {
-				timestamp: Date.now(),
-				level: type,
-				text,
-				args: formattedArgs,
-				url: topFrame?.url,
-				line: topFrame?.lineNumber !== undefined ? topFrame.lineNumber + 1 : undefined,
-			};
-			this.pushConsoleMessage(msg);
-		});
+			console: (message) => {
+				const args = message.args.map((a) => formatValue(a as unknown as RemoteObject));
+				this.pushConsoleMessage({
+					timestamp: Date.now(),
+					level: message.level,
+					text: args.length > 0 ? args.join(" ") : (message.text ?? ""),
+					args,
+					url: message.url,
+					line: message.line,
+				});
+			},
 
-		cdp.on("Console.messageAdded", (p) => {
-			const message = p.message as JSC.Console.ConsoleMessage;
-			const args = (message.parameters ?? []).map((a) => formatValue(a as unknown as RemoteObject));
-			this.pushConsoleMessage({
-				timestamp: Date.now(),
-				level: message.level,
-				text: args.length > 0 ? args.join(" ") : message.text,
-				args,
-				url: message.url,
-				line: message.line,
-			});
-		});
+			// A logpoint's arguments as an array; each needs a round trip for its elements, kept in order
+			logSample: (payload) => {
+				const sample = payload as unknown as RemoteObject;
+				this.probedLogs = this.probedLogs.then(async () => {
+					const args = await this.logArguments(sample).catch(() => [formatValue(sample)]);
+					this.pushConsoleMessage({
+						timestamp: Date.now(),
+						level: "log",
+						text: args.join(" "),
+						args,
+					});
+				});
+			},
 
-		// A logpoint on JSC: its arguments as an array, sampled by a probe action
-		cdp.on("Debugger.didSampleProbe", (p) => {
-			const { sample } = p as JSC.Debugger.DidSampleProbeEvent;
-			const payload = sample.payload as unknown as RemoteObject;
-			// Kept in order: each sample needs a round trip for its elements
-			this.probedLogs = this.probedLogs.then(async () => {
-				const args = await this.logArguments(payload).catch(() => [formatValue(payload)]);
-				const text = args.join(" ");
-				this.pushConsoleMessage({ timestamp: Date.now(), level: "log", text, args });
-			});
-		});
-
-		cdp.on("Runtime.exceptionThrown", (p) => {
-			const details = p.exceptionDetails;
-			if (!details) return;
-			const exception = details.exception;
-			const entry: ExceptionEntry = {
-				timestamp: Date.now(),
-				text: details.text ?? "Exception",
-				description: exception?.description,
-				url: details.url,
-				line: details.lineNumber !== undefined ? details.lineNumber + 1 : undefined,
-				column: details.columnNumber !== undefined ? details.columnNumber + 1 : undefined,
-			};
-			// Extract stack trace string
-			const stackTrace = details.stackTrace;
-			if (stackTrace?.callFrames) {
-				const frames = stackTrace.callFrames;
-				entry.stackTrace = frames
-					.map((f) => {
-						const fn = f.functionName || "(anonymous)";
-						const frameUrl = f.url;
-						const frameLine = f.lineNumber + 1;
-						return `  at ${fn} (${frameUrl}:${frameLine})`;
-					})
-					.join("\n");
-			}
-			this.pushException(entry);
+			exception: (details) => {
+				const entry: ExceptionEntry = {
+					timestamp: Date.now(),
+					text: details.text ?? "Exception",
+					description: details.exception?.description,
+					url: details.url,
+					line: details.lineNumber !== undefined ? details.lineNumber + 1 : undefined,
+					column: details.columnNumber !== undefined ? details.columnNumber + 1 : undefined,
+				};
+				const frames = details.stackTrace?.callFrames;
+				if (frames) {
+					entry.stackTrace = frames
+						.map((f) => `  at ${f.functionName || "(anonymous)"} (${f.url}:${f.lineNumber + 1})`)
+						.join("\n");
+				}
+				this.pushException(entry);
+			},
 		});
 	}
 

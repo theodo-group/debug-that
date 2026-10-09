@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { FunctionBreakpoints } from "../../src/cdp/function-breakpoints.ts";
-import { classifyPause, type PauseContext } from "../../src/cdp/pause-classifier.ts";
+import { classifyPause as classify, type PauseContext } from "../../src/cdp/pause-classifier.ts";
 import type { PendingBreakpoints } from "../../src/cdp/pending-breakpoints.ts";
+
+/** As the session calls it: the hits the dialect read (V8 lists them, JSC names one in its data) */
+function classifyPause(p: Protocol.Debugger.PausedEvent, ctx: PauseContext) {
+	const data = (p as { data?: Record<string, unknown> }).data;
+	const hits =
+		p.hitBreakpoints ?? (typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined);
+	return classify(p, hits, ctx);
+}
 
 function paused(
 	reason: string,

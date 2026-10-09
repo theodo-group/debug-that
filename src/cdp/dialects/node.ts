@@ -11,7 +11,9 @@ import type {
 	ConnectTarget,
 	InspectorDialect,
 	JsLogger,
+	TargetEvents,
 } from "../dialect.ts";
+import { forwardCommonEvents } from "./events.ts";
 
 export class NodeDialect implements InspectorDialect {
 	readonly name = "node" as const;
@@ -21,6 +23,25 @@ export class NodeDialect implements InspectorDialect {
 	private beforeScriptsBreakpoint: string | null = null;
 
 	constructor(private readonly cdp: CdpClient) {}
+
+	/** V8 lists the breakpoints a pause hit; console calls come on the Runtime domain. */
+	subscribe(events: TargetEvents): void {
+		forwardCommonEvents(this.cdp, events, {
+			hitBreakpoints: (p) => p.hitBreakpoints,
+			scriptUrl: (p) => p.url,
+		});
+		this.cdp.on("Runtime.consoleAPICalled", (p) => {
+			const top = p.stackTrace?.callFrames[0];
+			events.console({
+				level: p.type ?? "log",
+				args: p.args ?? [],
+				url: top?.url,
+				line: top === undefined ? undefined : top.lineNumber + 1,
+			});
+		});
+		// The program ended and only the connection keeps it alive (see letEndedProgramsExit)
+		this.cdp.on("NodeRuntime.waitingForDisconnect", () => events.programEnded());
+	}
 
 	async connect(
 		target: ConnectTarget,

@@ -49,6 +49,35 @@ export interface BreakpointBinding {
 	location?: { scriptId: string; lineNumber: number; columnNumber?: number };
 }
 
+/** A console call in the program, with its arguments as the engine sent them */
+export interface ConsoleEvent {
+	level: string;
+	args: Protocol.Runtime.RemoteObject[];
+	/** The engine's own rendering, when it sends one (JSC) */
+	text?: string;
+	url?: string;
+	/** 1-based */
+	line?: number;
+}
+
+/**
+ * What a target reports, in one shape whichever engine it is. The session
+ * subscribes once, before any domain is enabled, and never reads a raw event.
+ */
+export interface TargetEvents {
+	paused(p: Protocol.Debugger.PausedEvent, hitBreakpoints: string[] | undefined): void;
+	resumed(): void;
+	scriptParsed(script: { scriptId: string; url: string; sourceMapURL?: string }): void;
+	console(message: ConsoleEvent): void;
+	/** A logpoint's arguments, sampled as one array by the engine (JSC) */
+	logSample(payload: Protocol.Runtime.RemoteObject): void;
+	exception(details: Protocol.Runtime.ExceptionDetails): void;
+	/** The program ran to its end; only the connection keeps the process alive */
+	programEnded(): void;
+	/** A JavaScript context went away */
+	contextDestroyed(): void;
+}
+
 /**
  * Everything that differs between the inspector protocols of the supported
  * runtimes (V8 behind Node.js, JavaScriptCore behind Bun). A dialect is bound
@@ -73,6 +102,9 @@ export interface InspectorDialect {
 		intent: ConnectIntent,
 		prepare: () => Promise<void>,
 	): Promise<void>;
+
+	/** Forwards the target's events in one shape; call before connect, so none is missed. */
+	subscribe(events: TargetEvents): void;
 
 	setBreakpoint(target: BreakpointTarget, spec: BreakpointSpec): Promise<BreakpointBinding>;
 

@@ -23,8 +23,8 @@ export interface PauseContext {
 /**
  * What a Debugger.paused event is, in dbg's terms. The engines name their
  * reasons differently: V8 says "other" for a breakpoint, a debugger statement
- * and a pause alike and lists the breakpoints hit apart, JSC says "Breakpoint"
- * or "DebuggerStatement" and names the one breakpoint in its pause data. And
+ * and a pause alike, JSC says "Breakpoint" or "DebuggerStatement" (the
+ * breakpoints hit come from the dialect, which knows where each engine lists them). And
  * breakpoints of dbg's own pause too: entry guards, function wrappers, the
  * exit listener. One vocabulary comes out, the one DAP adapters already use:
  * breakpoint, debugger, step, pause, entry, exception, exit, and
@@ -32,9 +32,9 @@ export interface PauseContext {
  */
 export function classifyPause(
 	p: Protocol.Debugger.PausedEvent,
+	hitBreakpoints: string[] | undefined,
 	ctx: PauseContext,
 ): ClassifiedPause {
-	const hitBreakpoints = hitBreakpointsOf(p);
 	if (ExitStop.isExitStop(p)) return { kind: "exit" };
 	if (ctx.pending.isEntryPause(p, hitBreakpoints)) {
 		return { kind: "entry", hitBreakpoints: hitBreakpoints ?? [] };
@@ -48,13 +48,6 @@ export function classifyPause(
 			topFunction: top?.functionName,
 		}) ?? plainReason(p.reason, hitBreakpoints, ctx);
 	return { kind: "stop", reason, hitBreakpoints };
-}
-
-/** V8 lists the breakpoints hit; JSC names the one it hit in its pause data */
-function hitBreakpointsOf(p: Protocol.Debugger.PausedEvent): string[] | undefined {
-	if (p.hitBreakpoints) return p.hitBreakpoints;
-	const data = (p as { data?: Record<string, unknown> }).data;
-	return typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined;
 }
 
 /** The reason for a pause that is not a function breakpoint's */

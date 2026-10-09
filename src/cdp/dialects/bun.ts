@@ -10,9 +10,11 @@ import type {
 	ConnectTarget,
 	InspectorDialect,
 	JsLogger,
+	TargetEvents,
 } from "../dialect.ts";
 import { JscClient } from "../jsc-client.ts";
 import type { JSC } from "../jsc-protocol.js";
+import { forwardCommonEvents } from "./events.ts";
 
 /**
  * WebKit Inspector Protocol as spoken by Bun. Differs from CDP in that the
@@ -30,6 +32,35 @@ export class BunDialect implements InspectorDialect {
 
 	constructor(private readonly cdp: CdpClient) {
 		this.jsc = new JscClient(cdp);
+	}
+
+	/**
+	 * JSC names the one breakpoint a pause hit in its pause data, reports a
+	 * //# sourceURL apart from the url (empty for evaluated code), logs on its
+	 * own Console domain, and samples logpoint arguments through probes.
+	 */
+	subscribe(events: TargetEvents): void {
+		forwardCommonEvents(this.cdp, events, {
+			hitBreakpoints: (p) => {
+				const data = (p as { data?: Record<string, unknown> }).data;
+				return typeof data?.breakpointId === "string" ? [data.breakpointId] : undefined;
+			},
+			scriptUrl: (p) => p.url || ((p as { sourceURL?: string }).sourceURL ?? ""),
+		});
+		this.cdp.on("Console.messageAdded", (p) => {
+			const message = p.message as JSC.Console.ConsoleMessage;
+			events.console({
+				level: message.level,
+				args: (message.parameters ?? []) as Protocol.Runtime.RemoteObject[],
+				text: message.text,
+				url: message.url,
+				line: message.line,
+			});
+		});
+		this.cdp.on("Debugger.didSampleProbe", (p) => {
+			const { sample } = p as JSC.Debugger.DidSampleProbeEvent;
+			events.logSample(sample.payload as unknown as Protocol.Runtime.RemoteObject);
+		});
 	}
 
 	async connect(
