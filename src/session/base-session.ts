@@ -30,6 +30,7 @@ import type {
 
 export interface WaitForStopOptions {
 	waitForStop?: boolean;
+	/** Infinity: no bound; the wait ends with a stop or the target going away */
 	timeoutMs?: number;
 	throwOnTimeout?: boolean;
 }

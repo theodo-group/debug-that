@@ -1,5 +1,5 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import { BRK_PAUSE_TIMEOUT_MS, MAX_INTERNAL_PAUSE_SKIPS } from "../../constants.ts";
+import { MAX_INTERNAL_PAUSE_SKIPS } from "../../constants.ts";
 import type { CdpClient } from "../client.ts";
 import { asCondition } from "../condition.ts";
 import type {
@@ -222,13 +222,12 @@ export class NodeDialect implements InspectorDialect {
 	 * Older Node.js reports the --inspect-brk pause on Debugger.enable. Newer
 	 * versions only hold the process: pause on its first statement, then
 	 * release it. That first pause lands in node:internal bootstrap code.
+	 * A held program pauses once released, however slow the machine, so the
+	 * wait has no bound: it ends with that pause, or with the process gone.
 	 */
 	private async pauseAtEntry(target: ConnectTarget): Promise<void> {
 		if (!target.isPaused()) {
-			const stopped = target.waitUntilStopped({
-				timeoutMs: BRK_PAUSE_TIMEOUT_MS,
-				throwOnTimeout: false,
-			});
+			const stopped = target.waitUntilStopped(HELD_PROGRAM_STOPS);
 			await this.cdp.send("Debugger.pause");
 			await this.cdp.send("Runtime.runIfWaitingForDebugger");
 			await stopped;
@@ -243,7 +242,7 @@ export class NodeDialect implements InspectorDialect {
 	 */
 	private async release(target: ConnectTarget): Promise<void> {
 		if (!target.isPaused()) {
-			const stopped = target.waitUntilStopped({ timeoutMs: BRK_PAUSE_TIMEOUT_MS });
+			const stopped = target.waitUntilStopped(HELD_PROGRAM_STOPS);
 			await this.cdp.send("Runtime.runIfWaitingForDebugger");
 			await stopped;
 		}
@@ -277,6 +276,9 @@ export class NodeDialect implements InspectorDialect {
 		}
 	}
 }
+
+/** A program held for dbg stops once released; nothing but its end can keep that from coming */
+const HELD_PROGRAM_STOPS = { timeoutMs: Number.POSITIVE_INFINITY };
 
 /** node:inspector's console reaches inspector clients only, where console.log also prints */
 const nodeLog: JsLogger = (expression) =>

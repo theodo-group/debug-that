@@ -1,5 +1,4 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
-import { BRK_PAUSE_TIMEOUT_MS } from "../../constants.ts";
 import { type CdpClient, isAlreadyEnabledError } from "../client.ts";
 import type {
 	BreakpointBehavior,
@@ -239,13 +238,14 @@ export class BunDialect implements InspectorDialect {
 		return (await evaluateValue(this.cdp, HOLDS_FOR_INSPECTOR)) === true;
 	}
 
-	/** Pausing before Inspector.initialized stops on the very first statement. */
+	/**
+	 * Pausing before Inspector.initialized stops on the very first statement,
+	 * however slow the machine: the wait has no bound, and ends with that stop
+	 * or with the process gone.
+	 */
 	private async releaseAndPause(target: ConnectTarget): Promise<void> {
 		await this.jsc.send("Debugger.setPauseForInternalScripts", { shouldPause: false });
-		const stopped = target.waitUntilStopped({
-			timeoutMs: BRK_PAUSE_TIMEOUT_MS,
-			throwOnTimeout: false,
-		});
+		const stopped = target.waitUntilStopped({ timeoutMs: Number.POSITIVE_INFINITY });
 		await this.jsc.send("Debugger.pause");
 		await this.jsc.send("Inspector.initialized");
 		await stopped;

@@ -40,9 +40,6 @@ export const SPAWN_TIMEOUT_MS = 5_000;
 /** Interval between polls when waiting for the daemon socket to appear. */
 export const SPAWN_POLL_INTERVAL_MS = 50;
 
-/** Time to wait for Node.js v24+ to reach the initial --inspect-brk pause state. */
-export const BRK_PAUSE_TIMEOUT_MS = 2_000;
-
 /** Max number of internal bootstrap pauses to skip (Node.js v24+ --inspect-brk). */
 export const MAX_INTERNAL_PAUSE_SKIPS = 5;
 

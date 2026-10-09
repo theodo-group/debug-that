@@ -768,7 +768,9 @@ export class CdpSession extends BaseSession {
 			const onChange = () => {
 				if (stopped()) finish(false);
 			};
-			const timer = setTimeout(() => finish(true), timeoutMs);
+			const timer = Number.isFinite(timeoutMs)
+				? setTimeout(() => finish(true), timeoutMs)
+				: undefined;
 			this.stateListeners.add(onChange);
 		});
 	}
