@@ -8,6 +8,7 @@ import {
 	type DaemonResponse,
 } from "../protocol/messages.ts";
 import { extractLines } from "../util/line-buffer.ts";
+import { tryNext, UserError } from "../util/user-error.ts";
 import { ensureSocketDir, getLockPath, getSocketPath } from "./paths.ts";
 
 type RequestHandler = (req: DaemonRequest) => Promise<DaemonResponse>;
@@ -166,7 +167,7 @@ export class DaemonServer {
 				? {
 						ok: false,
 						error: `Unknown command: ${cmd}`,
-						suggestion: "-> Try: debug-that --help",
+						suggestion: tryNext("dbg --help"),
 					}
 				: {
 						ok: false,
@@ -189,13 +190,10 @@ export class DaemonServer {
 			this.sendResponse(socket, response);
 		} catch (err) {
 			this.logger.error("socket.handler-error", { error: String(err) });
-			// Errors may carry their next step as "<what failed> -> Try: <command>"
-			const message = err instanceof Error ? err.message : String(err);
-			const split = message.indexOf(" -> ");
 			this.sendResponse(socket, {
 				ok: false,
-				error: split === -1 ? message : message.slice(0, split),
-				suggestion: split === -1 ? undefined : message.slice(split + 1),
+				error: err instanceof Error ? err.message : String(err),
+				suggestion: err instanceof UserError ? tryNext(err.next) : undefined,
 			});
 		}
 	}

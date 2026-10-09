@@ -1,6 +1,7 @@
 import type Protocol from "devtools-protocol/types/protocol.js";
 import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
+import { NO_SUCH_SCRIPT, UserError, WHILE_RUNNING } from "../util/user-error.ts";
 import type { CdpSession } from "./session.ts";
 
 export async function setVariable(
@@ -13,7 +14,7 @@ export async function setVariable(
 		throw new Error("No active debug session");
 	}
 	if (!session.isPaused()) {
-		throw new Error("Cannot set variable: process is not paused");
+		throw new UserError("Cannot set variable: the process is not paused", WHILE_RUNNING);
 	}
 
 	// Determine which frame to evaluate in
@@ -23,7 +24,10 @@ export async function setVariable(
 		if (entry?.remoteId) {
 			callFrameId = entry.remoteId;
 		} else {
-			throw new Error(`Unknown frame ref: ${options.frame}`);
+			throw new UserError(
+				`Unknown frame ref: ${options.frame}`,
+				"dbg stack for current frame refs",
+			);
 		}
 	} else {
 		const topFrame = session.pausedCallFrames[0];
@@ -94,7 +98,7 @@ export async function setReturnValue(
 		throw new Error("No active debug session");
 	}
 	if (!session.isPaused()) {
-		throw new Error("Cannot set return value: process is not paused");
+		throw new UserError("Cannot set return value: the process is not paused", WHILE_RUNNING);
 	}
 
 	const topFrame = session.pausedCallFrames[0];
@@ -158,7 +162,7 @@ export async function hotpatch(
 	// Find the script URL and then look up the scriptId
 	const scriptUrl = session.findScriptUrl(file);
 	if (!scriptUrl) {
-		throw new Error(`No loaded script matches "${file}"`);
+		throw new UserError(`No loaded script matches "${file}"`, NO_SUCH_SCRIPT);
 	}
 
 	let scriptId: string | undefined;

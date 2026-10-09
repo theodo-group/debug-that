@@ -8,6 +8,7 @@ import {
 import { createSession } from "../session/factory.ts";
 import type { PendingConfig, Session } from "../session/session.ts";
 import type { StateSnapshot } from "../session/types.ts";
+import { tryNext, UserError } from "../util/user-error.ts";
 import { suggestEvalFix } from "./eval-suggestions.ts";
 import { ensureSocketDir, getLogPath } from "./paths.ts";
 import { DaemonServer } from "./server.ts";
@@ -61,7 +62,7 @@ function requireSession(): Session | ErrorResponse {
 	return {
 		ok: false,
 		error: "No active debug session",
-		suggestion: "Use 'launch <command>' or 'attach <target>' first",
+		suggestion: tryNext("dbg launch <command>, or dbg attach <target>"),
 	};
 }
 
@@ -78,6 +79,24 @@ function afterWait(state: StateSnapshot, waitMs: number | undefined): StateSnaps
 	return state;
 }
 
+/**
+ * The session for a new target. One live target per daemon: a session whose
+ * target ended (or never started, after a failed attach) is replaced, one
+ * still debugging something is not.
+ */
+async function freshSession(runtime: string | undefined, orElse: string): Promise<Session> {
+	if (activeSession) {
+		if (activeSession.getStatus().state !== "idle") {
+			throw new UserError("Session already has a live target", orElse);
+		}
+		await activeSession.stop();
+	}
+	activeSession = createSession(session, runtime, { logger: rootLogger });
+	activeSession.applyPendingConfig(pendingConfig);
+	resetConfig();
+	return activeSession;
+}
+
 function resetConfig() {
 	pendingConfig.remaps = [];
 	pendingConfig.symbolPaths = [];
@@ -92,19 +111,15 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 
 		case "launch": {
 			const { command, brk = true, port, runtime } = req.args;
-			activeSession = createSession(session, runtime, { logger: rootLogger });
-			activeSession.applyPendingConfig(pendingConfig);
-			resetConfig();
-			const result = await activeSession.launch(command, { brk, port });
+			const fresh = await freshSession(runtime, "dbg stop, then launch again");
+			const result = await fresh.launch(command, { brk, port });
 			return { ok: true, data: result };
 		}
 
 		case "attach": {
 			const { target, runtime } = req.args;
-			activeSession = createSession(session, runtime, { logger: rootLogger });
-			activeSession.applyPendingConfig(pendingConfig);
-			resetConfig();
-			const result = await activeSession.attach(target);
+			const fresh = await freshSession(runtime, "dbg stop, then attach again");
+			const result = await fresh.attach(target);
 			return { ok: true, data: result };
 		}
 
@@ -178,7 +193,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				return {
 					ok: false,
 					error: "Function breakpoints are not supported by this runtime",
-					suggestion: "Use 'break <file>:<line>'",
+					suggestion: tryNext("dbg break <file>:<line>"),
 				};
 			}
 			const { name, ...options } = req.args;
@@ -223,7 +238,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 					return {
 						ok: false,
 						error: "catch exit is for JavaScript (Node.js, Bun) sessions",
-						suggestion: "-> Try: dbg catch uncaught",
+						suggestion: tryNext("dbg catch uncaught"),
 					};
 				}
 				await session.setExitPause(true);
@@ -287,7 +302,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				return { ok: true, data: evalResult };
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				if (msg.includes(" -> ")) throw err; // Carries its own next step
+				if (err instanceof UserError) throw err; // Carries its own next step
 				return { ok: false, error: msg, suggestion: suggestEvalFix(msg) };
 			}
 		}
@@ -385,7 +400,9 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				return {
 					ok: false,
 					error: "Name the script to pair",
-					suggestion: "dbg sourcemap <script> --map <file>, or dbg sourcemap <script> --pretty",
+					suggestion: tryNext(
+						"dbg sourcemap <script> --map <file>, or dbg sourcemap <script> --pretty",
+					),
 				};
 			}
 			if (smFile && smMap) await session.attachSourceMap(smFile, smMap);
@@ -414,7 +431,7 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 				return {
 					ok: false,
 					error: "Modules are only available in DAP mode (e.g. --runtime lldb)",
-					suggestion: "For CDP sessions, use: debug-that scripts",
+					suggestion: tryNext("dbg scripts"),
 				};
 			}
 			const modulesResult = await session.getModules(req.args.filter);

@@ -34,6 +34,7 @@ import type {
 	TargetIdentity,
 } from "../session/types.ts";
 import { SourceMapResolver } from "../sourcemap/resolver.ts";
+import { UserError } from "../util/user-error.ts";
 import { type CdpClient, ConnectionClosedError } from "./client.ts";
 import type { ConnectIntent, InspectorDialect, RuntimeName } from "./dialect.ts";
 import { openInspector } from "./dialects/index.ts";
@@ -181,7 +182,7 @@ export class CdpSession extends BaseSession {
 
 	private scriptUrlOf(file: string): string {
 		const url = this.findScriptUrl(file);
-		if (!url) throw new Error(`No loaded script matches ${file} -> Try: dbg scripts to list them`);
+		if (!url) throw new UserError(`No loaded script matches ${file}`, `dbg scripts to list them`);
 		return url;
 	}
 
@@ -231,7 +232,7 @@ export class CdpSession extends BaseSession {
 		options: { brk?: boolean; port?: number } = {},
 	): Promise<LaunchResult> {
 		if (this.state !== "idle") {
-			throw new Error("Session already has an active debug target");
+			throw new UserError("Session already has a live target", "dbg stop, then launch again");
 		}
 
 		if (command.length === 0) {
@@ -271,7 +272,7 @@ export class CdpSession extends BaseSession {
 
 	async attach(target: string): Promise<AttachResult> {
 		if (this.state !== "idle" && !this.cdp) {
-			throw new Error("Session already has an active debug target");
+			throw new UserError("Session already has a live target", "dbg stop, then attach again");
 		}
 
 		let wsUrl: string;
@@ -385,7 +386,7 @@ export class CdpSession extends BaseSession {
 
 	async restart(): Promise<LaunchResult> {
 		if (!this.launchCommand) {
-			throw new Error("No previous launch to restart. Use 'launch' first.");
+			throw new UserError("No previous launch to restart", "dbg launch <command>");
 		}
 		const command = this.launchCommand;
 		const options = this.launchOptions ?? {};
@@ -864,22 +865,33 @@ export class CdpSession extends BaseSession {
 			.map((p) => formatValue(p.value as RemoteObject));
 	}
 
+	/** The exit pause as the user should see it: at the program's own frame, with the exit code */
+	private async reportExitPause(p: Protocol.Debugger.PausedEvent, cdp: CdpClient): Promise<void> {
+		const code = await ExitStop.exitCode(cdp, p);
+		if (this.cdp !== cdp) return; // Gone meanwhile
+		this.reportPause(p, {
+			reason: code === undefined ? "exit" : `exit code ${code}`,
+			frameIndex: ExitStop.programFrame(p, (id) => this.scriptUrl(id)),
+		});
+	}
+
 	private reportPause(
 		p: Protocol.Debugger.PausedEvent,
-		pause: { reason: string; hitBreakpoints?: string[] },
+		pause: { reason: string; hitBreakpoints?: string[]; frameIndex?: number },
 	): void {
 		if (this.stopRequested !== "entry") this.stopRequested = null;
 		this.pauseCount++;
 		this.state = "paused";
 		const callFrames = p.callFrames;
 		this.pausedCallFrames = callFrames ?? [];
-		const topFrame = callFrames?.[0];
+		const topFrame = callFrames?.[pause.frameIndex ?? 0];
 		const location = topFrame?.location;
 		const scriptId = location?.scriptId;
 		const url = scriptId ? this.scripts.get(scriptId)?.url : undefined;
 		this.pauseInfo = {
 			reason: pause.reason,
 			hitBreakpoints: pause.hitBreakpoints,
+			frameIndex: pause.frameIndex,
 			scriptId,
 			url,
 			line: location?.lineNumber,
@@ -939,7 +951,7 @@ export class CdpSession extends BaseSession {
 			});
 			switch (pause.kind) {
 				case "exit":
-					if (this.exitStop.wanted) this.reportPause(p, { reason: "exit" });
+					if (this.exitStop.wanted) void this.reportExitPause(p, cdp);
 					else void cdp.send("Debugger.resume").catch(() => {});
 					return;
 				case "entry":
@@ -1119,13 +1131,17 @@ export class CdpSession extends BaseSession {
 		}
 		if (!response) {
 			const reason = lastError instanceof Error ? lastError.message : String(lastError);
-			throw new Error(`Cannot connect to inspector at port ${port}: ${reason}`);
+			throw new UserError(
+				`Cannot connect to inspector at port ${port}: ${reason}`,
+				"dbg attach <port> of a process started with --inspect, or dbg launch <command>",
+			);
 		}
 
 		if (response.status === 404) {
 			// Bun's inspector serves no target list; its WebSocket path is whatever the process chose
-			throw new Error(
-				`Inspector at port ${port} lists no targets (Bun does not) -> Try: dbg attach ws://localhost:${port}/<path from BUN_INSPECT or --inspect>`,
+			throw new UserError(
+				`Inspector at port ${port} lists no targets (Bun does not)`,
+				`dbg attach ws://localhost:${port}/<path from BUN_INSPECT or --inspect>`,
 			);
 		}
 		if (!response.ok) {

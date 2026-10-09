@@ -14,7 +14,10 @@ export function describeExitStop(runtime: "node" | "bun"): void {
 					const child = session.childProcess;
 					await session.setExitPause(true);
 					await session.continue({ waitForStop: true, timeoutMs: 10_000, throwOnTimeout: true });
-					expect(session.pauseInfo?.reason).toBe("exit");
+					expect(session.pauseInfo?.reason).toBe("exit code 3");
+					// Shown at the program's own frame, not dbg's listener; the listener's frame still evaluates
+					expect(session.pauseInfo?.url).toContain("exits-with-code.js");
+					expect((await session.buildState()).location?.url).toContain("exits-with-code.js");
 					expect((await session.eval("state.join() + ' ' + code")).value).toBe(
 						'"started,ending 3"',
 					);

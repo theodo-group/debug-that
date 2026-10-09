@@ -33,6 +33,8 @@ export interface PauseInfo {
 	callFrameCount?: number;
 	/** Engine breakpoint ids that caused this pause */
 	hitBreakpoints?: string[];
+	/** The frame the location is of, when not the top one: an exit pause shows the program's frame, not dbg's listener */
+	frameIndex?: number;
 }
 
 export interface StateOptions {

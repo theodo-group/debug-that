@@ -1,5 +1,6 @@
 import type { BreakpointMeta, LogpointMeta } from "../refs/ref-table.ts";
 import type { FunctionBreakpointResult } from "../session/session.ts";
+import { UserError } from "../util/user-error.ts";
 import { asCondition } from "./condition.ts";
 import type { BreakpointBehavior } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
@@ -87,8 +88,9 @@ export class FunctionBreakpoints {
 	async rebind(meta: FunctionMeta): Promise<string> {
 		const target = meta.fnByName ? meta.fn : meta.fnPath;
 		if (!target) {
-			throw new Error(
-				`${meta.fn} was set on an object ref, which does not outlive its pause -> Try: dbg break-fn <path.to.function>`,
+			throw new UserError(
+				`${meta.fn} was set on an object ref, which does not outlive its pause`,
+				`dbg break-fn <path.to.function>`,
 			);
 		}
 		const bound = await this.bind(target, {
@@ -206,8 +208,9 @@ export class FunctionBreakpoints {
 		if (id) return this.keep(id, "call", () => this.removeEngineBreakpoint(id));
 
 		if (isRef(target)) {
-			throw new Error(
-				`${target} is native, and an object ref has no path to wrap it at -> Try: dbg break-fn <path.to.function>`,
+			throw new UserError(
+				`${target} is native, and an object ref has no path to wrap it at`,
+				`dbg break-fn <path.to.function>`,
 			);
 		}
 		const wrapperId = await this.installWrapper(target, options);
@@ -217,8 +220,9 @@ export class FunctionBreakpoints {
 	private async bindByName(pattern: string, behavior: BreakpointBehavior) {
 		const remove = await this.session.dialect.breakOnFunctionName(pattern, behavior);
 		if (!remove) {
-			throw new Error(
-				`Matching functions by name is not supported on ${this.session.runtime} -> Try: dbg break-fn <path.to.function> or dbg break-fn @vN`,
+			throw new UserError(
+				`Matching functions by name is not supported on ${this.session.runtime}`,
+				`dbg break-fn <path.to.function> or dbg break-fn @vN`,
 			);
 		}
 		return this.keep(`name:${crypto.randomUUID()}`, "name", remove);
@@ -234,8 +238,9 @@ export class FunctionBreakpoints {
 		if (isRef(target)) {
 			const objectId = this.session.refs.resolveId(target);
 			if (!objectId) {
-				throw new Error(
-					`Unknown ref ${target} -> Try: dbg vars or dbg eval <expr> to get a fresh ref`,
+				throw new UserError(
+					`Unknown ref ${target}`,
+					`dbg vars or dbg eval <expr> to get a fresh ref`,
 				);
 			}
 			return objectId;
@@ -249,11 +254,12 @@ export class FunctionBreakpoints {
 			wasThrown?: boolean;
 		};
 		if (r.exceptionDetails || r.wasThrown || r.result.type === "undefined") {
-			throw new Error(`${target} is not defined -> Try: ${this.whenUndefined(target)}`);
+			throw new UserError(`${target} is not defined`, `${this.whenUndefined(target)}`);
 		}
 		if (r.result.type !== "function" || !r.result.objectId) {
-			throw new Error(
-				`${target} is ${r.result.description ?? r.result.type}, not a function -> Try: dbg eval '${target}'`,
+			throw new UserError(
+				`${target} is ${r.result.description ?? r.result.type}, not a function`,
+				`dbg eval '${target}'`,
 			);
 		}
 		return r.result.objectId;

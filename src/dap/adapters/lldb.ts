@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { UserError } from "../../util/user-error.ts";
 import { getManagedAdaptersDir } from "../session.ts";
 import type { AdapterInstaller } from "./types.ts";
 
@@ -69,8 +70,9 @@ export const lldbInstaller: AdapterInstaller = {
 			const lldbDapEntry = files.find((f) => f.endsWith("/bin/lldb-dap") || f === "bin/lldb-dap");
 
 			if (!lldbDapEntry) {
-				throw new Error(
-					`Could not find lldb-dap in the LLVM archive (${files.length} entries)\n  -> Try installing manually: brew install llvm`,
+				throw new UserError(
+					`Could not find lldb-dap in the LLVM archive (${files.length} entries)`,
+					"brew install llvm, then dbg launch again",
 				);
 			}
 
@@ -92,8 +94,9 @@ export const lldbInstaller: AdapterInstaller = {
 		await $`chmod +x ${targetPath}`;
 
 		if (!existsSync(targetPath)) {
-			throw new Error(
-				"lldb-dap not found after extraction\n  -> Try installing manually: brew install llvm",
+			throw new UserError(
+				"lldb-dap not found after extraction",
+				"brew install llvm, then dbg launch again",
 			);
 		}
 

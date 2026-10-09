@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { INSPECTOR_TIMEOUT_MS, STDERR_POLL_MS } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
+import { UserError } from "../util/user-error.ts";
 import type { RuntimeName } from "./dialect.ts";
 
 export type InspectedProcess = ReturnType<typeof spawn>["proc"];
@@ -199,8 +200,9 @@ async function untilInspectorOpens<T>(
 		});
 		timer = setTimeout(() => {
 			reject(
-				new Error(
-					`No inspector opened within ${INSPECTOR_TIMEOUT_MS}ms${stderr.excerpt()} -> Try: the same command again, or dbg launch --runtime bun (or node) if dbg assumed the wrong runtime`,
+				new UserError(
+					`No inspector opened within ${INSPECTOR_TIMEOUT_MS}ms${stderr.excerpt()}`,
+					`the same command again, or dbg launch --runtime bun (or node) if dbg assumed the wrong runtime`,
 				),
 			);
 		}, INSPECTOR_TIMEOUT_MS);

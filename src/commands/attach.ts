@@ -22,14 +22,7 @@ defineCommand({
 		const session = ctx.global.session;
 		const target = ctx.positional;
 
-		// Check if daemon already running (PID-aware — stale sockets won't block)
-		if (DaemonClient.isRunning(session)) {
-			console.error(`Session "${session}" is already active`);
-			console.error(`  -> Try: dbg stop --session ${session}`);
-			return 1;
-		}
-
-		// Ensure daemon is running — auto-cleans stale sockets if daemon is dead
+		// A daemon with no live target takes the attach; one with a target says so
 		await ensureDaemon(session, { timeout: ctx.flags.timeout });
 
 		// Send attach command

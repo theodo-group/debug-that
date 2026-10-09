@@ -32,7 +32,7 @@ function positionalUsage(spec: PositionalSpec): string {
 
 /**
  * Generate a compact flag summary line from Zod shape for the main help.
- * e.g. "[--frame @fN] [--silent] [--timeout MS] [--side-effect-free]"
+ * e.g. "[--frame @fN] [--silent] [--timeout SECONDS] [--side-effect-free]"
  */
 function flagSummary(shape: Record<string, z.ZodType>, usage?: string): string {
 	const parts: string[] = [];
@@ -66,7 +66,7 @@ function flagValueHint(key: string, meta?: { description?: string }): string {
 	// Common patterns — order matters: specific checks before generic ones
 	if (desc.includes("seconds")) return "SECONDS";
 	if (desc.includes("timeout") || desc.includes("ms")) return "MS";
-	if (desc.includes("depth")) return "N";
+	if (desc.includes("depth") || desc.includes("characters") || desc.includes("width")) return "N";
 	if (desc.includes("lines") || desc.includes("last n") || desc.includes("since")) return "N";
 	if (desc.includes("hit count") || desc.includes("max times") || desc.includes("port")) return "N";
 	if (desc.includes("frame")) return "@fN";
@@ -121,14 +121,23 @@ export function printHelp(): void {
 		"",
 	];
 
+	const usageOf = (cmd: { name: string; usage?: string; positional: PositionalSpec }) =>
+		cmd.usage ?? `${cmd.name}${positionalUsage(cmd.positional)}`;
+	// Descriptions line up in one column; a usage too long for it pushes its description to the next line
+	const column = 36;
+
 	for (const { category, label } of CATEGORY_ORDER) {
 		const cmds = [...commandDefs.values()].filter((s) => s.category === category);
 		if (cmds.length === 0) continue;
 		lines.push(`${label}:`);
 		for (const cmd of cmds) {
-			const usage = cmd.usage ?? `${cmd.name}${positionalUsage(cmd.positional)}`;
-			const padded = usage.padEnd(34);
-			lines.push(`  ${padded}${cmd.description}`);
+			const usage = usageOf(cmd);
+			if (usage.length > column - 2) {
+				lines.push(`  ${usage}`);
+				lines.push(`  ${"".padEnd(column)}${cmd.description}`);
+			} else {
+				lines.push(`  ${usage.padEnd(column)}${cmd.description}`);
+			}
 
 			// Auto-generate flag summary from Zod schema
 			const shape = cmd.flags.shape;
@@ -197,7 +206,7 @@ INSPECTION:
   dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N]
   dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
   dbg stack [--async-depth N] [--generated] [--filter <keyword>]
-  dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]  (works while running, global scope)
+  dbg eval <expr> [--frame @fN] [--await] [--out <file>] [--silent] [--timeout SECONDS] [--side-effect-free]  (works while running, global scope)
   dbg props @ref [--own] [--depth N] [--private] [--internal]
   dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
   dbg source [file:line[:col]] [--lines N] [--all] [--generated] [--width N]

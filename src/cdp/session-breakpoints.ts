@@ -5,6 +5,7 @@ import type {
 	LogpointMeta,
 } from "../refs/ref-table.ts";
 import type { BreakpointListItem, BreakpointResult } from "../session/session.ts";
+import { NO_SUCH_SCRIPT, STALE_REF, UserError } from "../util/user-error.ts";
 import type { BreakpointBehavior, BreakpointTarget, InspectorDialect } from "./dialect.ts";
 import type { CdpSession } from "./session.ts";
 
@@ -134,7 +135,7 @@ export async function removeBreakpoint(session: CdpSession, ref: string): Promis
 
 	const entry = session.refs.resolve(ref);
 	if (!entry) {
-		throw new Error(`Unknown ref: ${ref}`);
+		throw new UserError(`Unknown ref: ${ref}`, STALE_REF);
 	}
 
 	if (entry.type !== "BP" && entry.type !== "LP") {
@@ -301,7 +302,7 @@ export async function toggleBreakpoint(
 		return { ref, state: "enabled" };
 	}
 
-	throw new Error(`Unknown breakpoint ref: ${ref}`);
+	throw new UserError(`Unknown breakpoint ref: ${ref}`, "dbg break-ls for current refs");
 }
 
 async function reEnableBreakpoint(
@@ -361,7 +362,7 @@ export async function getBreakableLocations(
 
 	const scriptUrl = session.findScriptUrl(file);
 	if (!scriptUrl) {
-		throw new Error(`No loaded script matches "${file}"`);
+		throw new UserError(`No loaded script matches "${file}"`, NO_SUCH_SCRIPT);
 	}
 
 	// Find the scriptId for this URL

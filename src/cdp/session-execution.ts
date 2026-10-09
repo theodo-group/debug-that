@@ -1,5 +1,6 @@
 import type { WaitForStopOptions } from "@/session/base-session.ts";
 import { escapeRegex } from "../util/escape-regex.ts";
+import { NO_SUCH_SCRIPT, UserError, WHILE_RUNNING } from "../util/user-error.ts";
 import { ConnectionClosedError } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 
@@ -8,8 +9,9 @@ export async function continueExecution(
 	options?: WaitForStopOptions,
 ): Promise<void> {
 	if (!session.isPaused()) {
-		throw new Error(
-			"Cannot continue: the process is not paused -> Try: dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
+		throw new UserError(
+			"Cannot continue: the process is not paused",
+			"dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
 		);
 	}
 	if (!session.cdp) {
@@ -31,8 +33,9 @@ export async function stepExecution(
 	options?: WaitForStopOptions,
 ): Promise<void> {
 	if (!session.isPaused()) {
-		throw new Error(
-			"Cannot step: the process is not paused -> Try: dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
+		throw new UserError(
+			"Cannot step: the process is not paused",
+			"dbg continue --wait <seconds> to wait for the next pause, or dbg pause",
 		);
 	}
 	if (!session.cdp) {
@@ -54,7 +57,7 @@ export async function stepExecution(
 
 export async function pauseExecution(session: CdpSession): Promise<void> {
 	if (session.isPaused()) {
-		throw new Error("Cannot pause: process is already paused");
+		throw new UserError("Cannot pause: the process is already paused", "dbg state");
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot pause: no CDP connection");
@@ -71,7 +74,7 @@ export async function runToLocation(
 	line: number,
 ): Promise<void> {
 	if (!session.isPaused()) {
-		throw new Error("Cannot run-to: process is not paused");
+		throw new UserError("Cannot run-to: the process is not paused", WHILE_RUNNING);
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot run-to: no CDP connection");
@@ -85,7 +88,7 @@ export async function runToLocation(
 	// Find the script URL matching the given file (by suffix)
 	const scriptUrl = session.findScriptUrl(actualFile);
 	if (!scriptUrl) {
-		throw new Error(`Cannot run-to: no loaded script matches "${file}"`);
+		throw new UserError(`Cannot run-to: no loaded script matches "${file}"`, NO_SUCH_SCRIPT);
 	}
 
 	// Set a temporary breakpoint (CDP lines are 0-based)
@@ -116,7 +119,7 @@ export async function restartFrameExecution(
 	frameRef?: string,
 ): Promise<{ status: string }> {
 	if (!session.isPaused()) {
-		throw new Error("Cannot restart frame: process is not paused");
+		throw new UserError("Cannot restart frame: the process is not paused", WHILE_RUNNING);
 	}
 	if (!session.cdp) {
 		throw new Error("Cannot restart frame: no CDP connection");
@@ -126,7 +129,7 @@ export async function restartFrameExecution(
 	if (frameRef) {
 		const entry = session.refs.resolve(frameRef);
 		if (!entry) {
-			throw new Error(`Unknown frame ref: ${frameRef}`);
+			throw new UserError(`Unknown frame ref: ${frameRef}`, "dbg stack for current frame refs");
 		}
 		if (entry.pending) {
 			throw new Error(`Frame ref ${frameRef} is a pending breakpoint, not a frame`);

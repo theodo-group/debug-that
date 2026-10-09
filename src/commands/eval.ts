@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineCommand } from "../cli/command.ts";
+import { secondsFlag } from "../cli/parse-flag.ts";
 import { daemonRequest } from "../daemon/client.ts";
 
 defineCommand({
@@ -9,7 +10,7 @@ defineCommand({
 	positional: { kind: "joined", name: "expression", required: true },
 	flags: z.object({
 		frame: z.string().optional().meta({ description: "Stack frame ref (@fN)" }),
-		timeout: z.coerce.number().optional().meta({ description: "Timeout in ms" }),
+		timeout: secondsFlag("Seconds before the evaluation is given up"),
 		silent: z.boolean().optional().meta({ description: "Suppress output" }),
 		"side-effect-free": z.boolean().optional().meta({ description: "Abort if side effects" }),
 		await: z.boolean().optional().meta({ description: "Await promise result" }),
@@ -24,7 +25,7 @@ defineCommand({
 			expression,
 			frame: ctx.flags.frame,
 			throwOnSideEffect: ctx.flags["side-effect-free"] || undefined,
-			timeout: ctx.flags.timeout,
+			timeout: ctx.flags.timeout === undefined ? undefined : ctx.flags.timeout * 1000,
 			awaitPromise: ctx.flags.await || undefined,
 			full: ctx.flags.out ? true : undefined,
 		});

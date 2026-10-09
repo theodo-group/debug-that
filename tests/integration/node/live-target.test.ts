@@ -75,9 +75,11 @@ describe("Function breakpoints (Node.js)", () => {
 
 	test("a path that is not defined yet fails and says what to do instead", () =>
 		withRunning("node-fnbp-undefined", async (session) => {
-			await expect(session.setFunctionBreakpoint("later.fn")).rejects.toThrow(
-				"later.fn is not defined -> Try: dbg break <file>:<line>",
-			);
+			const failure = session.setFunctionBreakpoint("later.fn");
+			await expect(failure).rejects.toThrow("later.fn is not defined");
+			await expect(failure).rejects.toMatchObject({
+				next: expect.stringContaining("dbg break <file>:<line>"),
+			});
 		}));
 
 	test("hit count: pauses from the Nth call", () =>

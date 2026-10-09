@@ -135,7 +135,7 @@ describe("CdpSession integration", () => {
 			await session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], { brk: true });
 			await expect(
 				session.launch(["node", "-e", "setTimeout(() => {}, 30000)"], { brk: true }),
-			).rejects.toThrow("already has an active");
+			).rejects.toThrow("already has a live target");
 		}));
 
 	test("CDP connection is functional after launch", () =>

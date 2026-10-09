@@ -15,6 +15,7 @@ import type {
 	SourceOptions,
 } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
+import { UserError } from "../util/user-error.ts";
 import { DapClient } from "./client.ts";
 import { type CanonicalRuntime, getRuntimeConfig, resolveRuntime } from "./runtimes/index.ts";
 import type { DapConnectPlan, DapRuntimeConfig } from "./runtimes/types.ts";
@@ -485,8 +486,9 @@ export class DapSession extends BaseSession {
 	): Promise<{ ref: string }> {
 		this.requireConnected();
 		if (options?.log !== undefined) {
-			throw new Error(
-				"Function logpoints are only supported on JavaScript targets -> Try: break-fn <name> then continue, or a file logpoint",
+			throw new UserError(
+				"Function logpoints are only supported on JavaScript targets",
+				"break-fn <name> then continue, or a file logpoint",
 			);
 		}
 
@@ -1090,8 +1092,9 @@ export class DapSession extends BaseSession {
 	}
 
 	async attachSourceMap(): Promise<void> {
-		throw new Error(
-			"Source maps apply to Node.js and Bun sessions; this adapter maps sources itself -> Try: dbg path-map-add to redirect source paths",
+		throw new UserError(
+			"Source maps apply to Node.js and Bun sessions; this adapter maps sources itself",
+			"dbg path-map-add to redirect source paths",
 		);
 	}
 

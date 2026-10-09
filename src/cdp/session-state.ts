@@ -28,8 +28,8 @@ export async function buildState(
 		reason: session.pauseInfo.reason,
 	};
 
-	// Determine which frame to inspect
-	let frameIndex = 0;
+	// The frame to inspect: asked for, else the one the pause points at
+	let frameIndex = session.pauseInfo.frameIndex ?? 0;
 	if (options.frame) {
 		const entry = session.refs.resolve(options.frame);
 		if (entry?.type === "f" && entry.meta?.frameIndex !== undefined) {

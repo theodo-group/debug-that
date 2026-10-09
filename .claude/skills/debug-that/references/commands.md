@@ -77,7 +77,7 @@ dbg eval "bigObject" --out o.json   # Whole value to a file (strings as is, obje
 dbg eval --frame @f1 "this"         # Evaluate in different frame
 dbg eval --silent "setup()"         # No output (side effects only)
 dbg eval --side-effect-free "x + 1" # Abort if side effects detected
-dbg eval --timeout 5000 "slowFn()"  # Custom timeout in ms
+dbg eval --timeout 5 "slowFn()"     # Give up after 5 seconds
 ```
 
 ### props -- expand object

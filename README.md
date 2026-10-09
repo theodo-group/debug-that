@@ -149,7 +149,7 @@ Inspection:
   stack [--async-depth N]          Show call stack
     [--generated] [--filter <keyword>]
   eval <expression>                Evaluate expression
-    [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]
+    [--frame @fN] [--silent] [--timeout SECONDS] [--side-effect-free]
   props <@ref>                     Expand object properties
     [--own] [--depth N] [--private] [--internal]
   source [--lines N]               Show source code
@@ -207,6 +207,14 @@ Global flags:
 ```
 
 </details>
+
+## What dbg puts in the debugged process
+
+Nothing, for most of a session: breakpoints, stepping and inspection go through the inspector protocol. Three features evaluate code in the process, and say so in their output:
+
+- `catch exit` installs a `process.on("exit")` listener that pauses as the program exits. Bun gets it on every connection, because Bun drops inspector messages still queued when it exits, and the pause flushes them: without it, the last lines a program logs before exiting never reach `dbg console`.
+- `break-fn` on a native function (`JSON.parse`) wraps it in place, since the engine cannot pause inside a native. The wrapper is removed with the breakpoint or when dbg disconnects; `break-ls` notes it.
+- Logpoints on Bun route their values through a no-op function on `globalThis`, so that they never print into the program's own output.
 
 ## Architecture
 

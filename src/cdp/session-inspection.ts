@@ -3,6 +3,7 @@ import type { RemoteObject } from "../formatter/values.ts";
 import { formatValue } from "../formatter/values.ts";
 import { windowAround } from "../formatter/window.ts";
 import type { EvalResult, SourceOptions } from "../session/session.ts";
+import { NO_SUCH_SCRIPT, STALE_REF, UserError, WHILE_RUNNING } from "../util/user-error.ts";
 import type { CdpClient } from "./client.ts";
 import type { CdpSession } from "./session.ts";
 import { type SourceWindow, sourceWindow } from "./source-view.ts";
@@ -114,8 +115,9 @@ async function settle(
 	const value = slot("[[PromiseResult]]", "result") ?? { type: "undefined" as const };
 	if (state === "fulfilled") return { result: value };
 	if (state === "rejected") return { result: value, wasThrown: true };
-	throw new Error(
-		"The promise is pending, and promises only settle while the program runs -> Try: dbg continue --wait <seconds>, then eval it again",
+	throw new UserError(
+		"The promise is pending, and promises only settle while the program runs",
+		"dbg continue --wait <seconds>, then eval it again",
 	);
 }
 
@@ -195,7 +197,7 @@ export async function getVars(
 		throw new Error("No active debug session");
 	}
 	if (session.sessionState !== "paused") {
-		throw new Error("Cannot get vars: process is not paused");
+		throw new UserError("Cannot get vars: the process is not paused", WHILE_RUNNING);
 	}
 
 	// Clear volatile refs at the start
@@ -308,7 +310,7 @@ export async function getProps(
 
 	const entry = session.refs.resolve(ref);
 	if (!entry) {
-		throw new Error(`Unknown ref: ${ref}`);
+		throw new UserError(`Unknown ref: ${ref}`, STALE_REF);
 	}
 
 	if (entry.pending) {
@@ -460,17 +462,18 @@ export async function getSource(
 		} else {
 			if (options.at) generated = true;
 			const url = session.findScriptUrl(options.file);
-			if (!url) throw new Error(`No loaded script matches "${options.file}"`);
+			if (!url) throw new UserError(`No loaded script matches "${options.file}"`, NO_SUCH_SCRIPT);
 			scriptId = session.findScriptIdByUrl(url);
 		}
 	} else {
 		if (!paused?.scriptId) {
-			throw new Error(
-				"Not paused, so no current source -> Try: dbg source <file>:<line>[:<column>]",
+			throw new UserError(
+				"Not paused, so no current source",
+				"dbg source <file>:<line>[:<column>]",
 			);
 		}
 		if (options.at)
-			throw new Error("A position needs its file -> Try: dbg source <file>:<line>[:<column>]");
+			throw new UserError("A position needs its file", "dbg source <file>:<line>[:<column>]");
 		scriptId = paused.scriptId;
 	}
 	if (!scriptId) {
@@ -525,7 +528,7 @@ export function getStack(
 	isAsync?: boolean;
 }> {
 	if (session.sessionState !== "paused" || !session.cdp) {
-		throw new Error("Not paused");
+		throw new UserError("Not paused", WHILE_RUNNING);
 	}
 
 	// Clear volatile refs so frame refs are fresh

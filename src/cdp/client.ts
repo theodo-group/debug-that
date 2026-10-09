@@ -1,6 +1,7 @@
 import type { ProtocolMapping } from "devtools-protocol/types/protocol-mapping.js";
 import { CONNECT_ATTEMPTS, CONNECT_SILENCE_MS, REQUEST_TIMEOUT_MS } from "../constants.ts";
 import type { Logger } from "../logger/index.ts";
+import { UserError } from "../util/user-error.ts";
 import type { CdpEvent, CdpRequest, CdpResponse } from "./types.ts";
 
 type CdpCommand = keyof ProtocolMapping.Commands;
@@ -56,8 +57,9 @@ export class CdpClient {
 			if (ws) return new CdpClient(ws, logger);
 			logger?.warn("connect.silent", { url: wsUrl, attempt });
 			if (attempt === CONNECT_ATTEMPTS) {
-				throw new Error(
-					`The inspector at ${wsUrl} did not answer ${attempt} connections -> Try: the same command again`,
+				throw new UserError(
+					`The inspector at ${wsUrl} did not answer ${attempt} connections`,
+					`the same command again`,
 				);
 			}
 		}
