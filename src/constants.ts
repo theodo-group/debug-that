@@ -17,14 +17,21 @@ export const INSPECTOR_TIMEOUT_MS = 20_000;
 /**
  * How long a connecting inspector socket may stay silent before dbg drops
  * it and opens another. An inspector answers an upgrade within milliseconds.
- * On macOS Bun 1.4 now and then leaves a fresh socket without any event
- * from the loop under heavy launch/exit churn, while a new one opens at once.
+ * Works around Bun 1.4.0 on macOS (seen 2026-10): under heavy launch/exit
+ * churn it now and then leaves a fresh socket without any event from the
+ * loop, while a new one opens at once. Remove, with CONNECT_ATTEMPTS and the
+ * retry in CdpClient.connect, once a Bun without it is the oldest supported.
  */
 export const CONNECT_SILENCE_MS = 1_000;
 /** Connect attempts before giving up on an inspector that never answers */
 export const CONNECT_ATTEMPTS = 3;
 
-/** How often a launcher reads a child's stderr file while waiting for Node's inspector URL */
+/**
+ * How often a launcher reads a child's stderr file while waiting for Node's
+ * inspector URL. A pipe would need no polling, but on Bun 1.4.0 (macOS, seen
+ * 2026-10) a fresh pipe now and then stays deaf under heavy launch/exit
+ * churn; see spawn() in the launcher. Go back to a pipe once that Bun is gone.
+ */
 export const STDERR_POLL_MS = 10;
 
 /** Time to wait for the daemon socket file to appear after spawning the daemon process. */

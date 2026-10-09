@@ -1,9 +1,9 @@
-import type { BreakpointMeta, LogpointMeta } from "../refs/ref-table.ts";
+import type { BreakpointMeta, LogpointMeta, RefTable } from "../refs/ref-table.ts";
 import type { FunctionBreakpointResult } from "../session/session.ts";
 import { UserError } from "../util/user-error.ts";
+import type { CdpClient } from "./client.ts";
 import { asCondition } from "./condition.ts";
-import type { BreakpointBehavior } from "./dialect.ts";
-import type { CdpSession } from "./session.ts";
+import type { BreakpointBehavior, InspectorDialect, RuntimeName } from "./dialect.ts";
 
 /**
  * Breakpoints on function calls. A target is a path from the global scope
@@ -47,12 +47,21 @@ const NOTES: Record<Mechanism, string | undefined> = {
 	name: "any function whose name matches",
 };
 
+/** What function breakpoints need from the session */
+export interface FunctionBreakpointHost {
+	readonly cdp: CdpClient | null;
+	/** Fails when nothing is connected */
+	readonly dialect: InspectorDialect;
+	readonly refs: RefTable;
+	readonly runtime: RuntimeName | "unknown";
+}
+
 export class FunctionBreakpoints {
 	private readonly bindings = new Map<string, Binding>();
 	/** The target being bound, whose first pause can come before its entry is recorded */
 	private inFlight: { label: string; byName: boolean } | null = null;
 
-	constructor(private readonly session: CdpSession) {}
+	constructor(private readonly session: FunctionBreakpointHost) {}
 
 	async set(
 		target: string,
