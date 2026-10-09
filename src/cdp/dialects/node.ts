@@ -21,6 +21,8 @@ export class NodeDialect implements InspectorDialect {
 	readonly dropsMessagesAtExit = false;
 
 	private beforeScriptsBreakpoint: string | null = null;
+	/** The program's own context, among those V8 reports */
+	private defaultContextId: number | null = null;
 
 	constructor(private readonly cdp: CdpClient) {}
 
@@ -46,6 +48,16 @@ export class NodeDialect implements InspectorDialect {
 		});
 		// The program ended and only the connection keeps it alive (see letEndedProgramsExit)
 		this.cdp.on("NodeRuntime.waitingForDisconnect", () => events.programEnded());
+		// V8 reports every context, those of vm.createContext too (Jest makes one
+		// per test file and drops it after); only the main one going is the program's
+		this.cdp.on("Runtime.executionContextCreated", (p) => {
+			if (p.context.auxData?.isDefault === true) this.defaultContextId = p.context.id;
+		});
+		this.cdp.on("Runtime.executionContextDestroyed", (p) => {
+			if (this.defaultContextId === null || p.executionContextId === this.defaultContextId) {
+				events.contextDestroyed();
+			}
+		});
 	}
 
 	async connect(

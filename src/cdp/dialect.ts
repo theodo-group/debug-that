@@ -75,7 +75,7 @@ export interface TargetEvents {
 	exception(details: Protocol.Runtime.ExceptionDetails): void;
 	/** The program ran to its end; only the connection keeps the process alive */
 	programEnded(): void;
-	/** A JavaScript context went away */
+	/** The program's main context went away: its top-level code is done, though the process may live on */
 	contextDestroyed(): void;
 }
 

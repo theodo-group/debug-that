@@ -63,6 +63,8 @@ export class BunDialect implements InspectorDialect {
 			});
 		});
 		this.jsc.on("Debugger.didSampleProbe", ({ sample }) => events.logSample(sample.payload));
+		// Bun has one context; its socket closing is what usually ends a session
+		this.cdp.on("Runtime.executionContextDestroyed", () => events.contextDestroyed());
 	}
 
 	async connect(
