@@ -5,7 +5,7 @@ import { daemonRequest } from "../daemon/client.ts";
 import { detectLanguage, shouldEnableColor } from "../formatter/color.ts";
 import { shortPath } from "../formatter/path.ts";
 import type { SourceLine } from "../formatter/source.ts";
-import { formatSource } from "../formatter/source.ts";
+import { cutHint, formatSource } from "../formatter/source.ts";
 
 defineCommand({
 	name: "source",
@@ -26,7 +26,6 @@ defineCommand({
 			.number()
 			.optional()
 			.meta({ description: "Characters shown around the current column" }),
-		reflow: z.boolean().optional().meta({ description: "One statement per line (minified code)" }),
 	}),
 	handler: async (ctx) => {
 		let file = ctx.flags.file;
@@ -68,9 +67,10 @@ defineCommand({
 				color,
 				language: detectLanguage(data.url),
 				width: ctx.flags.width,
-				reflow: ctx.flags.reflow,
 			}),
 		);
+		const hint = cutHint(sourceLines, data.url, ctx.flags.width);
+		if (hint) console.log(hint);
 
 		return 0;
 	},

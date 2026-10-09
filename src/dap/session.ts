@@ -11,7 +11,7 @@ import { BaseSession, type WaitForStopOptions } from "../session/base-session.ts
 import type {
 	PendingConfig,
 	SessionFeatures,
-	SourceMapInfo,
+	SourceMapReport,
 	SourceOptions,
 } from "../session/session.ts";
 import type { LaunchResult, SessionStatus, StateOptions, StateSnapshot } from "../session/types.ts";
@@ -1081,13 +1081,25 @@ export class DapSession extends BaseSession {
 		throw new Error("Restart is not yet supported in DAP mode. Use stop + launch.");
 	}
 
-	getSourceMapInfos(): SourceMapInfo[] {
-		return []; // DAP adapters handle source maps internally
+	sourceMapReport(): SourceMapReport {
+		return { maps: [] }; // DAP adapters handle source maps internally
 	}
 
 	disableSourceMaps(): void {
 		// No-op for DAP — adapters handle source maps internally
 	}
+
+	async attachSourceMap(): Promise<void> {
+		throw new Error(
+			"Source maps apply to Node.js and Bun sessions; this adapter maps sources itself -> Try: dbg path-map-add to redirect source paths",
+		);
+	}
+
+	async prettyPrintScript(): Promise<void> {
+		throw new Error("Pretty-printing applies to Node.js and Bun sessions");
+	}
+
+	async refreshSourceMaps(): Promise<void> {}
 
 	// ── Private helpers ───────────────────────────────────────────────
 

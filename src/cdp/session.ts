@@ -10,7 +10,7 @@ import type {
 	EvalResult,
 	FunctionBreakpointResult,
 	SessionFeatures,
-	SourceMapInfo,
+	SourceMapReport,
 	SourceOptions,
 	SourceResult,
 } from "../session/session.ts";
@@ -98,7 +98,7 @@ import {
 
 export class CdpSession extends BaseSession {
 	cdp: CdpClient | null = null;
-	readonly sourceMapResolver: SourceMapResolver = new SourceMapResolver();
+	readonly sourceMapResolver = new SourceMapResolver((scriptId) => this.scriptSource(scriptId));
 	childProcess: InspectedProcess | null = null;
 	pausedCallFrames: Protocol.Debugger.CallFrame[] = [];
 	scripts: Map<string, ScriptInfo> = new Map();
@@ -157,20 +157,77 @@ export class CdpSession extends BaseSession {
 		exitPause: true,
 	};
 
-	getSourceMapInfos(file?: string): SourceMapInfo[] {
-		if (file) {
-			const match = this.sourceMapResolver.findScriptForSource(file);
-			if (match) {
-				const info = this.sourceMapResolver.getInfo(match.scriptId);
-				return info ? [info] : [];
-			}
-			return [];
-		}
-		return this.sourceMapResolver.getAllInfos();
+	/** Every map, or the one of the script `file` names, as a source or as the script itself */
+	sourceMapReport(file?: string): SourceMapReport {
+		if (!file) return { maps: this.sourceMapResolver.getAllInfos() };
+		const scriptId =
+			this.sourceMapResolver.findScriptForSource(file)?.scriptId ?? this.scriptIdOf(file);
+		const info = scriptId ? this.sourceMapResolver.getInfo(scriptId) : null;
+		return { maps: info ? [info] : [] };
 	}
 
 	disableSourceMaps(): void {
 		this.sourceMapResolver.setDisabled(true);
+	}
+
+	/**
+	 * Pairs the map file with the script `file` names, for this run and after
+	 * a restart; the file is read again as it changes. Binds the breakpoints
+	 * that waited for the map to name their file.
+	 */
+	async attachSourceMap(file: string, mapPath: string): Promise<void> {
+		const url = this.scriptUrlOf(file);
+		await this.rebindAfterMapChange(await this.sourceMapResolver.attachFile(url, mapPath));
+	}
+
+	/**
+	 * Shows the script `file` names formatted from now on, as its original
+	 * source `<name>.pretty.<ext>`: positions translate to it and breakpoints
+	 * set in it translate back.
+	 */
+	async prettyPrintScript(file: string): Promise<void> {
+		const url = this.scriptUrlOf(file);
+		await this.rebindAfterMapChange(await this.sourceMapResolver.prettyPrint(url));
+	}
+
+	/** Picks up the paired map files written since the last command */
+	async refreshSourceMaps(): Promise<void> {
+		await this.rebindAfterMapChange(this.sourceMapResolver.refresh());
+	}
+
+	private scriptUrlOf(file: string): string {
+		const url = this.findScriptUrl(file);
+		if (!url) throw new Error(`No loaded script matches ${file} -> Try: dbg scripts to list them`);
+		return url;
+	}
+
+	private scriptIdOf(file: string): string | undefined {
+		const url = this.findScriptUrl(file);
+		return url ? this.findScriptIdByUrl(url) : undefined;
+	}
+
+	private async rebindAfterMapChange(scriptIds: string[]): Promise<void> {
+		for (const scriptId of scriptIds) {
+			const url = this.scripts.get(scriptId)?.url;
+			if (!url) continue;
+			this.logSourceMap(scriptId, url, true);
+			await this.rebindPendingBreakpoints(scriptId, url);
+		}
+	}
+
+	private logSourceMap(scriptId: string, url: string, loaded: boolean): void {
+		if (!loaded) return;
+		this.log.info("sourcemap.loaded", {
+			file: url,
+			map: this.sourceMapResolver.getInfo(scriptId)?.mapUrl ?? "",
+		});
+	}
+
+	/** The text of a script as the engine holds it */
+	async scriptSource(scriptId: string): Promise<string> {
+		if (!this.cdp) throw new Error("No active debug session");
+		const { scriptSource } = await this.cdp.send("Debugger.getScriptSource", { scriptId });
+		return scriptSource;
 	}
 
 	/** Runtime forced via --runtime; skips probing on attach */
@@ -912,7 +969,7 @@ export class CdpSession extends BaseSession {
 			const resolved = this.resolveToRuntime(meta.url, meta.line, (column ?? 1) - 1);
 			const compiledLine = resolved?.runtime.line ?? meta.line;
 			const compiledColumn =
-				column === undefined ? undefined : (resolved?.runtime.column ?? column - 1);
+				resolved?.runtime.column ?? (column === undefined ? undefined : column - 1);
 
 			try {
 				const r = await this.dialect.setBreakpoint(
@@ -1057,35 +1114,28 @@ export class CdpSession extends BaseSession {
 					// JSC reports a //# sourceURL apart from the url, which is empty for evaluated code
 					url: p.url || ((p as { sourceURL?: string }).sourceURL ?? ""),
 				};
-				const sourceMapURL = p.sourceMapURL;
-				if (sourceMapURL) {
-					info.sourceMapURL = sourceMapURL;
+				if (p.sourceMapURL) {
+					info.sourceMapURL = p.sourceMapURL;
 				}
 				// Register the script BEFORE rebinding so findScriptUrl() works
 				this.scripts.set(scriptId, info);
 
-				if (sourceMapURL) {
-					// Load source map, then rebind pending breakpoints.
-					// Tracked in _pendingRebinds so waitForState() can drain them.
-					const rebindPromise = this.sourceMapResolver
-						.loadSourceMap(scriptId, info.url, sourceMapURL)
-						.then(() => {
-							if (p.url) return this.rebindPendingBreakpoints(scriptId, p.url);
-						})
-						.catch((err) => {
-							this.log.debug("sourcemap.load.failed", {
-								file: info.url,
-								reason: err instanceof Error ? err.message : String(err),
-							});
+				// Load the source map, then bind the breakpoints waiting for the
+				// script. Tracked in _pendingRebinds so waitForState() can drain them.
+				const rebindPromise = this.sourceMapResolver
+					.loadSourceMap(scriptId, info.url, p.sourceMapURL)
+					.then((loaded) => {
+						this.logSourceMap(scriptId, info.url, loaded);
+						if (p.url) return this.rebindPendingBreakpoints(scriptId, p.url);
+					})
+					.catch((err) => {
+						this.log.debug("sourcemap.load.failed", {
+							file: info.url,
+							reason: err instanceof Error ? err.message : String(err),
 						});
-					this._pendingRebinds.add(rebindPromise);
-					rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
-				} else if (p.url) {
-					// No source map — rebind immediately
-					const rebindPromise = this.rebindPendingBreakpoints(scriptId, p.url);
-					this._pendingRebinds.add(rebindPromise);
-					rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
-				}
+					});
+				this._pendingRebinds.add(rebindPromise);
+				rebindPromise.finally(() => this._pendingRebinds.delete(rebindPromise));
 			}
 		});
 

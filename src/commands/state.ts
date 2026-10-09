@@ -25,7 +25,6 @@ defineCommand({
 			.number()
 			.optional()
 			.meta({ description: "Characters shown around the current column" }),
-		reflow: z.boolean().optional().meta({ description: "One statement per line (minified code)" }),
 	}),
 	handler: async (ctx) => {
 		const stateArgs: Record<string, unknown> = {};
@@ -53,7 +52,6 @@ defineCommand({
 			color: shouldEnableColor(ctx.global.color),
 			verbose: ctx.global.verbose,
 			width: ctx.flags.width,
-			reflow: ctx.flags.reflow,
 		});
 
 		return 0;

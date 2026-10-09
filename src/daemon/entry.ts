@@ -70,6 +70,8 @@ function resetConfig() {
 }
 
 server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
+	// A command sees the source maps as they are on disk now, not at the last one
+	if (activeSession) await activeSession.refreshSourceMaps();
 	switch (req.cmd) {
 		case "ping":
 			return { ok: true, data: "pong" };
@@ -367,8 +369,17 @@ server.onRequest(async (req: DaemonRequest): Promise<DaemonResponse> => {
 		case "sourcemap": {
 			const session = requireSession();
 			if (isError(session)) return session;
-			const { file: smFile } = req.args;
-			return { ok: true, data: session.getSourceMapInfos(smFile) };
+			const { file: smFile, map: smMap, pretty: smPretty } = req.args;
+			if ((smMap || smPretty) && !smFile) {
+				return {
+					ok: false,
+					error: "Name the script to pair",
+					suggestion: "dbg sourcemap <script> --map <file>, or dbg sourcemap <script> --pretty",
+				};
+			}
+			if (smFile && smMap) await session.attachSourceMap(smFile, smMap);
+			if (smFile && smPretty) await session.prettyPrintScript(smFile);
+			return { ok: true, data: session.sourceMapReport(smFile) };
 		}
 
 		case "sourcemap-disable": {

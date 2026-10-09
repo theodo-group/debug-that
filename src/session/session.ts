@@ -172,6 +172,10 @@ export interface SourceMapInfo {
 	hasSourcesContent: boolean;
 }
 
+export interface SourceMapReport {
+	maps: SourceMapInfo[];
+}
+
 // ── Pending config ──────────────────────────────────────────────────
 // Config accumulated before a session is connected (e.g. remaps set before launch).
 // Each session type picks what it understands and ignores the rest.
@@ -188,9 +192,15 @@ export type ExceptionPauseMode = "all" | "uncaught" | "caught" | "none";
 export interface Session {
 	readonly features: SessionFeatures;
 
-	// ── Source map diagnostics ─────────────────────────────────────
-	getSourceMapInfos(file?: string): SourceMapInfo[];
+	// ── Source maps ────────────────────────────────────────────────
+	sourceMapReport(file?: string): SourceMapReport;
 	disableSourceMaps(): void;
+	/** Pairs the script `file` names with a map file, read again as it changes */
+	attachSourceMap(file: string, mapPath: string): Promise<void>;
+	/** Shows the script `file` names formatted from now on, positions translated */
+	prettyPrintScript(file: string): Promise<void>;
+	/** Picks up the paired map files written since the last command */
+	refreshSourceMaps(): Promise<void>;
 
 	// ── Lifecycle ──────────────────────────────────────────────────
 	launch(command: string[], options?: { brk?: boolean; port?: number }): Promise<LaunchResult>;

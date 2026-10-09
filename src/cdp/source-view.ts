@@ -111,9 +111,8 @@ async function scriptView(
 	scriptId: string,
 	position: ScriptPosition | null,
 ): Promise<SourceView> {
-	if (!session.cdp) throw new Error("No active debug session");
-	const { scriptSource } = await session.cdp.send("Debugger.getScriptSource", { scriptId });
-	const view: SourceView = { url: session.scripts.get(scriptId)?.url ?? "", text: scriptSource };
+	const text = await session.scriptSource(scriptId);
+	const view: SourceView = { url: session.scripts.get(scriptId)?.url ?? "", text };
 	if (position) {
 		view.position = { line: position.line };
 		if (position.column !== undefined) view.position.column = position.column + 1;

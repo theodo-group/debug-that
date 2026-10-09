@@ -70,7 +70,7 @@ describe("Source map integration", () => {
 
 	test("source map info is available via session", () =>
 		withPausedSession("test-sm-info", "tests/fixtures/ts/dist/app.js", async (session) => {
-			const infos = session.getSourceMapInfos();
+			const infos = session.sourceMapReport().maps;
 			const appInfo = infos.find((i) => i.generatedUrl.includes("app.js"));
 			expect(appInfo).toBeDefined();
 			expect(appInfo?.sources.some((s) => s.includes("app.ts"))).toBe(true);

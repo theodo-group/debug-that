@@ -516,17 +516,6 @@ describe("formatSource", () => {
 		expect(text?.length).toBeLessThan(60);
 		expect(text?.[caret?.indexOf("^") ?? -1]).toBe("H");
 	});
-
-	test("reflow prints one statement per line under one line number", () => {
-		const lines: SourceLine[] = [
-			{ lineNumber: 7, content: "a();b();if(c){d()}", isCurrent: true, currentColumn: 15 },
-		];
-		const out = formatSource(lines, { reflow: true }).split("\n");
-		expect(out[0]).toContain("7\u2502a();");
-		expect(out.filter((l) => l.includes("7\u2502"))).toHaveLength(1);
-		const caretRow = out.findIndex((l) => l.trim() === "^");
-		expect(out[caretRow - 1]).toContain("d()");
-	});
 });
 
 // =============================================================================

@@ -1,33 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { reflow } from "../../src/formatter/reflow.ts";
 import { windowAround } from "../../src/formatter/window.ts";
-
-describe("reflow", () => {
-	test("one statement per line with brace indentation", () => {
-		const { lines } = reflow('function a(x){if(x){return "a;b"}else{y=1;z=2}}');
-		expect(lines).toEqual([
-			"function a(x){",
-			"  if(x){",
-			'    return "a;b"',
-			"  }else{",
-			"    y=1;",
-			"    z=2",
-			"  }",
-			"}",
-		]);
-	});
-
-	test("keeps for(;;) headers and template literals whole", () => {
-		const { lines } = reflow("for(let i=0;i<3;i++){t+=`x;}y`}");
-		expect(lines).toEqual(["for(let i=0;i<3;i++){", "  t+=`x;}y`", "}"]);
-	});
-
-	test("tracks where a caret offset lands", () => {
-		const text = "a();b();if(c){d()}";
-		const { lines, caret } = reflow(text, text.indexOf("d()"));
-		expect(lines[caret?.line ?? -1]?.slice(caret?.column)).toBe("d()");
-	});
-});
 
 describe("windowAround", () => {
 	test("returns short lines untouched", () => {

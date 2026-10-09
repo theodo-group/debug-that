@@ -8,7 +8,7 @@ import type {
 	PropEntry,
 	ScriptEntry,
 	SetVarResult,
-	SourceMapInfo,
+	SourceMapReport,
 	SourceResult,
 	StackFrameEntry,
 	ToggleResult,
@@ -68,7 +68,7 @@ export interface ResponseDataMap {
 	"break-toggle": ToggleResult;
 	breakable: BreakableLocation[];
 	"restart-frame": { status: string };
-	sourcemap: SourceMapInfo[];
+	sourcemap: SourceMapReport;
 	"sourcemap-disable": string;
 	restart: LaunchResult;
 	modules: ModuleEntry[];

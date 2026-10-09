@@ -185,6 +185,8 @@ Blackboxing:
 
 Source Maps:
   sourcemap [file]                 Show source map info
+  sourcemap <script> --pretty      Show the script formatted; positions and breakpoints translate
+  sourcemap <script> --map <file>  Pair the script with a map file, re-read as it changes
   sourcemap --disable              Disable resolution globally
 
 Setup:

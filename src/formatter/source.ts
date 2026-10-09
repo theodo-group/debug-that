@@ -1,6 +1,6 @@
+import { basename } from "node:path";
 import { MAX_SOURCE_LINE_WIDTH } from "../constants.ts";
 import { colorize, highlightLine, type Language } from "./color.ts";
-import { reflow } from "./reflow.ts";
 import { windowAround } from "./window.ts";
 
 export interface SourceLine {
@@ -16,8 +16,21 @@ export interface FormatSourceOptions {
 	language?: Language;
 	/** Characters shown per line, centered on the current column */
 	width?: number;
-	/** Break each shown window into one statement per line */
-	reflow?: boolean;
+}
+
+/**
+ * What to tell a reader whose lines were cut to the width: the script is
+ * minified, and dbg can show it formatted. Nothing for a script already
+ * pretty-printed, where a long line is one expression.
+ */
+export function cutHint(
+	lines: SourceLine[],
+	url: string,
+	width = MAX_SOURCE_LINE_WIDTH,
+): string | null {
+	if (/\.pretty\.\w+$/.test(url) || !lines.some((l) => l.content.length > width)) return null;
+	const script = basename(url.replace(/^file:\/\//, ""));
+	return `(lines cut to ${width} characters -> dbg sourcemap ${script} --pretty shows the script formatted)`;
 }
 
 export function formatSource(lines: SourceLine[], opts?: FormatSourceOptions): string {
@@ -37,10 +50,7 @@ export function formatSource(lines: SourceLine[], opts?: FormatSourceOptions): s
 		const column =
 			line.isCurrent && line.currentColumn !== undefined ? line.currentColumn - 1 : undefined;
 		const window = windowAround(line.content, column, width);
-		const body = opts?.reflow
-			? reflow(window.text, window.caretOffset)
-			: { lines: [window.text], caret: toCaret(window.caretOffset) };
-		if (body.lines.length === 0) body.lines.push("");
+		const body = { lines: [window.text], caret: toCaret(window.caretOffset) };
 
 		body.lines.forEach((text, i) => {
 			const gutter = i === 0 ? firstGutter(line, numWidth, cc) : continuationGutter;

@@ -12,7 +12,7 @@ import type {
 	Session,
 	SessionFeatures,
 	SetVarResult,
-	SourceMapInfo,
+	SourceMapReport,
 	SourceResult,
 	StackFrameEntry,
 	ToggleResult,
@@ -52,9 +52,12 @@ export abstract class BaseSession implements Session {
 
 	abstract readonly features: SessionFeatures;
 
-	// ── Source map diagnostics (overridden by subclasses) ──────────
-	abstract getSourceMapInfos(file?: string): SourceMapInfo[];
+	// ── Source maps (overridden by subclasses) ─────────────────────
+	abstract sourceMapReport(file?: string): SourceMapReport;
 	abstract disableSourceMaps(): void;
+	abstract attachSourceMap(file: string, mapPath: string): Promise<void>;
+	abstract prettyPrintScript(file: string): Promise<void>;
+	abstract refreshSourceMaps(): Promise<void>;
 
 	constructor(session: string) {
 		this.session = session;

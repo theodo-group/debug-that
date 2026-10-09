@@ -38,11 +38,10 @@ export async function setBreakpoint(
 		: null;
 	const actualFile = resolved?.runtime.file ?? file;
 	const actualLine = resolved?.runtime.line ?? line;
-	// Without a pinned column, bind at line granularity so the runtime picks the
-	// first breakable location: a translated mid-line column may sit on a
-	// sub-expression that never executes, and the breakpoint would never bind.
-	let actualColumn = userColumn;
-	if (resolved && userColumn !== undefined) actualColumn = resolved.runtime.column;
+	// A translated position keeps its column: on a minified line it is the
+	// only thing that tells the statement apart. The runtime binds at the
+	// first breakable location from there.
+	const actualColumn = resolved ? resolved.runtime.column : userColumn;
 
 	let url: string | null = null;
 	let urlRegex: string | undefined;

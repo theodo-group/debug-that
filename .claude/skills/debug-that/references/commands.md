@@ -127,7 +127,7 @@ dbg break-rm all                    # Remove all breakpoints
 dbg break-ls                        # List all breakpoints
 dbg break-toggle BP#1               # Disable/enable one breakpoint
 dbg break-toggle all                # Disable/enable all
-dbg source dist/chunk.js:484:13187 --width 300   # Window around any position; --reflow for minified code
+dbg source dist/chunk.js:484:13187 --width 300   # Window around any position (minified code: dbg sourcemap chunk.js --pretty)
 dbg breakable src/app.ts:10-50      # List valid breakpoint locations (or one line: app.ts:10)
 dbg break dist/chunk.js:13:687      # Pin a column in minified code, even before the file loads
 dbg logpoint src/app.ts:20 '"x =", x'   # Log without pausing: console.log's arguments
@@ -175,8 +175,14 @@ dbg auto-detects source maps from `Debugger.scriptParsed` events. TypeScript `.t
 ```bash
 dbg sourcemap                       # List all loaded source maps
 dbg sourcemap src/app.ts            # Info for specific file
+dbg sourcemap chunk-g9ng4dxw.js --pretty          # Show that script formatted from now on
+dbg sourcemap chunk-g9ng4dxw.js --map /tmp/x.map  # Pair that script with a map file
 dbg sourcemap --disable             # Disable resolution globally
 ```
+
+Minified code (a chunk compiled into a Bun executable, a bundle shipped without its map) shows as lines cut to the width. `--pretty` reprints the script one statement per line and attaches the result as its source, named `chunk-g9ng4dxw.pretty.js`: `dbg state` and `dbg source` show it, breakpoints set by its lines translate to the script, and `--generated` still shows the script as is. The setting survives `dbg restart`.
+
+`--map` pairs the script with a map you wrote yourself (with `sourcesContent`), for a reconstruction beyond formatting, such as recovered names. The file is re-read whenever it changes, so regenerate it freely while the session runs; a half-written file is skipped until it parses. Breakpoints by original file:line translate through it, including ones set before the map existed.
 
 ## Global Flags
 

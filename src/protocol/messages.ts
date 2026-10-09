@@ -274,6 +274,9 @@ const SourcemapRequest = z.object({
 	cmd: z.literal("sourcemap"),
 	args: z.object({
 		file: z.optional(z.string()),
+		/** Absolute: the daemon's working directory is not the user's */
+		map: z.optional(z.string()),
+		pretty: z.optional(z.boolean()),
 	}),
 });
 

@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
-import { SourceMapResolver } from "../../src/sourcemap/resolver.ts";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { PRETTY_PRINTED, SourceMapResolver } from "../../src/sourcemap/resolver.ts";
 
 const FIXTURE_DIR = resolve(import.meta.dir, "../fixtures/ts");
 const DIST_DIR = resolve(FIXTURE_DIR, "dist");
@@ -245,6 +247,171 @@ describe("SourceMapResolver", () => {
 			const infos = resolver.getAllInfos();
 			expect(infos.length).toBe(1);
 			expect(infos[0]?.scriptId).toBe("1");
+		});
+	});
+
+	describe("a map paired by the user", () => {
+		const SCRIPT_URL = "/$bunfs/root/chunk-abc.js";
+		let dir: string;
+		let mapPath: string;
+
+		beforeEach(() => {
+			dir = mkdtempSync(join(tmpdir(), "dbg-maps-"));
+			mapPath = join(dir, "chunk-abc.js.map");
+		});
+		afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+		/** The fixture's map, with `sources` renamed and a marker in its content */
+		function writeMap(source = "../src/app.ts", marker = ""): void {
+			const map = JSON.parse(readFileSync(APP_JS_MAP, "utf-8"));
+			map.sources = [source];
+			map.sourcesContent = [marker + map.sourcesContent[0]];
+			writeFileSync(mapPath, JSON.stringify(map));
+		}
+
+		test("replaces what a loaded script declared", async () => {
+			await resolver.loadSourceMap("1", APP_JS, "app.js.map");
+			writeMap("../src/renamed.ts");
+			expect(await resolver.attachFile(APP_JS, mapPath)).toEqual(["1"]);
+			expect(resolver.getInfo("1")?.mapUrl).toBe(mapPath);
+			expect(resolver.findScriptForSource("renamed.ts")?.scriptId).toBe("1");
+			expect(resolver.findScriptForSource("app.ts")).toBeNull();
+			expect(resolver.getAllInfos()).toHaveLength(1);
+		});
+
+		test("is loaded for a script parsed after the pairing, whatever it declares", async () => {
+			writeMap();
+			expect(await resolver.attachFile(SCRIPT_URL, mapPath)).toEqual([]);
+			expect(await resolver.loadSourceMap("1", SCRIPT_URL)).toBe(true);
+			expect(await resolver.loadSourceMap("2", SCRIPT_URL, "missing.js.map")).toBe(true);
+			expect(resolver.getInfo("2")?.mapUrl).toBe(mapPath);
+			expect(resolver.getOriginalSource("1", "app.ts")).toContain("interface Person");
+		});
+
+		test("is nothing to scripts at other URLs", async () => {
+			writeMap();
+			await resolver.attachFile(SCRIPT_URL, mapPath);
+			expect(await resolver.loadSourceMap("1", "/$bunfs/root/other.js")).toBe(false);
+			expect(resolver.refresh()).toEqual([]);
+		});
+
+		test("is loaded once the file appears", async () => {
+			await resolver.loadSourceMap("1", SCRIPT_URL);
+			expect(await resolver.attachFile(SCRIPT_URL, mapPath)).toEqual([]);
+			expect(resolver.refresh()).toEqual([]);
+			writeMap();
+			expect(resolver.refresh()).toEqual(["1"]);
+			expect(resolver.refresh()).toEqual([]);
+		});
+
+		test("refresh replaces a regenerated map, declarations included", async () => {
+			writeMap("../src/app.ts");
+			await resolver.loadSourceMap("1", SCRIPT_URL);
+			await resolver.attachFile(SCRIPT_URL, mapPath);
+			expect(resolver.refresh()).toEqual([]);
+
+			writeMap("../src/renamed.ts", "// pass 2\n");
+			expect(resolver.refresh()).toEqual(["1"]);
+			expect(resolver.findScriptForSource("renamed.ts")?.scriptId).toBe("1");
+			expect(resolver.findScriptForSource("app.ts")).toBeNull();
+			expect(resolver.toGenerated("app.ts", 8, 0)).toBeNull();
+			expect(resolver.getOriginalSource("1", "renamed.ts")).toStartWith("// pass 2");
+			expect(resolver.getAllInfos()).toHaveLength(1);
+		});
+
+		test("refresh keeps the previous map while the file does not parse", async () => {
+			writeMap();
+			await resolver.loadSourceMap("1", SCRIPT_URL);
+			await resolver.attachFile(SCRIPT_URL, mapPath);
+
+			writeFileSync(mapPath, '{"version":3,"sources":["../src/app.ts"],"mappings":"AA');
+			expect(resolver.refresh()).toEqual([]);
+			expect(resolver.toOriginal("1", 2, 1)?.source).toBe("../src/app.ts");
+
+			writeMap("../src/fixed.ts");
+			expect(resolver.refresh()).toEqual(["1"]);
+			expect(resolver.toOriginal("1", 2, 1)?.source).toBe("../src/fixed.ts");
+		});
+
+		test("clear forgets the scripts but keeps the pairing", async () => {
+			writeMap();
+			await resolver.loadSourceMap("1", SCRIPT_URL);
+			await resolver.attachFile(SCRIPT_URL, mapPath);
+			resolver.clear();
+			expect(resolver.getInfo("1")).toBeNull();
+			expect(resolver.refresh()).toEqual([]);
+			expect(await resolver.loadSourceMap("2", SCRIPT_URL)).toBe(true);
+		});
+	});
+
+	describe("a pretty-printed script", () => {
+		const SCRIPT_URL = "/$bunfs/root/chunk-abc.js";
+		const MINIFIED = "function o(e){return e+1}var t=o(1);console.log(t);";
+		const PRETTY = "chunk-abc.pretty.js";
+
+		async function printed(source = MINIFIED): Promise<SourceMapResolver> {
+			const r = new SourceMapResolver(async () => source);
+			await r.loadSourceMap("1", SCRIPT_URL);
+			expect(await r.prettyPrint(SCRIPT_URL)).toEqual(["1"]);
+			return r;
+		}
+
+		test("reads as its own formatted source", async () => {
+			const r = await printed();
+			expect(r.getInfo("1")).toMatchObject({
+				mapUrl: PRETTY_PRINTED,
+				sources: [PRETTY],
+				hasSourcesContent: true,
+			});
+			const text = r.getOriginalSource("1", PRETTY) ?? "";
+			expect(text).toContain("function o(e) {\n  return e + 1;\n}");
+			expect(text).toContain(`// ${SCRIPT_URL}, pretty-printed`);
+			expect(text).not.toContain("debugId");
+		});
+
+		test("translates positions both ways", async () => {
+			const r = await printed();
+			const lines = (r.getOriginalSource("1", PRETTY) ?? "").split("\n");
+			const column = MINIFIED.indexOf("console");
+			const position = r.toOriginal("1", 1, column);
+			expect(position?.source).toBe(PRETTY);
+			expect(lines[(position?.line ?? 0) - 1]).toBe("console.log(t);");
+			expect(r.toGenerated(PRETTY, position?.line ?? 0, 0)).toEqual({
+				scriptId: "1",
+				line: 1,
+				column,
+			});
+		});
+
+		test("maps a printed line to the statement on it, not to what encloses it", async () => {
+			const source = "function s(e,n){return e+n}var a=1,b=s(a,2);";
+			const r = await printed(source);
+			const lines = (r.getOriginalSource("1", PRETTY) ?? "").split("\n");
+			const lineOf = (text: string) => lines.findIndex((l) => l.includes(text)) + 1;
+			expect(r.toGenerated(PRETTY, lineOf("return e + n"), 0)).toEqual({
+				scriptId: "1",
+				line: 1,
+				column: source.indexOf("return e+n"),
+			});
+			expect(r.toGenerated(PRETTY, lineOf("var b = s(a, 2)"), 0)).toEqual({
+				scriptId: "1",
+				line: 1,
+				column: source.indexOf("b=s(a,2)"),
+			});
+		});
+
+		test("is made again for a script loaded after the pairing", async () => {
+			const r = await printed();
+			r.clear();
+			expect(await r.loadSourceMap("7", SCRIPT_URL)).toBe(true);
+			expect(r.getScriptOriginalUrl("7")).toBe(PRETTY);
+		});
+
+		test("fails for what is not JavaScript", async () => {
+			const r = new SourceMapResolver(async () => "this is not { javascript");
+			await r.loadSourceMap("1", SCRIPT_URL);
+			await expect(r.prettyPrint(SCRIPT_URL)).rejects.toThrow(/Cannot pretty-print/);
+			expect(r.getInfo("1")).toBeNull();
 		});
 	});
 

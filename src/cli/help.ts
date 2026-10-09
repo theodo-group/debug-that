@@ -193,16 +193,16 @@ BREAKPOINTS:
     (JS: --condition and --log run where the pause lands: the function's parameters/arguments/this, or args/this for wrapped natives)
 
 INSPECTION:
-  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N] [--reflow]
+  dbg state [-v|-s|-b|-c] [--depth N] [--lines N] [--frame @fN] [--all-scopes] [--compact] [--generated] [--width N]
   dbg vars [name...] [--frame @fN] [--all-scopes] [--all]
   dbg stack [--async-depth N] [--generated] [--filter <keyword>]
   dbg eval <expr> [--frame @fN] [--silent] [--timeout MS] [--side-effect-free]  (works while running, global scope)
   dbg props @ref [--own] [--depth N] [--private] [--internal]
   dbg modules [--filter <pattern>]        (DAP only: list loaded libraries with symbol status)
-  dbg source [file:line[:col]] [--lines N] [--all] [--generated] [--width N] [--reflow]
+  dbg source [file:line[:col]] [--lines N] [--all] [--generated] [--width N]
     (a search result's file:line:col pastes in as is)
   dbg search "query" [--regex] [--case-sensitive] [--file id] [--width N]
-  (minified code: --width N shows N chars around the column/match, --reflow prints one statement per line)
+  (minified code: --width N shows N chars around the column/match; dbg sourcemap <script> --pretty formats the script)
   dbg scripts [--filter pattern]
   dbg console [--since N] [--level type] [--clear]
   dbg exceptions [--since N]
@@ -219,6 +219,8 @@ BLACKBOXING:
 
 SOURCE MAPS:
   dbg sourcemap [file]          Show source map info
+  dbg sourcemap <script> --pretty    Show the script formatted; positions and breakpoints translate
+  dbg sourcemap <script> --map <file> Pair the script with a map file, re-read as it changes
   dbg sourcemap --disable       Disable resolution globally
 
 DEBUG INFO (DAP only):
